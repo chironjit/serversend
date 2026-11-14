@@ -1,0 +1,2 @@
+# Exclude the Wails Android Java scaffold from GitHub language statistics.
+apps/desktop/build/android/app/src/main/java/** linguist-vendored
