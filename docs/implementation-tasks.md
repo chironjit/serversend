@@ -1,6 +1,19 @@
 # ServerSend implementation tasks
 
-Implement the architecture in [Implementation plan](implementation-plan.md) in small reviewable changes. All chunks begin unstarted. Dependencies indicate work that must be complete before a chunk can be accepted; interface exploration can happen earlier. Split an oversized chunk into smaller changes while retaining its acceptance tests.
+Implement the architecture in [Implementation plan](implementation-plan.md) in small reviewable changes. Dependencies indicate work that must be complete before a chunk can be accepted; interface exploration can happen earlier. Split an oversized chunk into smaller changes while retaining its acceptance tests.
+
+## Current progress
+
+| Chunk | Status | Implemented slice and remaining work |
+| --- | --- | --- |
+| 01 | In progress | Component check scripts and root Make targets are in place. Hosted CI, frontend behavioural test tooling and Wails binding regeneration remain. See [desktop development](desktop-development.md). |
+| 02 | In progress | Version negotiation, capability/limit validation and typed API errors have initial code and tests. Identity, lifecycle, pagination and upload contracts remain. See [protocol foundation](protocol-foundation.md). |
+| 03 | In progress | Shared SQLite opening policy and transactional migrations are implemented with real-database tests. Product schemas, repositories, backups and platform qualification remain. See [SQLite foundation](sqlite-foundation.md). |
+| 04 | In progress | Environment configuration parsing and validation have initial code and tests. Persistence, server identity, listeners, health endpoints and container image remain. See [server development](server-development.md). |
+| 06 | In progress | TOTP secret/QR generation and deterministic code verification helpers are implemented. Enrollment state, encrypted storage, atomic replay consumption, rate limits and recovery codes remain. See [TOTP foundation](twofactor-foundation.md). |
+| All others | Not started | Follow the dependencies and acceptance criteria below. |
+
+These independent foundation slices do not complete their chunks or bypass the integration dependencies. SQLite and OTP dependencies were added with the user's explicit approval, recorded in root `AGENTS.md`.
 
 ## Completion rules for every chunk
 
@@ -58,7 +71,8 @@ Chunk 17's format prototype should run after chunks 02–03 and before chunk 11 
 
 **Location:** `apps/server/internal/database`, `apps/desktop/internal/database`, `shared/testutil`. **Dependencies:** 01–02.
 
-- [ ] Propose an official/upstream SQLite driver where suitable, obtain approval, and pin the selected driver; define initial schema/migration conventions for each application.
+- [x] Obtain approval and pin `github.com/mattn/go-sqlite3` for shared persistence.
+- [ ] Define application-owned initial schemas and repositories using the shared migration helper.
 - [ ] Add foreign-key enforcement, transaction helpers, busy-timeout policy and controlled writes.
 - [ ] Add deterministic clocks, random-source test adapters, network interruption and filesystem-failure fixtures.
 - [ ] Add upgrade compatibility guards and repository interfaces only where needed.
@@ -91,7 +105,8 @@ Chunk 17's format prototype should run after chunks 02–03 and before chunk 11 
 
 **Location:** `apps/server/internal/auth`, `shared/api`. **Dependencies:** 05.
 
-- [ ] Resolve the requested `rsc.io/2fa` CLI versus server-library mismatch with the user before adopting a verification library or adaptation.
+- [x] Resolve the `rsc.io/2fa` CLI mismatch: the user approved `github.com/pquerna/otp`.
+- [x] Implement and test TOTP enrollment material and deterministic verification helpers; persist replay consumption in the account flow before granting access.
 - [ ] Add provisional enrollment, QR provisioning, code verification and encrypted secret storage.
 - [ ] Add single-use hashed recovery codes and safe replacement.
 - [ ] Enforce password-change plus TOTP completion before full access.

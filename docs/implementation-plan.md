@@ -2,7 +2,7 @@
 
 ServerSend provides private file storage and backup through an Unraid Docker server and a desktop application. Users can upload large batches in the background, retrieve selected files, connect to multiple independent servers, and use multiple devices. Optional private uploads are encrypted on the desktop so the server never receives plaintext contents or usable decryption keys.
 
-This is the implementation specification. Work is divided into dependency-ordered chunks in [Implementation tasks](implementation-tasks.md). Application implementation has not started as part of this planning change.
+This is the implementation specification. Work is divided into dependency-ordered chunks in [Implementation tasks](implementation-tasks.md), which also records current implementation progress. The specification describes the intended product; only completed work should be treated as available functionality.
 
 ## Scope and operating assumptions
 
@@ -18,9 +18,9 @@ The primary workload is very large numbers of small files, with some large files
 
 ## Dependency preferences
 
-Prefer official or upstream-maintained modules where suitable, and established maintained implementations for QUIC and encryption. The user has selected Tailwind CSS and requested `rsc.io/2fa`. SQLite has no selected Go driver. Propose the exact driver and any other new dependencies before adding them, following `AGENTS.md`; a preference for established libraries does not name a particular module. Reuse approval already given for a named dependency rather than asking again.
+Prefer official or upstream-maintained modules where suitable, and established maintained implementations for QUIC and encryption. The user selected Tailwind CSS and approved `github.com/mattn/go-sqlite3` for persistence and `github.com/pquerna/otp` for TOTP on 2026-11-14. SQLite is pinned at `v1.14.53`, OTP at `v1.5.0`; OTP requires a transitive barcode dependency for QR provisioning. Propose other new dependencies before adding them, following `AGENTS.md`. Reuse approval already given for a named dependency rather than asking again.
 
-The requested `rsc.io/2fa` module is a command-line TOTP/HOTP authenticator, not an importable server verification library. Keep it as the user's stated preference, but resolve a suitable library or reviewed adaptation with the user before implementing server TOTP. Do not silently substitute a different module or run its CLI as the production verification service. [rsc.io/2fa documentation](https://pkg.go.dev/rsc.io/2fa)
+Use `pquerna/otp` for server enrollment and code verification; it replaces the earlier `rsc.io/2fa` preference with the user's approval. It provides TOTP validation and QR provisioning, while ServerSend remains responsible for secret protection, throttling, enrollment state and atomic replay prevention. [OTP documentation](https://github.com/pquerna/otp)
 
 `quic-go` remains the proposed QUIC implementation; the encryption-format prototype evaluates established cryptographic libraries and standard Go primitives. Record exact new dependency choices before installation; no dependencies are added by this plan.
 
@@ -89,7 +89,7 @@ The Go server serves the API and a compiled Vue/TypeScript admin interface. The 
 
 Use Tailwind CSS for both the desktop UI and server admin UI. Every screen, dialog, error, empty state and loading state must support light and dark themes. Provide Light, Dark and System choices, persist the user's choice, and apply it before initial rendering to avoid a wrong-theme flash. Test keyboard focus, readable contrast and theme changes in both applications. Additional component libraries remain subject to dependency approval. Tailwind supports dark variants and explicit/system-driven theme selection. [Tailwind dark mode](https://tailwindcss.com/docs/dark-mode)
 
-Use SQLite for metadata and local queue state, and filesystem objects for file contents. Choose and pin a maintained Go SQLite driver during the foundation chunk, validating platform builds and migrations. Use short transactions, foreign keys, a busy timeout, and controlled write concurrency. SQLite WAL requires same-host storage, so the server database must not live on an SMB/NFS mount. [SQLite WAL documentation](https://www.sqlite.org/wal.html)
+Use SQLite for metadata and local queue state, and filesystem objects for file contents. Use the approved `mattn/go-sqlite3` driver through the shared SQLite foundation, validating platform builds and migrations. Use short transactions, foreign keys, a busy timeout, and controlled write concurrency. SQLite WAL requires same-host storage, so the server database must not live on an SMB/NFS mount. [SQLite WAL documentation](https://www.sqlite.org/wal.html)
 
 The server database tracks users, onboarding state, TOTP configuration, recovery-code hashes, devices, sessions, server settings, vault envelopes, files, immutable versions, upload sessions, chunks, reservations, trash, and audit events. Use opaque identifiers and explicit ownership on all user resources. Blob paths derive from validated opaque IDs, never user filenames.
 
