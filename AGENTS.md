@@ -7,3 +7,5 @@ Before adding any new module or third-party dependency, ask the user for approva
 ## Recorded approvals
 
 The user approved `github.com/mattn/go-sqlite3` for SQLite persistence and `github.com/pquerna/otp` for server-side TOTP enrollment and verification on 2026-11-14. The OTP choice replaces the earlier `rsc.io/2fa` preference. Its required barcode dependency is part of that integration. Tailwind CSS was also explicitly selected for both interfaces, with light and dark modes required. Do not ask again for these approved choices; other new dependencies still require approval.
+
+For Chunk 01, the user accepted Vitest, `@vue/test-utils` and `happy-dom` for frontend tests, and selected Oxc (`oxlint`, `oxlint-tsgolint`, `oxfmt`) for linting, checking and formatting. Do not add ESLint, Prettier or Playwright. CI is to be shown as a draft for review before activation.

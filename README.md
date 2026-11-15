@@ -2,7 +2,7 @@
 
 ServerSend is a desktop client and private file-storage server for LAN and Tailscale access. The planned server runs in Docker on Unraid. The desktop targets Linux first, then Windows, with macOS support also required.
 
-Implementation is at the foundation stage. The desktop is still a Wails/Vue scaffold; the server does not yet serve files or authenticate users. See the [implementation plan](docs/implementation-plan.md) and [task breakdown](docs/implementation-tasks.md) for scope and dependencies.
+Implementation is at the foundation stage. The server now runs with TLS, persistent identity/metadata, health checks and capability discovery, with a non-root container image. File serving and authentication are not implemented; the desktop is still a Wails/Vue scaffold. See the [implementation plan](docs/implementation-plan.md) and [task breakdown](docs/implementation-tasks.md) for scope and dependencies.
 
 ## Repository layout
 
@@ -33,4 +33,4 @@ make check-desktop
 
 Each target delegates to the owning component's `scripts/check.sh`, which can also be invoked with Bash when Make is unavailable. Checks do not install dependencies. A missing desktop build prerequisite is a failed check, not a successful validation of the application.
 
-See [server development](docs/server-development.md) for configuration validation, [protocol foundation](docs/protocol-foundation.md) for shared contracts, [SQLite foundation](docs/sqlite-foundation.md) for database opening/migrations, and [TOTP foundation](docs/twofactor-foundation.md) for enrollment and verification helpers. These foundations do not yet constitute a deployable server.
+See [server development](docs/server-development.md) to run the process or container, [protocol foundation](docs/protocol-foundation.md) for shared contracts, [SQLite foundation](docs/sqlite-foundation.md) for database opening/migrations, and [TOTP foundation](docs/twofactor-foundation.md) for enrollment and verification helpers. This is a runnable process foundation, not yet a usable file-storage product.

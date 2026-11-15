@@ -7,7 +7,9 @@ trap 'rm -rf -- "$fixture"' EXIT
 fixture_desktop="$fixture/desktop with spaces"
 mkdir -p "$fixture_desktop/scripts" "$fixture_desktop/frontend/node_modules/.bin" "$fixture/bin"
 cp "$script_dir/check.sh" "$fixture_desktop/scripts/check.sh"
-touch "$fixture_desktop/frontend/node_modules/.bin/vue-tsc" "$fixture_desktop/frontend/node_modules/.bin/vite"
+for tool in vue-tsc vite oxlint tsgolint oxfmt vitest; do
+  touch "$fixture_desktop/frontend/node_modules/.bin/$tool"
+done
 printf 'package main\n' > "$fixture_desktop/main.go"
 
 cat > "$fixture/bin/tool" <<'STUB'
@@ -28,7 +30,7 @@ case "$name" in
       if [[ "${CHECK_TEST_FAIL:-}" == "$1" ]]; then exit 23; fi
     fi
     ;;
-  npm) [[ "${CHECK_TEST_FAIL:-}" != frontend ]] || exit 24 ;;
+  npm) [[ "${CHECK_TEST_FAIL:-}" != frontend && "${CHECK_TEST_FAIL:-}" != "npm-${2:-${1:-}}" ]] || exit 24 ;;
   gofmt)
     if [[ "${CHECK_TEST_FAIL:-}" == format ]]; then printf './main.go\n'; fi
     ;;
@@ -66,6 +68,15 @@ for failure in format libraries; do
   [[ "$result" != 0 ]]
   if grep -F 'npm:' "$CHECK_TEST_LOG" >/dev/null; then exit 1; fi
   printf 'PASS: %s failure prevents build stages\n' "$failure"
+done
+unset CHECK_TEST_FAIL
+
+for stage in format:check check test; do
+  export CHECK_TEST_FAIL="npm-$stage"
+  run_case
+  [[ "$result" != 0 ]]
+  if grep -F 'go:vet' "$CHECK_TEST_LOG" >/dev/null; then exit 1; fi
+  printf 'PASS: frontend %s failure stops subsequent checks\n' "$stage"
 done
 unset CHECK_TEST_FAIL
 

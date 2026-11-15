@@ -6,10 +6,10 @@ Implement the architecture in [Implementation plan](implementation-plan.md) in s
 
 | Chunk | Status | Implemented slice and remaining work |
 | --- | --- | --- |
-| 01 | In progress | Component check scripts and root Make targets are in place. Hosted CI, frontend behavioural test tooling and Wails binding regeneration remain. See [desktop development](desktop-development.md). |
+| 01 | In progress | Local workspace/layout checks, Oxc lint/check/format tools, Vue tests, Go tests, native Linux build, binding regeneration and live scaffold smoke checks pass, including a clean Git checkout of the source snapshot. CI is drafted for review but not activated or run on hosted Windows/macOS runners. See [desktop development](desktop-development.md) and the [CI draft](ci-workflow.yml). |
 | 02 | In progress | Version negotiation, capability/limit validation and typed API errors have initial code and tests. Identity, lifecycle, pagination and upload contracts remain. See [protocol foundation](protocol-foundation.md). |
-| 03 | In progress | Shared SQLite opening policy and transactional migrations are implemented with real-database tests. Product schemas, repositories, backups and platform qualification remain. See [SQLite foundation](sqlite-foundation.md). |
-| 04 | In progress | Environment configuration parsing and validation have initial code and tests. Persistence, server identity, listeners, health endpoints and container image remain. See [server development](server-development.md). |
+| 03 | In progress | Shared SQLite opening policy and transactional migrations, plus the initial server identity schema, are implemented with real-database tests. Account/storage and desktop schemas, repositories, backups and platform qualification remain. See [SQLite foundation](sqlite-foundation.md). |
+| 04 | In progress | TLS-only process, persistent Ed25519 identity, storage checks, health/readiness/capability endpoints, graceful shutdown and non-root container image are implemented. Admin shell and full deployment qualification remain; this does not complete the contract/persistence dependencies. See [server development](server-development.md). |
 | 06 | In progress | TOTP secret/QR generation and deterministic code verification helpers are implemented. Enrollment state, encrypted storage, atomic replay consumption, rate limits and recovery codes remain. See [TOTP foundation](twofactor-foundation.md). |
 | All others | Not started | Follow the dependencies and acceptance criteria below. |
 
@@ -46,13 +46,15 @@ Chunk 17's format prototype should run after chunks 02–03 and before chunk 11 
 
 **Location:** `apps/desktop`, `apps/server`, `shared`; minimal root workspace/CI entries. **Dependencies:** None.
 
-- [ ] Retain `apps/desktop`, `apps/server`, root `shared`, and root `docs`; verify the existing workspace layout and scaffold assets.
-- [ ] Verify existing module names, imports, `go.work`, frontend bindings, Taskfiles and packaging paths; correct inconsistencies without renaming or relocating the application modules.
-- [ ] Remove or relocate scaffold examples only after identifying their purpose.
-- [ ] Add component-owned formatting, static-analysis, type-check, unit-test and integration-test commands; wire CI to them.
-- [ ] Add frontend test tooling and establish the Go test harness without placeholder behaviour tests.
+- [x] Retain `apps/desktop`, `apps/server`, root `shared`, and root `docs`; verify the existing workspace layout and scaffold assets.
+- [x] Verify existing module names, imports, `go.work`, frontend bindings, Taskfiles and packaging paths; correct inconsistencies without renaming or relocating the application modules.
+- [x] Remove or relocate scaffold examples only after identifying their purpose. Examples are retained; desktop, server-mode and unused mobile scaffold roles are documented.
+- [ ] Add component-owned formatting, static-analysis, type-check, unit-test and integration-test commands; wire CI to them. Commands are implemented; the workflow remains a review draft at the user's request.
+- [x] Add frontend test tooling and establish the Go test harness without placeholder behaviour tests.
 
 **Tests and acceptance:** Build all Go modules and desktop frontend; regenerate bindings; run scaffold smoke checks; verify workspace, build and packaging references resolve to the existing `apps/desktop` and `apps/server` paths. Demonstrate a fresh checkout following the documented commands.
+
+**Verified locally:** `make check` passes with Oxfmt, Oxlint/tsgolint, Vue template checking, eight Vue tests, Go vet/tests (desktop with race detection), production frontend/native Linux builds, generated-binding comparison, layout checks and a real Go-process bridge/event smoke test. A disposable Git commit/clone of the current source snapshot restored dependencies with `npm ci`, passed the same checks and left tracked files unchanged. Installed native prerequisites and the existing Go module cache were reused; this is not a fresh-machine or hosted CI claim. CI activation/execution awaits review of `docs/ci-workflow.yml`; no Playwright is used.
 
 ## Chunk 02 Define contracts and identity boundaries
 
@@ -83,9 +85,9 @@ Chunk 17's format prototype should run after chunks 02–03 and before chunk 11 
 
 **Location:** `apps/server/cmd`, `apps/server/internal/config`, `apps/server/internal/identity`, `apps/server/deploy`. **Dependencies:** 02–03.
 
-- [ ] Implement validated configuration, persistent server ID/key and graceful process lifecycle.
-- [ ] Add health/readiness endpoints, TLS configuration and API capability endpoint.
-- [ ] Build a non-root multi-stage image with explicit `/config`, `/data`, `/staging` mounts and TCP/UDP port declarations.
+- [x] Implement validated configuration, persistent server ID/key and graceful process lifecycle.
+- [x] Add health/readiness endpoints, TLS configuration and API capability endpoint.
+- [x] Build a non-root multi-stage image with explicit `/config`, `/data`, `/staging` mounts and TCP/UDP port declarations.
 - [ ] Embed an initial admin shell without application credentials or open enrollment.
 
 **Tests and acceptance:** Container restart retains identity; invalid certificates/configuration fail clearly; SIGTERM drains requests; permissions and missing mounts fail predictably; no persistent application data lands only in the container layer.

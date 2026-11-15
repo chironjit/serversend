@@ -14,6 +14,7 @@ done
 export GOTOOLCHAIN=local
 export GOPROXY=off
 export GOSUMDB=off
+export GOWORK=off
 
 unformatted="$(find . -type d \( -name vendor -o -name .git \) -prune -o -type f -name '*.go' -exec gofmt -l {} +)"
 if [[ -n "$unformatted" ]]; then
@@ -23,3 +24,8 @@ fi
 
 go vet -mod=readonly ./...
 go test -mod=readonly ./...
+
+# Compile the process entry point too; keep build artifacts outside the checkout.
+build_dir="$(mktemp -d "${TMPDIR:-/tmp}/serversend-server-check.XXXXXX")"
+trap 'rm -rf -- "$build_dir"' EXIT
+go build -mod=readonly -o "$build_dir/serversend" ./cmd/serversend

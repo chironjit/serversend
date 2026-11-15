@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import {ref, onMounted, useTemplateRef} from 'vue'
-import {Events, WML} from "@wailsio/runtime";
-import {GreetService} from "../../bindings/github.com/chironjit/serversend/apps/desktop";
+import { ref, onMounted, onUnmounted, useTemplateRef } from 'vue';
+import { Events, WML } from '@wailsio/runtime';
+import { GreetService } from '../../bindings/github.com/chironjit/serversend/apps/desktop';
 
 // Show the actual Wails version this project was generated against.
-const wailsVersion = "v3.0.0";
+const wailsVersion = 'v3.0.0';
 
 const name = ref('');
 const time = ref('Listening for Time event...');
+const errorMessage = ref('');
+let stopTimeEvents: (() => void) | undefined;
 
 const titleNameRef = useTemplateRef<HTMLElement>('titleNameRef');
 const toastRef = useTemplateRef<HTMLElement>('toastRef');
@@ -35,7 +37,7 @@ function swapTitleName(newName: string) {
   void incoming.offsetWidth;
   incoming.classList.remove('is-entering');
   current.classList.add('is-leaving');
-  current.addEventListener('transitionend', () => current.remove(), {once: true});
+  current.addEventListener('transitionend', () => current.remove(), { once: true });
 }
 
 // Pop the toast with the message Go returned, then auto-dismiss it.
@@ -43,20 +45,25 @@ function showToast(message: string) {
   if (!resultRef.value || !toastRef.value) {
     return;
   }
-  resultRef.value.innerText = message;
+  resultRef.value.textContent = message;
   toastRef.value.classList.add('is-visible');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toastRef.value?.classList.remove('is-visible'), 4000);
 }
 
 const doGreet = () => {
-  let n = name.value || 'anonymous';
+  const n = name.value || 'anonymous';
+  errorMessage.value = '';
   swapTitleName(n);
-  GreetService.Greet(n).then(showToast).catch(console.error);
-}
+  GreetService.Greet(n)
+    .then(showToast)
+    .catch(() => {
+      errorMessage.value = 'Could not reach the desktop service. Please try again.';
+    });
+};
 
 onMounted(() => {
-  Events.On('time', (timeValue: { data: string }) => {
+  stopTimeEvents = Events.On('time', (timeValue: { data: string }) => {
     // On a narrow screen the full RFC1123 stamp is too wide for the footer, so
     // show just the clock time there (matching the CSS breakpoint).
     const full = timeValue.data;
@@ -65,43 +72,108 @@ onMounted(() => {
   });
   // Wire up data-wml-openURL links (logos + footer "Docs" link).
   WML.Reload();
-})
+});
+
+onUnmounted(() => {
+  stopTimeEvents?.();
+  clearTimeout(toastTimer);
+});
 </script>
 
 <template>
   <main class="container">
+    <p v-if="errorMessage" role="alert">{{ errorMessage }}</p>
     <header class="brand">
       <a class="brand-mark" data-wml-openURL="https://v3.wails.io" aria-label="Wails website">
-        <img src="/wails.png" class="brand-logo" alt="Wails logo"/>
+        <img src="/wails.png" class="brand-logo" alt="Wails logo" />
       </a>
       <a class="brand-badge" data-wml-openURL="https://vuejs.org/" aria-label="Vue">
-        <img src="/vue.svg" alt="Vue logo"/>
+        <img src="/vue.svg" alt="Vue logo" />
       </a>
     </header>
 
-    <h1 class="title"><span class="title-accent">Wails +</span> <span class="title-name" ref="titleNameRef"><span class="title-name-text">Vue</span></span></h1>
+    <h1 class="title">
+      <span class="title-accent">Wails +</span> <span class="title-name" ref="titleNameRef"
+        ><span class="title-name-text">Vue</span></span
+      >
+    </h1>
     <p class="subtitle">Build beautiful cross-platform apps with Go and Vue.</p>
 
     <div class="greet">
       <div class="input-box" id="input">
-        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        <input aria-label="input" class="input" id="name" v-model="name" type="text" placeholder="Your name" autocomplete="off"/>
-        <button aria-label="greet-btn" class="btn" @click="doGreet">Greet
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        <svg
+          class="input-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+          <circle cx="12" cy="7" r="4" />
+        </svg>
+        <input
+          aria-label="input"
+          class="input"
+          id="name"
+          v-model="name"
+          type="text"
+          placeholder="Your name"
+          autocomplete="off"
+        />
+        <button aria-label="greet-btn" class="btn" @click="doGreet">
+          Greet
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <line x1="5" y1="12" x2="19" y2="12" />
+            <polyline points="12 5 19 12 12 19" />
+          </svg>
         </button>
       </div>
     </div>
   </main>
 
-  <hr class="footer-divider"/>
+  <hr class="footer-divider" />
   <footer class="footer">
     <span class="footer-version">{{ wailsVersion }}</span>
     <span class="footer-time">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </svg>
       <span id="time">{{ time }}</span>
     </span>
-    <a class="footer-docs" data-wml-openURL="https://v3.wails.io" aria-label="Wails documentation">Docs
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+    <a class="footer-docs" data-wml-openURL="https://v3.wails.io" aria-label="Wails documentation"
+      >Docs
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <line x1="7" y1="17" x2="17" y2="7" />
+        <polyline points="7 7 17 7 17 17" />
+      </svg>
     </a>
   </footer>
 

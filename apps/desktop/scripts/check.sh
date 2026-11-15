@@ -11,7 +11,7 @@ for tool in go gofmt node npm; do
   fi
 done
 
-for tool in vue-tsc vite; do
+for tool in vue-tsc vite oxlint tsgolint oxfmt vitest; do
   if [[ ! -f "frontend/node_modules/.bin/$tool" ]]; then
     printf 'Missing installed frontend dependency: %s. Restore the approved lockfile dependencies before checking.\n' "$tool" >&2
     exit 1
@@ -44,8 +44,8 @@ if [[ -n "$unformatted" ]]; then
   exit 1
 fi
 
-printf 'Checking desktop frontend types and production build\n'
-(cd frontend && npm run build)
+printf 'Checking desktop frontend formatting, types, lint, tests and production build\n'
+(cd frontend && npm run format:check && npm run check && npm test && npm run build)
 
 printf 'Checking desktop Go code\n'
 go vet -mod=readonly ./...

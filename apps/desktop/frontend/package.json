@@ -1,13 +1,18 @@
 {
   "name": "frontend",
-  "private": true,
   "version": "0.0.0",
+  "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build:dev": "vue-tsc && vite build --minify false --mode development",
     "build": "vue-tsc && vite build --mode production",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "oxlint --type-aware --deny-warnings src vite.config.ts vitest.config.ts",
+    "check": "oxlint --type-aware --type-check --deny-warnings src vite.config.ts vitest.config.ts && vue-tsc --noEmit",
+    "format": "oxfmt --write src checks public/style.css index.html *.ts *.json .oxlintrc.json .oxfmtrc.json && cd .. && frontend/node_modules/.bin/oxfmt --write -c frontend/.oxfmtrc.json scripts/*.mjs",
+    "format:check": "oxfmt --check src checks public/style.css index.html *.ts *.json .oxlintrc.json .oxfmtrc.json && cd .. && frontend/node_modules/.bin/oxfmt --check -c frontend/.oxfmtrc.json scripts/*.mjs",
+    "test": "vitest run"
   },
   "dependencies": {
     "@wailsio/runtime": "3.0.0",
@@ -15,8 +20,14 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.0",
+    "@vue/test-utils": "2.5.1",
+    "happy-dom": "21.0.4",
+    "oxfmt": "0.78.0",
+    "oxlint": "1.93.0",
+    "oxlint-tsgolint": "7.0.2007",
     "typescript": "~5.9.3",
     "vite": "^8.2.4",
+    "vitest": "5.1.0",
     "vue-tsc": "^3.3.12"
   }
 }
