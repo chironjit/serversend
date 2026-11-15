@@ -7,13 +7,13 @@ Implement the architecture in [Implementation plan](implementation-plan.md) in s
 | Chunk | Status | Implemented slice and remaining work |
 | --- | --- | --- |
 | 01 | In progress | Local workspace/layout checks, Oxc lint/check/format tools, Vue tests, Go tests, native Linux build, binding regeneration and live scaffold smoke checks pass, including a clean Git checkout of the source snapshot. CI is drafted for review but not activated or run on hosted Windows/macOS runners. See [desktop development](desktop-development.md) and the [CI draft](ci-workflow.yml). |
-| 02 | In progress | Version negotiation, capability/limit validation and typed API errors have initial code and tests. Identity, lifecycle, pagination and upload contracts remain. See [protocol foundation](protocol-foundation.md). |
+| 02 | Complete (contracts) | Versioned wire types, scoped identifiers, lifecycle validation, TLS-bound signed identity proofs, pagination, upload/manifest/catalog/event contracts, fifteen JSON fixtures and the requirement-to-test map are implemented and locally checked. Runtime handlers remain in their owning later chunks. See [protocol foundation](protocol-foundation.md). |
 | 03 | In progress | Shared SQLite opening policy and transactional migrations, plus the initial server identity schema, are implemented with real-database tests. Account/storage and desktop schemas, repositories, backups and platform qualification remain. See [SQLite foundation](sqlite-foundation.md). |
 | 04 | In progress | TLS-only process, persistent Ed25519 identity, storage checks, health/readiness/capability endpoints, graceful shutdown and non-root container image are implemented. Admin shell and full deployment qualification remain; this does not complete the contract/persistence dependencies. See [server development](server-development.md). |
 | 06 | In progress | TOTP secret/QR generation and deterministic code verification helpers are implemented. Enrollment state, encrypted storage, atomic replay consumption, rate limits and recovery codes remain. See [TOTP foundation](twofactor-foundation.md). |
 | All others | Not started | Follow the dependencies and acceptance criteria below. |
 
-These independent foundation slices do not complete their chunks or bypass the integration dependencies. SQLite and OTP dependencies were added with the user's explicit approval, recorded in root `AGENTS.md`.
+The other partial foundation slices do not complete their chunks or bypass integration dependencies. SQLite and OTP dependencies were added with the user's explicit approval, recorded in root `AGENTS.md`.
 
 ## Completion rules for every chunk
 
@@ -60,14 +60,16 @@ Chunk 17's format prototype should run after chunks 02–03 and before chunk 11 
 
 **Location:** `shared/api`, `shared/protocol`, `docs`. **Dependencies:** 01.
 
-- [ ] Specify version negotiation, capability limits, typed errors, identifiers and pagination.
-- [ ] Specify account, upload, queue and catalog revision state transitions.
-- [ ] Specify server identity authentication, endpoint pairing, certificate renewal and replacement behaviour.
-- [ ] Define upload creation, missing-chunk queries, chunk PUT/GET, finalize, catalog and event contracts.
-- [ ] Define standard/private manifest envelopes, leaving cryptographic internals gated by 17.
-- [ ] Add a requirement-to-test mapping covering every section of the implementation plan.
+- [x] Specify version negotiation, capability limits, typed errors, identifiers and pagination.
+- [x] Specify account, upload, queue and catalog revision state transitions.
+- [x] Specify server identity authentication, endpoint pairing, certificate renewal and replacement behaviour.
+- [x] Define upload creation, missing-chunk queries, chunk PUT/GET, finalize, catalog and event contracts.
+- [x] Define standard/private manifest envelopes, leaving cryptographic internals gated by 17.
+- [x] Add a requirement-to-test mapping covering every section of the implementation plan.
 
 **Tests and acceptance:** Serialization and compatibility fixtures; malformed/oversized inputs; unsupported versions; invalid state transitions; colliding IDs across servers; stable error decoding. Document examples sufficient to implement client and server independently.
+
+**Verified locally:** Full repository checks pass with the installed Wails v3.0.0 CLI, including the native Linux desktop build/binding comparison/smoke test and shared TLS channel-binding integration test. Shared race checks and a bounded parser fuzz run pass; see [requirement verification](requirements-verification.md). Chunk 01 CI activation/hosted platform checks remain deferred for user review. No dependencies or workspace modules were added. This completes contract acceptance, not the account, pairing or transfer runtime.
 
 ## Chunk 03 Establish persistence and fault injection
 

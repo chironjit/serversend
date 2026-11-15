@@ -19,7 +19,7 @@ func TestCapabilitiesRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Capabilities{[]protocol.Version{1}, []Transport{HTTP2, HTTP3}, protocol.TransferLimits{MinChunkBytes: 4, MaxChunkBytes: 8, MaxRequestBytes: 16, MaxManifestBytes: 16, MaxChunks: 2}}
+	want := Capabilities{ProtocolVersions: []protocol.Version{1}, Transports: []Transport{HTTP2, HTTP3}, Limits: protocol.TransferLimits{MinChunkBytes: 4, MaxChunkBytes: 8, MaxRequestBytes: 16, MaxManifestBytes: 16, MaxChunks: 2}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}

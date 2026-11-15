@@ -49,7 +49,7 @@ The scaffold's `build:server` and Docker tasks package Wails' browser/server mod
 
 `make check-layout` verifies module/workspace names, scaffold assets, Taskfile includes, and desktop packaging references using Node's built-in assertions. It checks packaging inputs; native installer qualification still belongs to the release work.
 
-`make check-bindings` runs the matching Wails v3.0.0 generator into a temporary directory and compares the result with the checked-in bindings. It does not invoke Taskfile prerequisites, install dependencies, or run `go mod tidy`. Build the frontend first so its embedded `dist` directory exists. Put `wails3` on PATH, or set `WAILS3` to the CLI executable's absolute path. For example:
+`make check-bindings` runs the matching Wails v3.0.0 generator into a temporary directory and compares the result with the checked-in bindings. It does not invoke Taskfile prerequisites, install dependencies, or run `go mod tidy`. Build the frontend first so its embedded `dist` directory exists. The script looks for the CLI in this order: an explicit `WAILS3` override, `wails3` on PATH, then Go's `GOBIN` (or the first `GOPATH` entry's `bin` directory when `GOBIN` is unset). A selected executable with the wrong version fails rather than silently switching installations. An explicit override is also supported:
 
 ```sh
 WAILS3="$(go env GOPATH)/bin/wails3" make check-bindings
@@ -77,7 +77,7 @@ After installing the native platform prerequisites, Go and Node, restore pinned 
 GOWORK=off go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
 ```
 
-Add the Go bin directory to PATH (or set `WAILS3`), then run `make check`. Dependency restoration is separate from the offline checks; no Taskfile `tidy`/installation prerequisites run implicitly.
+Run `make check`; the bindings script can discover the CLI in Go's bin directory even when that directory is not on PATH. Add the directory to PATH if you also want to invoke `wails3` directly, or use `WAILS3` for a custom location. Dependency restoration is separate from the offline checks; no Taskfile `tidy`/installation prerequisites run implicitly.
 
 The proposed [CI workflow](ci-workflow.yml) is a review draft, outside `.github/workflows`, as requested. It checks native desktop builds on Ubuntu 24.04, Windows and macOS, with shared/server checks and the live smoke test on Linux. The draft restores dependencies, invokes component-owned commands, and verifies no tracked files changed. It has read-only repository permissions and no publishing/release steps. Hosted jobs, Windows/macOS execution and CI activation are not claimed as completed local verification.
 

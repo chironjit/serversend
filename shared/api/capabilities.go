@@ -23,6 +23,8 @@ type Capabilities struct {
 	ProtocolVersions []protocol.Version      `json:"protocol_versions"`
 	Transports       []Transport             `json:"transports"`
 	Limits           protocol.TransferLimits `json:"limits"`
+	ManifestVersions []uint16                `json:"manifest_versions,omitempty"`
+	PrivateFormats   []string                `json:"private_formats,omitempty"`
 }
 
 func (c Capabilities) Validate() error {
@@ -42,7 +44,47 @@ func (c Capabilities) Validate() error {
 		}
 		seen[transport] = true
 	}
+	versions := make(map[uint16]bool, len(c.ManifestVersions))
+	for _, version := range c.ManifestVersions {
+		if version == 0 || versions[version] {
+			return errors.New("zero or duplicate manifest version")
+		}
+		versions[version] = true
+	}
+	formats := make(map[string]bool, len(c.PrivateFormats))
+	for _, format := range c.PrivateFormats {
+		if format == "" || len(format) > 64 || formats[format] {
+			return errors.New("invalid or duplicate private format")
+		}
+		for _, ch := range format {
+			if !(ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '_') {
+				return errors.New("private format must be an ASCII token")
+			}
+		}
+		formats[format] = true
+	}
+	if len(c.PrivateFormats) > 0 && len(c.ManifestVersions) == 0 {
+		return errors.New("private formats require a manifest schema")
+	}
 	return nil
+}
+
+func (c Capabilities) SupportsManifestVersion(version uint16) bool {
+	for _, supported := range c.ManifestVersions {
+		if version == supported {
+			return true
+		}
+	}
+	return false
+}
+
+func (c Capabilities) SupportsPrivateFormat(format string) bool {
+	for _, supported := range c.PrivateFormats {
+		if format == supported {
+			return true
+		}
+	}
+	return false
 }
 
 // SupportsTransport tests exact support; unknown transports may be advertised

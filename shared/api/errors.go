@@ -23,6 +23,9 @@ const (
 	UnsupportedFormat      ErrorCode = "unsupported_format"
 	SourceMissing          ErrorCode = "source_missing"
 	InternalError          ErrorCode = "internal_error"
+	RequestTooLarge        ErrorCode = "request_too_large"
+	SnapshotExpired        ErrorCode = "snapshot_expired"
+	UploadGone             ErrorCode = "upload_gone"
 )
 
 // Error contains a safe, user-facing message, never a raw internal error or
@@ -47,6 +50,37 @@ func (e Error) Error() string {
 // Unknown future codes are preserved but are not automatically retryable.
 func (e Error) Retryable() bool {
 	return e.Code == Overloaded || e.Code == Unavailable
+}
+
+// HTTPStatus is the v1 default mapping. Unknown future errors fail closed.
+// Transport-specific failures such as 405 may use InvalidRequest with Allow.
+func (e ErrorCode) HTTPStatus() int {
+	switch e {
+	case InvalidRequest, UnsupportedVersion, UnsupportedFormat:
+		return 400
+	case AuthenticationRequired:
+		return 401
+	case PermissionDenied:
+		return 403
+	case NotFound:
+		return 404
+	case Conflict:
+		return 409
+	case SnapshotExpired, UploadGone:
+		return 410
+	case RequestTooLarge:
+		return 413
+	case SourceMissing:
+		return 422
+	case Overloaded:
+		return 429
+	case Unavailable:
+		return 503
+	case CapacityExhausted:
+		return 507
+	default:
+		return 500
+	}
 }
 
 func (e Error) Validate() error {
