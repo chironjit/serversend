@@ -2,7 +2,7 @@ name: Release server
 
 on:
   push:
-    tags: ['v*']
+    tags: ['server/v*']
 
 permissions:
   contents: read
@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   check:
-    uses: ./.github/workflows/check.yml
+    uses: ./.github/workflows/check-server.yml
 
   publish:
     needs: check
@@ -34,13 +34,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo 'Use a release tag such as v0.1.0; prereleases are not published by this workflow.' >&2
+          if [[ ! "$RELEASE_TAG" =~ ^server/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo 'Use a release tag such as server/v0.1.0; prereleases are not published by this workflow.' >&2
             exit 1
           fi
-          newest=$(git tag --list | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -n 1)
+          newest=$(git tag --list | grep -E '^server/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -n 1)
           test "$RELEASE_TAG" = "$newest" || { echo 'Publish versions in increasing order.' >&2; exit 1; }
-          version=${RELEASE_TAG#v}
+          version=${RELEASE_TAG#server/v}
           echo "IMAGE=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_ENV"
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "SERIES=${version%.*}" >> "$GITHUB_ENV"

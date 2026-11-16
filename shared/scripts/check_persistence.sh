@@ -13,7 +13,18 @@ if [[ "$(go env GOOS)" != "$(go env GOHOSTOS)" || "$(go env GOARCH)" != "$(go en
 fi
 build_dir="$(mktemp -d "${TMPDIR:-/tmp}/serversend-persistence.XXXXXX")"
 trap 'rm -rf -- "$build_dir"' EXIT
-for component in shared apps/server apps/desktop; do
+# Optional component arguments let independent release checks select consumers.
+components=("$@")
+if [[ ${#components[@]} == 0 ]]; then
+  components=(shared apps/server apps/desktop)
+fi
+for component in "${components[@]}"; do
+  case "$component" in
+    shared|apps/server|apps/desktop) ;;
+    *) printf 'Unknown persistence component: %s\n' "$component" >&2; exit 1 ;;
+  esac
+done
+for component in "${components[@]}"; do
   case "$component" in
     shared) packages=(./sqlite ./testutil) ;;
     *) packages=(./internal/database) ;;

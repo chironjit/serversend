@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Build and release tooling
+
+- Independent server and desktop checks and component-prefixed version tags.
+- Portable desktop formatter invocation on Windows.
+- Removed the unsupported npm minimum-release-age setting (npm did not enforce it).
+
+### Server and desktop initial feature baseline
+
 First planned version: **0.1.0** (experimental network-testing release).
 
 - Browser administrator onboarding and user creation, separated from desktop file transfers.

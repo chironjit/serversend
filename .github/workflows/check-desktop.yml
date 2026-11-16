@@ -1,0 +1,73 @@
+name: Check desktop
+
+on:
+  push:
+    tags: ['desktop/v*']
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      GOTOOLCHAIN: local
+      CGO_ENABLED: '1'
+      GOWORK: 'off'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: |
+            apps/desktop/go.sum
+            shared/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: |
+            apps/desktop/frontend/package-lock.json
+      - name: Linux native build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev libwayland-dev
+      - name: Windows CGO compiler
+        if: runner.os == 'Windows'
+        run: echo 'C:/msys64/mingw64/bin' >> "$GITHUB_PATH"
+      - name: Restore pinned frontend dependencies
+        working-directory: apps/desktop/frontend
+        run: npm ci
+      - name: Restore Go dependencies
+        run: |
+          (cd shared && GOWORK=off go mod download)
+          (cd apps/desktop && go mod download)
+      - name: Install matching Wails CLI
+        run: GOWORK=off go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+      - name: Workspace, frontend tests, and native desktop build
+        run: make check-layout check-desktop check-bindings
+      - name: Shared code and desktop scaffold smoke
+        if: runner.os == 'Linux'
+        run: make check-shared check-smoke
+      - name: Native shared and desktop persistence
+        run: bash shared/scripts/check_persistence.sh shared apps/desktop
+      - name: Verify checks did not change tracked files
+        run: git diff --exit-code
