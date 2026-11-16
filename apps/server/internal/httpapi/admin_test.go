@@ -72,6 +72,8 @@ func TestEmbeddedAdminShell(t *testing.T) {
 					wantType = "javascript"
 				} else if strings.HasSuffix(name, ".css") {
 					wantType = "text/css"
+				} else if strings.HasSuffix(name, ".woff2") {
+					wantType = "font/woff2"
 				}
 				if !strings.Contains(w.Header().Get("Content-Type"), wantType) {
 					t.Fatalf("incorrect asset content type: %s", w.Header().Get("Content-Type"))

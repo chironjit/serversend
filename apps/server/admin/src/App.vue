@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
+import { Activity, RefreshCw, Users } from 'lucide-vue-next';
 import Accounts from './components/Accounts.vue';
 import ThemePicker from './components/ThemePicker.vue';
+import BrandMark from './components/ui/BrandMark.vue';
+import UiBadge from './components/ui/UiBadge.vue';
+import UiButton from './components/ui/UiButton.vue';
+import UiCard from './components/ui/UiCard.vue';
 import { checkReadiness } from './readiness';
 
 const status = ref<'checking' | 'ready' | 'unavailable'>('checking');
@@ -36,146 +41,112 @@ onUnmounted(() => {
 
 <template>
   <a href="#main" class="skip-link">Skip to server status</a>
-  <div class="mx-auto flex min-h-screen max-w-7xl flex-col px-5 py-8 sm:px-10 sm:py-6">
-    <header
-      class="flex flex-wrap items-start justify-between gap-6 border-b border-slate-200 pb-8 dark:border-slate-800"
+  <div class="grid min-h-screen lg:grid-cols-[224px_minmax(0,1fr)]">
+    <aside
+      class="bg-sidebar border-border sticky top-0 hidden h-screen flex-col border-r lg:flex"
+      aria-label="Administration navigation"
     >
-      <div>
-        <p class="text-2xl font-semibold tracking-tight">
-          ServerSend<span class="text-violet-700 dark:text-violet-300">.</span>
-        </p>
-        <p class="mt-1 text-sm text-slate-600 dark:text-slate-400">Server administration</p>
+      <div class="flex h-14 items-center gap-2.5 px-4">
+        <BrandMark />
+        <span class="text-[0.9375rem] font-semibold tracking-tight">ServerSend</span>
+        <UiBadge tone="primary" class="ml-auto">Admin</UiBadge>
       </div>
-      <ThemePicker />
-    </header>
-
-    <div class="admin-workspace">
-      <aside class="admin-sidebar" aria-label="Administration navigation">
-        <p>WORKSPACE</p>
-        <a href="#accounts" class="selected">♙ <span>User accounts</span></a
-        ><a href="#status-heading">◉ <span>Server status</span></a>
-        <div class="admin-sidebar-note">
-          Server administration<br /><span>File transfers live in the desktop app.</span>
-        </div>
-      </aside>
-      <main id="main" tabindex="-1" class="flex-1 py-8">
+      <nav class="flex flex-1 flex-col gap-1 px-3 pt-4">
         <p
-          class="text-sm font-semibold uppercase tracking-widest text-violet-800 dark:text-violet-300"
+          class="text-muted-foreground m-0 px-3 pb-2 text-[0.6875rem] font-medium tracking-[0.08em] uppercase"
         >
-          Workspace / Administration
+          Administration
         </p>
-        <h1 class="mt-3 text-3xl font-semibold tracking-tight sm:text-3xl">
-          Your server, at a glance.
-        </h1>
-        <p class="mt-4 max-w-xl text-base leading-7 text-slate-600 dark:text-slate-300">
-          Manage user accounts below. File transfers are available through the desktop app.
+        <a
+          href="#accounts"
+          aria-current="page"
+          class="bg-accent text-accent-foreground flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium no-underline"
+        >
+          <Users class="size-4" aria-hidden="true" />
+          User accounts
+        </a>
+        <a
+          href="#status-heading"
+          class="text-muted-foreground hover:bg-muted hover:text-foreground flex items-center gap-2.5 rounded-md px-3 py-2 text-sm no-underline transition-colors"
+        >
+          <Activity class="size-4" aria-hidden="true" />
+          Server status
+        </a>
+      </nav>
+      <div class="border-border m-3 rounded-lg border p-3">
+        <p class="m-0 text-xs font-medium">Server administration</p>
+        <p class="text-muted-foreground m-0 mt-1 text-xs leading-5">
+          File transfers live in the desktop app.
         </p>
+      </div>
+    </aside>
+
+    <div class="flex min-w-0 flex-col">
+      <header
+        class="border-border bg-card/80 sticky top-0 z-10 flex h-14 items-center gap-3 border-b px-4 backdrop-blur sm:px-6"
+      >
+        <BrandMark class="lg:hidden" />
+        <p class="m-0 text-sm font-semibold tracking-tight lg:hidden">ServerSend</p>
+        <p class="text-muted-foreground m-0 hidden text-sm lg:block">Server administration</p>
+        <div class="ml-auto">
+          <ThemePicker />
+        </div>
+      </header>
+
+      <main id="main" tabindex="-1" class="mx-auto w-full max-w-5xl flex-1 p-4 sm:p-6">
+        <div class="mb-6">
+          <h1 class="m-0 text-xl font-semibold tracking-tight">Server administration</h1>
+          <p class="text-muted-foreground mt-1.5 max-w-xl text-sm leading-6">
+            Manage user accounts and check server health. File transfers are available through the
+            desktop app.
+          </p>
+        </div>
 
         <Accounts id="accounts" />
 
-        <section
-          aria-labelledby="status-heading"
-          class="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-6 dark:border-slate-700 dark:bg-slate-900"
-        >
+        <UiCard as="section" aria-labelledby="status-heading" class="mt-5 p-5 sm:p-6">
           <div class="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <h2 id="status-heading" class="text-lg font-semibold">Server status</h2>
+              <h2 id="status-heading" class="m-0 text-base font-semibold tracking-tight">
+                Server status
+              </h2>
               <div role="status" aria-live="polite" :aria-busy="status === 'checking'" class="mt-3">
-                <p
-                  v-if="status === 'checking'"
-                  class="font-medium text-slate-600 dark:text-slate-300"
-                >
+                <p v-if="status === 'checking'" class="m-0 flex items-center gap-2 font-medium">
+                  <UiBadge dot>Checking</UiBadge>
                   Checking server…
                 </p>
-                <p
-                  v-else-if="status === 'ready'"
-                  class="font-medium text-violet-800 dark:text-violet-300"
-                >
+                <p v-else-if="status === 'ready'" class="m-0 flex items-center gap-2 font-medium">
+                  <UiBadge tone="success" dot>Operational</UiBadge>
                   Server is responding
                 </p>
-                <p v-else class="font-medium text-amber-800 dark:text-amber-200">
+                <p v-else class="m-0 flex items-center gap-2 font-medium">
+                  <UiBadge tone="warning" dot>Unavailable</UiBadge>
                   Server is unavailable
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              :disabled="status === 'checking'"
-              class="action-button"
-              @click="refresh"
-            >
+            <UiButton variant="outline" :disabled="status === 'checking'" @click="refresh">
+              <RefreshCw :class="status === 'checking' ? 'animate-spin' : ''" aria-hidden="true" />
               Check again
-            </button>
+            </UiButton>
           </div>
           <p
             v-if="status === 'unavailable'"
-            class="mt-4 max-w-xl text-sm leading-6 text-slate-600 dark:text-slate-300"
+            class="text-muted-foreground mt-4 max-w-xl text-sm leading-6"
           >
             Check your network connection and try again. If this continues, ask the server operator
             to check the process and its storage.
           </p>
-          <p v-else class="mt-4 max-w-xl text-sm leading-6 text-slate-600 dark:text-slate-300">
+          <p v-else class="text-muted-foreground mt-4 max-w-xl text-sm leading-6">
             This checks the server process and metadata connection. It does not confirm file storage
             capacity or transfer availability.
           </p>
-        </section>
+        </UiCard>
       </main>
-    </div>
 
-    <footer
-      class="border-t border-slate-200 pt-6 text-sm text-slate-600 dark:border-slate-800 dark:text-slate-400"
-    >
-      Private storage for your network · Development build
-    </footer>
+      <footer class="border-border text-muted-foreground border-t px-4 py-4 text-xs sm:px-6">
+        Private storage for your network · Development build
+      </footer>
+    </div>
   </div>
 </template>
-
-<style scoped>
-.admin-workspace {
-  display: grid;
-  grid-template-columns: 190px minmax(0, 1fr);
-  gap: 40px;
-  flex: 1;
-}
-.admin-sidebar {
-  padding-top: 36px;
-  border-right: 1px solid #94a3b833;
-  padding-right: 20px;
-}
-.admin-sidebar > p {
-  font-size: 10px;
-  letter-spacing: 1.5px;
-  color: #94a3b8;
-  margin-bottom: 16px;
-}
-.admin-sidebar a {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  margin: 4px 0;
-  font-size: 13px;
-  border-radius: 8px;
-}
-.admin-sidebar .selected {
-  background: #8b5cf61a;
-  color: #8b5cf6;
-  font-weight: 600;
-}
-.admin-sidebar-note {
-  margin-top: 48px;
-  font-size: 12px;
-  line-height: 1.8;
-}
-.admin-sidebar-note span {
-  color: #94a3b8;
-}
-@media (max-width: 900px) {
-  .admin-workspace {
-    display: block;
-  }
-  .admin-sidebar {
-    display: none;
-  }
-}
-</style>

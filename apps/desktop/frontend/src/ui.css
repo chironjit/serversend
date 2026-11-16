@@ -1,0 +1,141 @@
+/* Design tokens and base styles shared by the desktop app and the admin panel.
+   Keep this file and src/components/ui identical in apps/desktop/frontend and
+   apps/server/admin: the two interfaces are meant to read as one product.
+   Palette inspired by the Artifact admin template: indigo primary, cool grey
+   neutrals, tinted accent surfaces, and quiet borders instead of heavy shadows. */
+@import 'tailwindcss';
+
+/* Light is the base palette. Dark applies by system preference unless the
+   user chose Light, and always when the user chose Dark. The two dark blocks
+   must stay identical. */
+:root {
+  --background: oklch(0.985 0.004 265);
+  --foreground: oklch(0.21 0.02 266);
+  --card: oklch(1 0 0);
+  --popover: oklch(1 0 0);
+  --primary: oklch(0.51 0.23 277);
+  --primary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.968 0.007 265);
+  --muted-foreground: oklch(0.55 0.02 265);
+  --accent: oklch(0.958 0.02 277);
+  --accent-foreground: oklch(0.36 0.12 277);
+  --border: oklch(0.928 0.01 265);
+  --input: oklch(0.9 0.01 265);
+  --ring: oklch(0.51 0.23 277);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.545 0.166 156.743);
+  --warning: oklch(0.55 0.12 70);
+  --sidebar: oklch(0.975 0.005 265);
+  --chart-up: var(--primary);
+  --chart-down: var(--success);
+  --overlay: oklch(0.21 0.02 266 / 40%);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --background: oklch(0.19 0.02 266);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.23 0.02 266);
+    --popover: oklch(0.25 0.02 266);
+    --primary: oklch(0.62 0.2 278);
+    --primary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.28 0.02 266);
+    --muted-foreground: oklch(0.71 0.02 265);
+    --accent: oklch(0.32 0.05 277);
+    --accent-foreground: oklch(0.93 0.03 277);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.62 0.2 278);
+    --destructive: oklch(0.704 0.191 22.216);
+    --destructive-foreground: oklch(0.18 0.03 22);
+    --success: oklch(0.724 0.144 163.278);
+    --warning: oklch(0.8 0.13 82);
+    --sidebar: oklch(0.21 0.02 266);
+    --chart-up: var(--primary);
+    --chart-down: var(--success);
+    --overlay: oklch(0 0 0 / 55%);
+    color-scheme: dark;
+  }
+}
+:root[data-theme='dark'] {
+  --background: oklch(0.19 0.02 266);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.23 0.02 266);
+  --popover: oklch(0.25 0.02 266);
+  --primary: oklch(0.62 0.2 278);
+  --primary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.28 0.02 266);
+  --muted-foreground: oklch(0.71 0.02 265);
+  --accent: oklch(0.32 0.05 277);
+  --accent-foreground: oklch(0.93 0.03 277);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.62 0.2 278);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.18 0.03 22);
+  --success: oklch(0.724 0.144 163.278);
+  --warning: oklch(0.8 0.13 82);
+  --sidebar: oklch(0.21 0.02 266);
+  --chart-up: var(--primary);
+  --chart-down: var(--success);
+  --overlay: oklch(0 0 0 / 55%);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans:
+    'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono:
+    'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-popover: var(--popover);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-sidebar: var(--sidebar);
+  --color-chart-up: var(--chart-up);
+  --color-chart-down: var(--chart-down);
+  --color-overlay: var(--overlay);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+    scrollbar-width: thin;
+    scrollbar-color: var(--input) transparent;
+  }
+  body {
+    @apply bg-background text-foreground m-0 font-sans text-sm antialiased;
+  }
+  button:not(:disabled),
+  label:has(input[type='radio']) {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 22%, transparent);
+  }
+}
+
+@layer components {
+  /* Keyboard users land here first; the link stays invisible until focused. */
+  .skip-link {
+    @apply sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-lg focus:bg-primary focus:px-4 focus:py-2.5 focus:text-sm focus:font-medium focus:text-primary-foreground focus:shadow-md;
+  }
+}

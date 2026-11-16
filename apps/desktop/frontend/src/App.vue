@@ -1,6 +1,27 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { Events } from '@wailsio/runtime';
+import {
+  ArrowDownToLine,
+  ArrowLeftRight,
+  ArrowUpFromLine,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  FileText,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Home,
+  Loader2,
+  LogOut,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+  TriangleAlert,
+  Upload,
+  UserRound,
+} from 'lucide-vue-next';
 import { TransferService } from '../bindings/github.com/chironjit/serversend/apps/desktop';
 import type {
   Account,
@@ -8,6 +29,18 @@ import type {
   Item,
 } from '../bindings/github.com/chironjit/serversend/apps/desktop/internal/transfer/models';
 import type { ServerProbe } from '../bindings/github.com/chironjit/serversend/shared/client/models';
+import BrandMark from './components/ui/BrandMark.vue';
+import ThemeSwitch from './components/ui/ThemeSwitch.vue';
+import UiAlert from './components/ui/UiAlert.vue';
+import UiBadge from './components/ui/UiBadge.vue';
+import UiButton from './components/ui/UiButton.vue';
+import UiCard from './components/ui/UiCard.vue';
+import UiCardHeader from './components/ui/UiCardHeader.vue';
+import UiCode from './components/ui/UiCode.vue';
+import UiEmpty from './components/ui/UiEmpty.vue';
+import UiField from './components/ui/UiField.vue';
+import UiInput from './components/ui/UiInput.vue';
+import UiProgress from './components/ui/UiProgress.vue';
 
 type View =
   | 'connect'
@@ -21,6 +54,7 @@ type View =
 type Theme = 'system' | 'light' | 'dark';
 
 const view = ref<View>('connect');
+const signingIn = computed(() => view.value !== 'files');
 const busy = ref(false);
 const error = ref('');
 
@@ -102,6 +136,21 @@ const fingerprintGroups = computed(
   () => probe.value?.fingerprint.match(/.{1,4}/g)?.join(' ') ?? '',
 );
 const recentTransfers = computed(() => transfers.value.toReversed());
+const activeCount = computed(
+  () => transfers.value.filter((t) => t.state === 'active' || t.state === 'queued').length,
+);
+const stateTone: Record<string, 'primary' | 'neutral' | 'success' | 'danger'> = {
+  active: 'primary',
+  queued: 'neutral',
+  done: 'success',
+  failed: 'danger',
+};
+const stateLabel: Record<string, string> = {
+  active: 'Active',
+  queued: 'Queued',
+  done: 'Done',
+  failed: 'Failed',
+};
 
 function failure(reason: unknown): string {
   if (reason instanceof Error && reason.message !== '') return reason.message;
@@ -273,706 +322,569 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="shell" :class="{ workspace: view === 'files' }">
-    <header class="bar">
-      <h1><span class="brand-mark">S</span> ServerSend<span class="brand-dot">.</span></h1>
-      <span v-if="account" class="who">{{ account.username }} · {{ account.origin }}</span>
-      <label class="theme">
-        <span>Theme</span>
-        <select
-          :value="theme"
-          @change="applyTheme(($event.target as HTMLSelectElement).value as Theme)"
-        >
-          <option value="system">System</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </select>
-      </label>
-      <button v-if="account" type="button" class="quiet" :disabled="busy" @click="signOut">
-        Sign out
-      </button>
-    </header>
+  <!-- Onboarding and sign-in: one quiet, centered card per step. -->
+  <div
+    v-if="signingIn"
+    class="relative flex min-h-screen flex-col items-center justify-center px-4 py-12"
+  >
+    <div class="absolute top-4 right-4">
+      <ThemeSwitch :model-value="theme" @update:model-value="applyTheme" />
+    </div>
+    <div class="mb-8 flex items-center gap-2.5">
+      <BrandMark />
+      <h1 class="m-0 text-lg font-semibold tracking-tight">ServerSend</h1>
+    </div>
+    <UiAlert v-if="error" class="mb-4 w-full max-w-md">{{ error }}</UiAlert>
+    <UiCard class="w-full max-w-md p-6 sm:p-7">
+      <form v-if="view === 'connect'" class="grid gap-5" @submit.prevent="check">
+        <UiCardHeader
+          title="Connect to a server"
+          description="Enter the address your server operator gave you."
+        />
+        <UiField label="Server address">
+          <UiInput
+            v-model="address"
+            required
+            autofocus
+            placeholder="https://192.168.1.10:58443"
+            spellcheck="false"
+          />
+        </UiField>
+        <UiButton type="submit" :disabled="busy" class="w-full">
+          <Loader2 v-if="busy" class="animate-spin" aria-hidden="true" />
+          {{ busy ? 'Checking…' : 'Check server' }}
+        </UiButton>
+      </form>
 
-    <aside v-if="view === 'files'" class="sidebar" aria-label="Workspace navigation">
-      <p class="eyebrow">YOUR WORKSPACE</p>
-      <a href="#library" class="nav-active">▱ <span>File library</span></a>
-      <a href="#transfers"
-        >⇅ <span>Transfers</span
-        ><span class="count">{{
-          transfers.filter((t) => t.state === 'active' || t.state === 'queued').length
-        }}</span></a
+      <section v-else-if="view === 'approve' && probe" class="grid gap-5">
+        <UiCardHeader title="Is this your server?" />
+        <p v-if="probe.publicly_trusted" class="text-muted-foreground m-0 text-sm leading-6">
+          This computer already trusts the certificate for
+          <strong class="text-foreground font-medium">{{ probe.origin }}</strong>.
+        </p>
+        <p v-else class="text-muted-foreground m-0 text-sm leading-6">
+          <strong class="text-foreground font-medium">{{ probe.origin }}</strong> uses a private
+          certificate. Compare this fingerprint with the one your server operator gives you. Only
+          continue if they match exactly.
+        </p>
+        <UiCode block data-test="fingerprint">{{ fingerprintGroups }}</UiCode>
+        <p class="text-muted-foreground m-0 text-xs">Certificate: {{ probe.subject }}</p>
+        <div class="flex flex-wrap gap-2">
+          <UiButton :disabled="busy" @click="approve">
+            <Loader2 v-if="busy" class="animate-spin" aria-hidden="true" />
+            <ShieldCheck v-else aria-hidden="true" />
+            They match — continue
+          </UiButton>
+          <UiButton variant="ghost" :disabled="busy" @click="view = 'connect'">Back</UiButton>
+        </div>
+      </section>
+
+      <form v-else-if="view === 'password'" class="grid gap-5" @submit.prevent="signIn">
+        <UiCardHeader
+          title="Sign in"
+          description="Use the account your administrator created for you."
+        />
+        <UiField label="Username">
+          <UiInput
+            v-model="username"
+            required
+            autofocus
+            autocomplete="username"
+            spellcheck="false"
+          />
+        </UiField>
+        <UiField
+          label="Password"
+          hint="New account? Enter the temporary password from your administrator."
+        >
+          <UiInput v-model="password" type="password" required autocomplete="current-password" />
+        </UiField>
+        <div class="flex flex-wrap gap-2">
+          <UiButton type="submit" :disabled="busy">
+            <Loader2 v-if="busy" class="animate-spin" aria-hidden="true" />
+            {{ busy ? 'Signing in…' : 'Continue' }}
+          </UiButton>
+          <UiButton variant="ghost" :disabled="busy" @click="view = 'connect'">
+            Change server
+          </UiButton>
+        </div>
+      </form>
+
+      <form v-else-if="view === 'replace'" class="grid gap-5" @submit.prevent="replacePassword">
+        <UiCardHeader
+          title="Choose your password"
+          description="Your temporary password must be replaced before you continue."
+        />
+        <UiField label="New password" hint="At least 12 characters.">
+          <UiInput
+            v-model="newPassword"
+            type="password"
+            required
+            minlength="12"
+            autofocus
+            autocomplete="new-password"
+          />
+        </UiField>
+        <UiButton type="submit" :disabled="busy" class="w-full">
+          <Loader2 v-if="busy" class="animate-spin" aria-hidden="true" />
+          {{ busy ? 'Saving…' : 'Set password' }}
+        </UiButton>
+      </form>
+
+      <form
+        v-else-if="view === 'enroll' && enrollment"
+        class="grid gap-5"
+        @submit.prevent="confirmEnrollment"
       >
-      <div class="sidebar-note">
-        <span class="connection">● Private connection</span>
-        <p>Your files stay on your server.</p>
+        <UiCardHeader
+          title="Set up two-factor sign-in"
+          description="Scan this code with an authenticator app, then enter the six-digit code it shows."
+        />
+        <img
+          class="mx-auto rounded-lg border bg-white p-2"
+          :src="enrollment.qr"
+          alt="QR code for your authenticator app"
+          width="220"
+          height="220"
+        />
+        <p class="text-muted-foreground m-0 text-xs leading-6">
+          Can't scan? Enter this key manually:
+          <UiCode class="wrap-anywhere">{{ enrollment.secret }}</UiCode>
+        </p>
+        <UiField label="Six-digit code">
+          <UiInput
+            v-model="code"
+            required
+            inputmode="numeric"
+            pattern="[0-9]{6}"
+            maxlength="6"
+            autocomplete="one-time-code"
+            class="font-mono"
+          />
+        </UiField>
+        <UiButton type="submit" :disabled="busy" class="w-full">
+          <Loader2 v-if="busy" class="animate-spin" aria-hidden="true" />
+          {{ busy ? 'Checking…' : 'Confirm' }}
+        </UiButton>
+      </form>
+
+      <section v-else-if="view === 'recovery'" class="grid gap-5">
+        <UiCardHeader
+          title="Save your recovery codes"
+          description="Each code signs you in once if you lose your authenticator. They are shown only now — store them somewhere safe before continuing."
+        />
+        <ul class="m-0 grid list-none grid-cols-1 gap-2 p-0 sm:grid-cols-2">
+          <li v-for="recovery in recoveryCodes" :key="recovery">
+            <UiCode block class="text-center">{{ recovery }}</UiCode>
+          </li>
+        </ul>
+        <UiButton class="w-full" @click="view = 'code'">I saved them — continue</UiButton>
+      </section>
+
+      <form v-else-if="view === 'code'" class="grid gap-5" @submit.prevent="completeSignIn">
+        <UiCardHeader
+          title="Enter your code"
+          description="Enter the current code from your authenticator app, or a recovery code. If you have just set up your authenticator, wait for it to show a new code."
+        />
+        <UiField label="Code">
+          <UiInput
+            v-model="code"
+            required
+            autofocus
+            maxlength="64"
+            autocomplete="one-time-code"
+            spellcheck="false"
+            class="font-mono"
+          />
+        </UiField>
+        <div class="flex flex-wrap gap-2">
+          <UiButton type="submit" :disabled="busy">
+            <Loader2 v-if="busy" class="animate-spin" aria-hidden="true" />
+            {{ busy ? 'Signing in…' : 'Sign in' }}
+          </UiButton>
+          <UiButton variant="ghost" :disabled="busy" @click="view = 'password'">
+            Start again
+          </UiButton>
+        </div>
+      </form>
+    </UiCard>
+    <p class="text-muted-foreground mt-8 text-xs">Private file transfer for your network</p>
+  </div>
+
+  <!-- Workspace: sidebar, top bar, library and transfer queue. -->
+  <div v-if="view === 'files'" class="grid min-h-screen lg:grid-cols-[224px_minmax(0,1fr)]">
+    <aside
+      class="bg-sidebar border-border sticky top-0 hidden h-screen flex-col border-r lg:flex"
+      aria-label="Workspace navigation"
+    >
+      <div class="flex h-14 items-center gap-2.5 px-4">
+        <BrandMark />
+        <span class="text-[0.9375rem] font-semibold tracking-tight">ServerSend</span>
+      </div>
+      <nav class="flex flex-1 flex-col gap-1 px-3 pt-4">
+        <p
+          class="text-muted-foreground m-0 px-3 pb-2 text-[0.6875rem] font-medium tracking-[0.08em] uppercase"
+        >
+          Workspace
+        </p>
+        <a
+          href="#library"
+          aria-current="page"
+          class="bg-accent text-accent-foreground flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium no-underline"
+        >
+          <FolderOpen class="size-4" aria-hidden="true" />
+          File library
+        </a>
+        <a
+          href="#transfers"
+          class="text-muted-foreground hover:bg-muted hover:text-foreground flex items-center gap-2.5 rounded-md px-3 py-2 text-sm no-underline transition-colors"
+        >
+          <ArrowLeftRight class="size-4" aria-hidden="true" />
+          Transfers
+          <UiBadge v-if="activeCount > 0" class="ml-auto">{{ activeCount }}</UiBadge>
+        </a>
+      </nav>
+      <div class="border-border m-3 rounded-lg border p-3">
+        <p class="text-success m-0 flex items-center gap-1.5 text-xs font-medium">
+          <ShieldCheck class="size-3.5" aria-hidden="true" />
+          Private connection
+        </p>
+        <p class="text-muted-foreground m-0 mt-1 text-xs leading-5">
+          Your files stay on your server.
+        </p>
       </div>
     </aside>
-    <div v-if="view === 'files'" class="workspace-heading">
-      <div>
-        <p class="eyebrow">WORKSPACE / FILES</p>
-        <h2>Your files, in one place.</h2>
-        <p class="hint">Browse your library and keep an eye on your transfers.</p>
-      </div>
-      <span class="connection">● Connected</span>
-    </div>
-    <p v-if="error" class="error" role="alert">{{ error }}</p>
 
-    <form v-if="view === 'connect'" class="card" @submit.prevent="check">
-      <h2>Connect to a server</h2>
-      <label>
-        Server address
-        <input
-          v-model="address"
-          required
-          autofocus
-          placeholder="https://192.168.1.10:58443"
-          spellcheck="false"
-        />
-      </label>
-      <button type="submit" :disabled="busy">{{ busy ? 'Checking…' : 'Check server' }}</button>
-    </form>
+    <div class="flex min-w-0 flex-col">
+      <header
+        class="border-border bg-card/80 sticky top-0 z-10 flex h-14 items-center gap-3 border-b px-4 backdrop-blur sm:px-6"
+      >
+        <BrandMark class="lg:hidden" />
+        <h1 class="m-0 text-base font-semibold tracking-tight">Files</h1>
+        <div class="ml-auto flex items-center gap-3">
+          <span
+            v-if="account"
+            class="text-muted-foreground hidden max-w-72 truncate text-xs md:inline"
+            :title="account.username + ' · ' + account.origin"
+          >
+            <UserRound class="mr-1 inline size-3.5" aria-hidden="true" />
+            {{ account.username }} · {{ account.origin }}
+          </span>
+          <ThemeSwitch :model-value="theme" @update:model-value="applyTheme" />
+          <UiButton
+            v-if="account"
+            variant="ghost"
+            size="icon-sm"
+            :disabled="busy"
+            aria-label="Sign out"
+            title="Sign out"
+            @click="signOut"
+          >
+            <LogOut aria-hidden="true" />
+          </UiButton>
+        </div>
+      </header>
 
-    <section v-else-if="view === 'approve' && probe" class="card">
-      <h2>Is this your server?</h2>
-      <p v-if="probe.publicly_trusted">
-        This computer already trusts the certificate for <strong>{{ probe.origin }}</strong>.
-      </p>
-      <p v-else>
-        <strong>{{ probe.origin }}</strong> uses a private certificate. Compare this fingerprint
-        with the one your server operator gives you. Only continue if they match exactly.
-      </p>
-      <p class="fingerprint" data-test="fingerprint">{{ fingerprintGroups }}</p>
-      <p class="hint">Certificate: {{ probe.subject }}</p>
-      <div class="row">
-        <button type="button" :disabled="busy" @click="approve">They match — continue</button>
-        <button type="button" class="quiet" :disabled="busy" @click="view = 'connect'">Back</button>
-      </div>
-    </section>
+      <main class="grid flex-1 items-start gap-5 p-4 sm:p-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <UiAlert v-if="error" class="xl:col-span-2">{{ error }}</UiAlert>
 
-    <form v-else-if="view === 'password'" class="card" @submit.prevent="signIn">
-      <h2>Sign in</h2>
-      <label
-        >Username
-        <input v-model="username" required autofocus autocomplete="username" spellcheck="false"
-      /></label>
-      <label>
-        Password
-        <input v-model="password" type="password" required autocomplete="current-password" />
-      </label>
-      <p class="hint">New account? Enter the temporary password from your administrator.</p>
-      <div class="row">
-        <button type="submit" :disabled="busy">{{ busy ? 'Signing in…' : 'Continue' }}</button>
-        <button type="button" class="quiet" :disabled="busy" @click="view = 'connect'">
-          Change server
-        </button>
-      </div>
-    </form>
+        <UiCard as="section" id="library" class="min-w-0">
+          <div class="p-5 pb-4">
+            <UiCardHeader title="File library">
+              <template #action>
+                <div class="flex items-center gap-2">
+                  <UiBadge>{{ files.length }}</UiBadge>
+                  <UiButton
+                    variant="ghost"
+                    size="icon-sm"
+                    :disabled="busy"
+                    aria-label="Refresh files"
+                    title="Refresh"
+                    @click="refresh"
+                  >
+                    <RefreshCw aria-hidden="true" />
+                  </UiButton>
+                  <div class="upload-menu relative" @keydown.esc="uploadMenu = false">
+                    <UiButton
+                      :disabled="busy"
+                      :aria-expanded="uploadMenu"
+                      @click="uploadMenu = !uploadMenu"
+                    >
+                      <Upload aria-hidden="true" />
+                      Upload…
+                      <ChevronDown class="size-3.5" aria-hidden="true" />
+                    </UiButton>
+                    <div
+                      v-if="uploadMenu"
+                      class="upload-options bg-popover absolute top-[calc(100%+6px)] right-0 z-20 grid min-w-44 gap-1 rounded-lg border p-1.5 shadow-md"
+                    >
+                      <UiButton variant="ghost" class="justify-start" @click="upload">
+                        <FileText aria-hidden="true" />
+                        Files…
+                      </UiButton>
+                      <UiButton variant="ghost" class="justify-start" @click="uploadFolder">
+                        <Folder aria-hidden="true" />
+                        Folder…
+                      </UiButton>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </UiCardHeader>
+          </div>
 
-    <form v-else-if="view === 'replace'" class="card" @submit.prevent="replacePassword">
-      <h2>Choose your password</h2>
-      <p>Your temporary password must be replaced before you continue.</p>
-      <label>
-        New password (at least 12 characters)
-        <input
-          v-model="newPassword"
-          type="password"
-          required
-          minlength="12"
-          autofocus
-          autocomplete="new-password"
-        />
-      </label>
-      <button type="submit" :disabled="busy">{{ busy ? 'Saving…' : 'Set password' }}</button>
-    </form>
-
-    <form
-      v-else-if="view === 'enroll' && enrollment"
-      class="card"
-      @submit.prevent="confirmEnrollment"
-    >
-      <h2>Set up two-factor sign-in</h2>
-      <p>Scan this code with an authenticator app, then enter the six-digit code it shows.</p>
-      <img
-        class="qr"
-        :src="enrollment.qr"
-        alt="QR code for your authenticator app"
-        width="220"
-        height="220"
-      />
-      <p class="hint">Can't scan? Enter this key manually: <code>{{ enrollment.secret }}</code></p>
-      <label>
-        Six-digit code
-        <input
-          v-model="code"
-          required
-          inputmode="numeric"
-          pattern="[0-9]{6}"
-          maxlength="6"
-          autocomplete="one-time-code"
-        />
-      </label>
-      <button type="submit" :disabled="busy">{{ busy ? 'Checking…' : 'Confirm' }}</button>
-    </form>
-
-    <section v-else-if="view === 'recovery'" class="card">
-      <h2>Save your recovery codes</h2>
-      <p>
-        Each code signs you in once if you lose your authenticator. They are shown only now — store
-        them somewhere safe before continuing.
-      </p>
-      <ul class="codes">
-        <li v-for="recovery in recoveryCodes" :key="recovery">
-          <code>{{ recovery }}</code>
-        </li>
-      </ul>
-      <button type="button" @click="view = 'code'">I saved them — continue</button>
-    </section>
-
-    <form v-else-if="view === 'code'" class="card" @submit.prevent="completeSignIn">
-      <h2>Enter your code</h2>
-      <p>
-        Enter the current code from your authenticator app, or a recovery code. If you have just set
-        up your authenticator, wait for it to show a new code.
-      </p>
-      <label>
-        Code
-        <input
-          v-model="code"
-          required
-          autofocus
-          maxlength="64"
-          autocomplete="one-time-code"
-          spellcheck="false"
-        />
-      </label>
-      <div class="row">
-        <button type="submit" :disabled="busy">{{ busy ? 'Signing in…' : 'Sign in' }}</button>
-        <button type="button" class="quiet" :disabled="busy" @click="view = 'password'">
-          Start again
-        </button>
-      </div>
-    </form>
-
-    <main v-else-if="view === 'files'" class="columns">
-      <section id="library" class="card">
-        <div class="row spread">
-          <h2>File library <span class="count">{{ files.length }}</span></h2>
-          <div class="row">
-            <button type="button" class="quiet" :disabled="busy" @click="refresh">Refresh</button>
-            <div class="upload-menu" @keydown.esc="uploadMenu = false">
-              <button
-                type="button"
+          <nav
+            class="breadcrumbs border-border flex flex-wrap items-center gap-1 border-y px-4 py-2"
+            aria-label="Folder path"
+          >
+            <UiButton variant="ghost" size="sm" :disabled="busy" @click="navigate(0)">
+              <Home class="size-3.5" aria-hidden="true" />
+              All files
+            </UiButton>
+            <template v-for="(folder, index) in folders" :key="folder.id">
+              <ChevronRight class="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />
+              <UiButton
+                variant="ghost"
+                size="sm"
                 :disabled="busy"
-                :aria-expanded="uploadMenu"
-                @click="uploadMenu = !uploadMenu"
+                :aria-current="index === folders.length - 1 ? 'page' : undefined"
+                :class="
+                  index === folders.length - 1
+                    ? 'text-foreground font-medium'
+                    : 'text-muted-foreground'
+                "
+                @click="navigate(index + 1)"
               >
-                Upload… ▾
-              </button>
-              <div v-if="uploadMenu" class="upload-options">
-                <button @click="upload">Files…</button
-                ><button @click="uploadFolder">Folder…</button>
+                {{ folder.name }}
+              </UiButton>
+            </template>
+          </nav>
+
+          <section
+            v-if="pendingDelete"
+            class="delete-confirm border-destructive/30 bg-destructive/5 m-4 rounded-lg border p-4"
+            role="alertdialog"
+            aria-label="Confirm deletion"
+          >
+            <div class="flex items-start gap-3">
+              <TriangleAlert class="text-destructive mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              <div class="grid min-w-0 gap-1.5">
+                <h3 class="m-0 text-sm font-semibold">Delete “{{ pendingDelete.name }}”?</h3>
+                <p class="text-muted-foreground m-0 text-sm leading-6">
+                  {{
+                    pendingDelete.directory
+                      ? 'This folder and everything inside it will be permanently deleted.'
+                      : 'This file and all its versions will be permanently deleted.'
+                  }}
+                  This cannot be undone.
+                </p>
+                <div class="mt-1.5 flex flex-wrap gap-2">
+                  <UiButton
+                    variant="destructive"
+                    size="sm"
+                    class="danger"
+                    :disabled="busy"
+                    @click="deleteEntry"
+                  >
+                    Delete permanently
+                  </UiButton>
+                  <UiButton
+                    variant="ghost"
+                    size="sm"
+                    class="quiet"
+                    :disabled="busy"
+                    @click="pendingDelete = undefined"
+                  >
+                    Cancel
+                  </UiButton>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-        <nav class="breadcrumbs" aria-label="Folder path">
-          <button class="quiet" :disabled="busy" @click="navigate(0)">All files</button>
-          <template v-for="(folder, index) in folders" :key="folder.id"
-            ><span aria-hidden="true">/</span
-            ><button
-              class="quiet"
-              :disabled="busy"
-              :aria-current="index === folders.length - 1 ? 'page' : undefined"
-              @click="navigate(index + 1)"
-            >
-              {{ folder.name }}
-            </button></template
+          </section>
+
+          <form
+            class="border-border flex flex-wrap items-center gap-2 border-b px-4 py-3"
+            @submit.prevent="createFolder"
           >
-        </nav>
-        <section
-          v-if="pendingDelete"
-          class="delete-confirm"
-          role="alertdialog"
-          aria-label="Confirm deletion"
-        >
-          <h3>Delete “{{ pendingDelete.name }}”?</h3>
-          <p>
-            {{
-              pendingDelete.directory
-                ? 'This folder and everything inside it will be permanently deleted.'
-                : 'This file and all its versions will be permanently deleted.'
-            }}
-            This cannot be undone.
+            <UiInput
+              v-model="folderName"
+              required
+              maxlength="255"
+              placeholder="New folder name"
+              class="max-w-60 flex-1"
+            />
+            <UiButton variant="outline" type="submit" :disabled="busy">
+              <FolderPlus aria-hidden="true" />
+              Create folder
+            </UiButton>
+          </form>
+
+          <p v-if="files.length === 1000" class="text-muted-foreground m-0 px-5 pt-3 text-xs">
+            Showing the first 1,000 entries. This test build does not yet support catalog
+            pagination.
           </p>
-          <div class="row">
-            <button class="danger" :disabled="busy" @click="deleteEntry">Delete permanently</button
-            ><button class="quiet" :disabled="busy" @click="pendingDelete = undefined">
-              Cancel
-            </button>
-          </div>
-        </section>
-        <form class="row" @submit.prevent="createFolder">
-          <label>New folder name<input v-model="folderName" required maxlength="255" /></label
-          ><button :disabled="busy">Create folder</button>
-        </form>
-        <p v-if="files.length === 1000" class="hint">
-          Showing the first 1,000 entries. This test build does not yet support catalog pagination.
-        </p>
-        <p v-if="files.length === 0" class="hint">
-          Nothing uploaded yet. Choose “Upload…” to send your first file.
-        </p>
-        <ul v-else class="list file-list" aria-label="Files">
-          <li v-for="file in files" :key="file.id">
-            <button
-              v-if="file.directory"
-              class="folder-link name"
-              :disabled="busy"
-              @click="openFolder(file)"
+          <UiEmpty v-if="files.length === 0" title="Nothing uploaded yet">
+            <template #icon><FolderOpen /></template>
+            Choose “Upload…” to send your first file.
+          </UiEmpty>
+          <ul
+            v-else
+            class="list file-list m-0 max-h-[55vh] list-none overflow-y-auto p-0"
+            aria-label="Files"
+          >
+            <li
+              v-for="file in files"
+              :key="file.id"
+              class="group border-border hover:bg-muted/50 flex items-center gap-2 border-t px-4 py-2 transition-colors first:border-t-0"
             >
-              <span class="file-icon" aria-hidden="true">▱</span>{{ file.name }}
-            </button>
-            <span v-else class="name"
-              ><span class="file-icon" aria-hidden="true">▤</span>{{ file.name }}</span
-            >
-            <button
-              v-if="!file.directory"
-              type="button"
-              class="quiet"
-              :disabled="busy"
-              @click="download(file)"
-            >
-              Download…
-            </button>
-            <button
-              class="quiet delete-action"
-              :aria-label="'Delete ' + file.name"
-              :disabled="busy"
-              @click="pendingDelete = file"
-            >
-              Delete
-            </button>
-          </li>
-        </ul>
-      </section>
-      <section id="transfers" class="card">
-        <h2>Transfers <span class="count">{{ transfers.length }}</span></h2>
-        <p>↑ {{ size(speed.up) }}/s · ↓ {{ size(speed.down) }}/s</p>
-        <svg
-          viewBox="0 0 300 64"
-          role="img"
-          aria-label="Upload and download throughput over the last 60 seconds"
-        >
-          <polyline :points="chart('up')" fill="none" stroke="var(--accent)" stroke-width="2" />
-          <polyline :points="chart('down')" fill="none" stroke="var(--ok)" stroke-width="2" />
-        </svg>
-        <p class="hint">
-          Upload: violet · Download: green. Acknowledged/verified bytes per second; includes disk
-          and verification time.
-        </p>
-        <p v-if="transfers.length === 0" class="hint">
-          Uploads and downloads from this session appear here.
-        </p>
-        <ul v-else class="list transfer-list" tabindex="0" aria-label="Transfer queue">
-          <li v-for="item in recentTransfers" :key="item.id" class="transfer">
-            <div class="row spread">
-              <span class="name"
-                >{{ item.direction === 'upload' ? '↑' : '↓' }} {{ item.name }}</span
+              <button
+                v-if="file.directory"
+                type="button"
+                class="folder-link hover:text-primary flex min-w-0 flex-1 items-center gap-3 rounded-md border-0 bg-transparent p-1 text-left transition-colors"
+                :disabled="busy"
+                @click="openFolder(file)"
               >
-              <span :class="['state', item.state]">{{ status(item) }}</span>
+                <span
+                  class="bg-accent text-accent-foreground grid size-8 shrink-0 place-items-center rounded-md"
+                  aria-hidden="true"
+                >
+                  <Folder class="size-4" />
+                </span>
+                <span class="truncate text-sm font-medium">{{ file.name }}</span>
+              </button>
+              <span v-else class="flex min-w-0 flex-1 items-center gap-3 p-1">
+                <span
+                  class="bg-muted text-muted-foreground grid size-8 shrink-0 place-items-center rounded-md"
+                  aria-hidden="true"
+                >
+                  <FileText class="size-4" />
+                </span>
+                <span class="truncate text-sm">{{ file.name }}</span>
+              </span>
+              <UiButton
+                v-if="!file.directory"
+                variant="ghost"
+                size="icon-sm"
+                :disabled="busy"
+                :aria-label="'Download ' + file.name"
+                title="Download…"
+                @click="download(file)"
+              >
+                <Download aria-hidden="true" />
+              </UiButton>
+              <UiButton
+                variant="ghost"
+                size="icon-sm"
+                class="delete-action hover:text-destructive"
+                :aria-label="'Delete ' + file.name"
+                title="Delete"
+                :disabled="busy"
+                @click="pendingDelete = file"
+              >
+                <Trash2 aria-hidden="true" />
+              </UiButton>
+            </li>
+          </ul>
+        </UiCard>
+
+        <UiCard as="section" id="transfers" class="min-w-0">
+          <div class="p-5 pb-0">
+            <UiCardHeader title="Transfers">
+              <template #action>
+                <UiBadge>{{ transfers.length }}</UiBadge>
+              </template>
+            </UiCardHeader>
+          </div>
+          <div class="grid grid-cols-2 gap-3 p-5 pb-3">
+            <div class="bg-muted/60 rounded-lg p-3">
+              <p class="text-muted-foreground m-0 flex items-center gap-1.5 text-xs">
+                <ArrowUpFromLine class="text-chart-up size-3.5" aria-hidden="true" />
+                Upload
+              </p>
+              <p class="m-0 mt-1 text-lg font-semibold tabular-nums">{{ size(speed.up) }}/s</p>
             </div>
-            <progress v-if="item.state === 'active'" :value="percent(item)" max="100">
-              {{ percent(item) }}%
-            </progress>
-          </li>
-        </ul>
-      </section>
-    </main>
+            <div class="bg-muted/60 rounded-lg p-3">
+              <p class="text-muted-foreground m-0 flex items-center gap-1.5 text-xs">
+                <ArrowDownToLine class="text-chart-down size-3.5" aria-hidden="true" />
+                Download
+              </p>
+              <p class="m-0 mt-1 text-lg font-semibold tabular-nums">{{ size(speed.down) }}/s</p>
+            </div>
+          </div>
+          <div class="px-5">
+            <svg
+              viewBox="0 0 300 64"
+              preserveAspectRatio="none"
+              class="h-16 w-full"
+              role="img"
+              aria-label="Upload and download throughput over the last 60 seconds"
+            >
+              <line x1="0" y1="63" x2="300" y2="63" stroke="var(--border)" stroke-width="1" />
+              <polyline
+                :points="chart('up')"
+                fill="none"
+                stroke="var(--chart-up)"
+                stroke-width="2"
+                stroke-linejoin="round"
+                stroke-linecap="round"
+              />
+              <polyline
+                :points="chart('down')"
+                fill="none"
+                stroke="var(--chart-down)"
+                stroke-width="2"
+                stroke-linejoin="round"
+                stroke-linecap="round"
+              />
+            </svg>
+            <p class="text-muted-foreground m-0 mt-2 text-xs leading-5">
+              Acknowledged/verified bytes per second; includes disk and verification time.
+            </p>
+          </div>
+          <UiEmpty v-if="transfers.length === 0" title="No transfers yet">
+            <template #icon><ArrowLeftRight /></template>
+            Uploads and downloads from this session appear here.
+          </UiEmpty>
+          <ul
+            v-else
+            class="list transfer-list border-border m-0 mt-3 max-h-[min(48vh,480px)] list-none overflow-y-auto overscroll-contain border-t p-0"
+            tabindex="0"
+            aria-label="Transfer queue"
+          >
+            <li
+              v-for="item in recentTransfers"
+              :key="item.id"
+              class="border-border grid gap-1.5 border-t px-5 py-3 first:border-t-0"
+            >
+              <div class="flex items-center gap-2">
+                <ArrowUpFromLine
+                  v-if="item.direction === 'upload'"
+                  class="text-chart-up size-4 shrink-0"
+                  aria-hidden="true"
+                />
+                <ArrowDownToLine
+                  v-else
+                  class="text-chart-down size-4 shrink-0"
+                  aria-hidden="true"
+                />
+                <span class="min-w-0 flex-1 truncate text-sm font-medium">{{ item.name }}</span>
+                <UiBadge :tone="stateTone[item.state] ?? 'neutral'" dot>
+                  {{ stateLabel[item.state] ?? item.state }}
+                </UiBadge>
+              </div>
+              <p
+                class="text-muted-foreground m-0 truncate pl-6 text-xs tabular-nums"
+                :class="item.state === 'failed' ? 'text-destructive' : ''"
+              >
+                {{ status(item) }}
+              </p>
+              <div v-if="item.state === 'active'" class="pl-6">
+                <UiProgress :value="percent(item)" />
+              </div>
+            </li>
+          </ul>
+        </UiCard>
+      </main>
+    </div>
   </div>
 </template>
-
-<style scoped>
-.shell {
-  max-width: 1440px;
-  margin: 0 auto;
-  padding: 0 32px 32px;
-}
-.bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 28px;
-  min-height: 76px;
-  border-bottom: 1px solid var(--border);
-}
-.bar h1 {
-  margin: 0 auto 0 0;
-  font-size: 18px;
-}
-.who,
-.hint,
-.theme span {
-  color: var(--muted);
-  font-size: 13px;
-}
-.theme {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.card {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  max-width: 520px;
-  margin: 0 auto 16px;
-  padding: 20px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: 0 2px 8px #00000003;
-}
-.columns {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 16px;
-  align-items: start;
-}
-.columns .card {
-  max-width: none;
-  margin: 0;
-  min-width: 0;
-}
-h2 {
-  margin: 0;
-  font-size: 17px;
-}
-p {
-  margin: 0;
-}
-label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--muted);
-}
-input,
-select {
-  padding: 8px 10px;
-  background: var(--ground);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-button {
-  padding: 8px 14px;
-  background: var(--accent);
-  color: var(--accent-text);
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-button.quiet {
-  background: transparent;
-  color: var(--text);
-  border-color: var(--border);
-}
-button:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-.row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-.spread {
-  justify-content: space-between;
-}
-.error {
-  max-width: 520px;
-  margin: 0 auto 12px;
-  padding: 10px 12px;
-  color: var(--danger);
-  border: 1px solid var(--danger);
-  border-radius: 8px;
-}
-.fingerprint,
-code {
-  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-}
-.fingerprint {
-  padding: 10px;
-  background: var(--ground);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-.qr {
-  align-self: center;
-  background: #ffffff;
-  padding: 8px;
-  border-radius: 6px;
-}
-.codes {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-size: 13px;
-}
-.list {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 0;
-  border-top: 1px solid var(--border);
-}
-.list li.transfer {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-}
-.name {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.state {
-  color: var(--muted);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-.state.failed {
-  color: var(--danger);
-}
-.state.done {
-  color: var(--ok);
-}
-progress {
-  width: 100%;
-  height: 6px;
-  accent-color: var(--accent);
-}
-
-.workspace {
-  display: grid;
-  grid-template-columns: 180px minmax(0, 1fr);
-  column-gap: 32px;
-}
-.workspace .bar {
-  grid-column: 1/-1;
-  margin-bottom: 0;
-}
-.workspace .workspace-heading,
-.workspace .columns,
-.workspace > .error {
-  grid-column: 2;
-}
-.sidebar {
-  grid-column: 1;
-  grid-row: 2/6;
-  padding-top: 36px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border-right: 1px solid var(--border);
-  padding-right: 20px;
-}
-.sidebar a {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--muted);
-  text-decoration: none;
-  border-radius: 8px;
-  padding: 10px;
-  font-size: 13px;
-}
-.sidebar .nav-active {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  color: var(--accent);
-  font-weight: 600;
-}
-.sidebar .eyebrow {
-  margin-bottom: 12px;
-  font-size: 10px;
-}
-.sidebar-note {
-  margin-top: 32px;
-  font-size: 12px;
-  color: var(--muted);
-}
-@media (max-width: 1100px) {
-  .workspace {
-    display: block;
-  }
-  .sidebar {
-    display: none;
-  }
-}
-.upload-menu {
-  position: relative;
-}
-.upload-options {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  z-index: 5;
-  display: grid;
-  min-width: 160px;
-  padding: 6px;
-  gap: 4px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px #0002;
-}
-.upload-options button {
-  background: transparent;
-  color: var(--text);
-  border: 0;
-  text-align: left;
-}
-.upload-options button:hover {
-  background: var(--ground);
-}
-.brand-mark {
-  display: inline-grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  margin-right: 8px;
-  border-radius: 9px;
-  background: var(--accent);
-  color: var(--accent-text);
-}
-.brand-dot {
-  color: var(--accent);
-}
-.workspace-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin: 32px 0;
-}
-.workspace-heading h2 {
-  font-size: 28px;
-  letter-spacing: -0.8px;
-  margin: 8px 0;
-}
-.eyebrow {
-  color: var(--muted);
-  font-size: 11px;
-  letter-spacing: 1.5px;
-}
-.connection {
-  font-size: 12px;
-  color: var(--ok);
-}
-.count {
-  font-size: 12px;
-  font-weight: 500;
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: var(--ground);
-  color: var(--muted);
-}
-.breadcrumbs {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  padding: 10px 0;
-  border-block: 1px solid var(--border);
-}
-.breadcrumbs button {
-  border: 0;
-  padding: 4px 8px;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-button.folder-link {
-  background: transparent;
-  color: var(--text);
-  border: 0;
-  padding: 10px 0;
-  text-align: left;
-  white-space: normal;
-  flex: 1;
-}
-button.folder-link:hover {
-  color: var(--accent);
-}
-.file-icon {
-  display: inline-block;
-  color: var(--accent);
-  background: var(--ground);
-  padding: 4px 10px;
-  margin-right: 10px;
-  border-radius: 8px;
-}
-.file-list {
-  max-height: 55vh;
-  overflow-y: auto;
-}
-.transfer-list {
-  max-height: min(48vh, 480px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-right: 8px;
-}
-.list li {
-  padding: 12px 0;
-}
-.list .name {
-  flex: 1;
-}
-.delete-action {
-  font-size: 12px;
-}
-button.danger {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: white;
-}
-.delete-confirm {
-  border: 1px solid var(--danger);
-  border-radius: 10px;
-  padding: 16px;
-  display: grid;
-  gap: 12px;
-}
-.delete-confirm h3 {
-  margin: 0;
-}
-@media (max-width: 900px) {
-  .columns {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .shell {
-    padding: 0 16px 24px;
-  }
-  .who {
-    width: 100%;
-    order: 3;
-  }
-  .bar {
-    padding: 12px 0;
-  }
-}
-</style>

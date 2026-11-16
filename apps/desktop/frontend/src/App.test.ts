@@ -76,7 +76,7 @@ describe('desktop transfer slice', () => {
     });
     const wrapper = mount(App);
 
-    await wrapper.find('input').setValue('server.test:58443');
+    await wrapper.find('form input').setValue('server.test:58443');
     await submit(wrapper);
     expect(wrapper.find('[data-test="fingerprint"]').text()).toBe(
       fingerprint.match(/.{4}/g)?.join(' '),
@@ -88,25 +88,25 @@ describe('desktop transfer slice', () => {
     await flushPromises();
     expect(bridge.service.Approve).toHaveBeenCalledWith(fingerprint);
 
-    const [user, pass] = wrapper.findAll('input');
+    const [user, pass] = wrapper.findAll('form input');
     await user?.setValue('admin');
     await pass?.setValue('temporary');
     await submit(wrapper);
     expect(wrapper.text()).toContain('Choose your password');
 
-    await wrapper.find('input').setValue('a long permanent password');
+    await wrapper.find('form input').setValue('a long permanent password');
     await submit(wrapper);
     expect(wrapper.find('img').attributes('src')).toBe('data:image/png;base64,AA==');
     expect(wrapper.text()).toContain('SECRETKEY');
 
-    await wrapper.find('input').setValue('123456');
+    await wrapper.find('form input').setValue('123456');
     await submit(wrapper);
     expect(wrapper.text()).toContain('AAAA-1111');
     expect(wrapper.text()).not.toContain('SECRETKEY');
     expect(bridge.service.Files).not.toHaveBeenCalled();
 
     await wrapper.find('button').trigger('click');
-    await wrapper.find('input').setValue('654321');
+    await wrapper.find('form input').setValue('654321');
     await submit(wrapper);
     expect(bridge.service.CompleteSignIn).toHaveBeenCalledWith('654321');
     expect(wrapper.text()).toContain('report.txt');
@@ -116,7 +116,7 @@ describe('desktop transfer slice', () => {
   it('keeps the user on the same step with the reason when an action fails', async () => {
     bridge.service.Probe.mockRejectedValue(new Error('could not reach a ServerSend server'));
     const wrapper = mount(App);
-    await wrapper.find('input').setValue('nowhere.test');
+    await wrapper.find('form input').setValue('nowhere.test');
     await submit(wrapper);
     expect(wrapper.find('[role="alert"]').text()).toContain('could not reach');
     expect(wrapper.text()).toContain('Connect to a server');
@@ -131,12 +131,12 @@ describe('desktop transfer slice', () => {
       serverId: 's',
     });
     const wrapper = mount(App);
-    await wrapper.find('input').setValue('server.test:58443');
+    await wrapper.find('form input').setValue('server.test:58443');
     await submit(wrapper);
     await wrapper.find('button').trigger('click');
     await flushPromises();
     await submit(wrapper);
-    await wrapper.find('input').setValue('123456');
+    await wrapper.find('form input').setValue('123456');
     await submit(wrapper);
     expect(wrapper.text()).toContain('Uploads and downloads from this session appear here.');
 
@@ -235,7 +235,7 @@ describe('desktop transfer slice', () => {
   it('applies and persists the chosen theme', async () => {
     const wrapper = mount(App);
     expect(document.documentElement.dataset.theme).toBeUndefined();
-    await wrapper.find('select').setValue('dark');
+    await wrapper.find('input[value="dark"]').setValue(true);
     expect(document.documentElement.dataset.theme).toBe('dark');
     expect(localStorage.getItem('serversend-theme')).toBe('dark');
     wrapper.unmount();

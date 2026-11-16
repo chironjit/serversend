@@ -1,5 +1,15 @@
 <script setup lang="ts">
 import { onUnmounted, ref } from 'vue';
+import { Loader2, LogOut } from 'lucide-vue-next';
+import UiAlert from './ui/UiAlert.vue';
+import UiBadge from './ui/UiBadge.vue';
+import UiButton from './ui/UiButton.vue';
+import UiCard from './ui/UiCard.vue';
+import UiCardHeader from './ui/UiCardHeader.vue';
+import UiCode from './ui/UiCode.vue';
+import UiField from './ui/UiField.vue';
+import UiInput from './ui/UiInput.vue';
+import UiTable from './ui/UiTable.vue';
 const step = ref('password');
 const username = ref('');
 const password = ref('');
@@ -146,96 +156,123 @@ async function signOut() {
 }
 </script>
 <template>
-  <section
-    class="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900"
-  >
-    <h2 class="text-lg font-semibold">
-      {{ step === 'users' ? 'User accounts' : 'Administrator sign-in' }}
-    </h2>
-    <p v-if="step !== 'users'" class="my-3 text-sm">
-      Administrators manage accounts here. Users upload and download in the desktop app.
-    </p>
-    <p v-if="error" role="alert" class="my-3 text-red-700 dark:text-red-300">{{ error }}</p>
-    <div v-if="step === 'recovery'">
-      <h3>Save your recovery codes</h3>
-      <ul>
-        <li v-for="value in codes" :key="value"><code>{{ value }}</code></li>
+  <UiCard as="section" class="p-5 sm:p-6">
+    <UiCardHeader
+      :title="step === 'users' ? 'User accounts' : 'Administrator sign-in'"
+      :description="
+        step === 'users'
+          ? undefined
+          : 'Administrators manage accounts here. Users upload and download in the desktop app.'
+      "
+    />
+    <UiAlert v-if="error" class="mt-4">{{ error }}</UiAlert>
+    <div v-if="step === 'recovery'" class="mt-5 grid gap-4">
+      <h3 class="m-0 text-sm font-semibold">Save your recovery codes</h3>
+      <p class="text-muted-foreground m-0 text-sm leading-6">
+        Each code signs you in once if you lose your authenticator. They are shown only now — store
+        them somewhere safe before continuing.
+      </p>
+      <ul class="m-0 grid list-none grid-cols-1 gap-2 p-0 sm:grid-cols-2">
+        <li v-for="value in codes" :key="value">
+          <UiCode block class="text-center">{{ value }}</UiCode>
+        </li>
       </ul>
-      <button class="action-button mt-4" @click="step = 'second_factor'">
+      <UiButton class="w-full sm:w-auto" @click="step = 'second_factor'">
         I saved them — continue
-      </button>
+      </UiButton>
     </div>
     <form
       v-else
-      class="mt-4 grid gap-4"
+      class="mt-5 grid gap-4"
       :class="step === 'users' ? 'create-form' : 'max-w-md'"
       @submit.prevent="submit"
     >
       <template v-if="step === 'password'">
-        <label>Username<input v-model="username" required autocomplete="username" /></label>
-        <label
-          >Password<input
-            v-model="password"
-            type="password"
-            required
-            autocomplete="current-password"
-        /></label>
+        <UiField label="Username">
+          <UiInput v-model="username" required autocomplete="username" />
+        </UiField>
+        <UiField label="Password">
+          <UiInput v-model="password" type="password" required autocomplete="current-password" />
+        </UiField>
       </template>
-      <label v-if="step === 'replace_password'"
-        >New password (12–128 characters)<input
+      <UiField v-if="step === 'replace_password'" label="New password" hint="12–128 characters.">
+        <UiInput
           v-model="newPassword"
           type="password"
           minlength="12"
           maxlength="128"
           required
           autocomplete="new-password"
-      /></label>
+        />
+      </UiField>
       <template v-if="step === 'enroll_totp'">
-        <p>Scan with your authenticator.</p>
-        <img :src="qr" alt="Authenticator QR code" width="220" height="220" /><code>{{
-          secret
-        }}</code>
+        <p class="text-muted-foreground m-0 text-sm">Scan with your authenticator.</p>
+        <img
+          class="rounded-lg border bg-white p-2"
+          :src="qr"
+          alt="Authenticator QR code"
+          width="220"
+          height="220"
+        />
+        <p class="text-muted-foreground m-0 text-xs leading-6">
+          Can't scan? Enter this key manually:
+          <UiCode class="wrap-anywhere">{{ secret }}</UiCode>
+        </p>
       </template>
-      <label v-if="step === 'enroll_totp' || step === 'second_factor'"
-        >Authenticator or recovery code<input
-          v-model="code"
-          required
-          autocomplete="one-time-code"
-          maxlength="64"
-      /></label>
+      <UiField
+        v-if="step === 'enroll_totp' || step === 'second_factor'"
+        label="Authenticator or recovery code"
+      >
+        <UiInput v-model="code" required autocomplete="one-time-code" maxlength="64" />
+      </UiField>
       <template v-if="step === 'users'">
-        <p class="text-sm create-note">
+        <p class="create-note text-muted-foreground m-0 text-xs leading-5">
           Creating users requires a sign-in within the last five minutes. Sign out and back in if it
           expires.
         </p>
-        <label>New username<input v-model="newUser" required autocomplete="off" /></label>
+        <UiField label="New username">
+          <UiInput v-model="newUser" required autocomplete="off" />
+        </UiField>
       </template>
-      <button class="action-button" :disabled="busy">
+      <UiButton type="submit" :disabled="busy" class="w-full sm:w-auto">
+        <Loader2 v-if="busy" class="animate-spin" aria-hidden="true" />
         {{ busy ? 'Working…' : step === 'users' ? 'Create user' : 'Continue' }}
-      </button>
+      </UiButton>
     </form>
-    <div v-if="step === 'users'" class="accounts-table mt-6">
-      <div class="mb-4 flex items-center justify-between">
-        <h3 class="font-semibold">All users · {{ users.length }}</h3>
+    <div v-if="step === 'users'" class="mt-6">
+      <div class="flex items-center gap-2">
+        <h3 class="m-0 text-sm font-semibold">All users</h3>
+        <UiBadge>{{ users.length }}</UiBadge>
       </div>
-      <p class="mb-4 text-sm text-slate-500">
+      <p class="text-muted-foreground mt-1.5 text-xs leading-5">
         Temporary passwords remain available until replaced or expired. Account status refreshes
         every five seconds.
       </p>
-      <div class="overflow-auto rounded-xl border border-slate-200 dark:border-slate-700">
-        <table class="w-full text-left text-sm">
-          <thead>
-            <tr>
-              <th>User</th>
-              <th>Status</th>
-              <th>Temporary password</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="user in users" :key="user.id">
-              <td class="font-medium">{{ user.username }}</td>
-              <td>
-                <span class="badge">{{
+      <UiTable class="mt-3">
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Status</th>
+            <th>Temporary password</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="user in users" :key="user.id">
+            <td class="font-medium">{{ user.username }}</td>
+            <td>
+              <UiBadge
+                :tone="
+                  user.disabled
+                    ? 'neutral'
+                    : user.state === 'password_required'
+                      ? 'warning'
+                      : user.state === 'totp_required'
+                        ? 'primary'
+                        : 'success'
+                "
+                dot
+              >
+                {{
                   user.disabled
                     ? 'Disabled'
                     : user.state === 'password_required'
@@ -243,28 +280,34 @@ async function signOut() {
                       : user.state === 'totp_required'
                         ? 'Setting up 2FA'
                         : 'Active'
-                }}</span>
-              </td>
-              <td>
-                <template v-if="user.temporary_password"
-                  ><code>{{ user.temporary_password }}</code
-                  ><small class="block"
-                    >Expires {{ new Date(user.expires_at!).toLocaleString() }}</small
-                  ></template
-                ><span v-else>{{
-                  user.state === 'password_required' ? 'Expired or unavailable' : 'Password set'
-                }}</span>
-              </td>
-            </tr>
-            <tr v-if="!users.length">
-              <td colspan="3">No users yet. Create an account above to get started.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+                }}
+              </UiBadge>
+            </td>
+            <td>
+              <template v-if="user.temporary_password">
+                <UiCode>{{ user.temporary_password }}</UiCode>
+                <small class="text-muted-foreground mt-1 block text-xs">
+                  Expires {{ new Date(user.expires_at!).toLocaleString() }}
+                </small>
+              </template>
+              <span v-else class="text-muted-foreground">{{
+                user.state === 'password_required' ? 'Expired or unavailable' : 'Password set'
+              }}</span>
+            </td>
+          </tr>
+          <tr v-if="!users.length">
+            <td colspan="3" class="text-muted-foreground">
+              No users yet. Create an account above to get started.
+            </td>
+          </tr>
+        </tbody>
+      </UiTable>
     </div>
-    <button v-if="step === 'users'" class="action-button mt-4" @click="signOut">Sign out</button>
-  </section>
+    <UiButton v-if="step === 'users'" variant="outline" class="mt-4" @click="signOut">
+      <LogOut aria-hidden="true" />
+      Sign out
+    </UiButton>
+  </UiCard>
 </template>
 <style scoped>
 .create-form {
@@ -273,35 +316,10 @@ async function signOut() {
 }
 .create-note {
   grid-column: 1/-1;
-  color: #64748b;
 }
 @media (max-width: 600px) {
   .create-form {
     grid-template-columns: 1fr;
   }
-}
-th,
-td {
-  padding: 16px;
-  border-bottom: 1px solid #94a3b833;
-}
-th {
-  color: #64748b;
-  font-weight: 500;
-}
-.badge {
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: #8b5cf61a;
-  white-space: nowrap;
-}
-input {
-  display: block;
-  width: 100%;
-  padding: 0.5rem;
-  border: 1px solid #64748b;
-  border-radius: 0.375rem;
-  background: transparent;
-  color: inherit;
 }
 </style>

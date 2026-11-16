@@ -1,33 +1,40 @@
 <script setup lang="ts">
+import { Monitor, Moon, Sun } from 'lucide-vue-next';
 import { useTheme } from '../theme';
 
 const { preference, setPreference, storageUnavailable } = useTheme();
-const choices = ['light', 'dark', 'system'] as const;
+const choices = [
+  { value: 'light', label: 'Light', icon: Sun },
+  { value: 'dark', label: 'Dark', icon: Moon },
+  { value: 'system', label: 'Match system', icon: Monitor },
+] as const;
 </script>
 
 <template>
-  <fieldset>
-    <legend class="mb-2 text-sm font-medium text-slate-600 dark:text-slate-300">Appearance</legend>
-    <div class="flex flex-wrap gap-1 rounded-xl border border-slate-300 p-1 dark:border-slate-600">
-      <label v-for="choice in choices" :key="choice" class="relative cursor-pointer">
+  <fieldset class="relative m-0 min-w-0 border-0 p-0">
+    <legend class="sr-only">Appearance</legend>
+    <div class="bg-muted inline-flex items-center gap-0.5 rounded-lg p-0.5">
+      <label v-for="choice in choices" :key="choice.value" :title="choice.label" class="relative">
         <input
           type="radio"
           name="theme"
-          :value="choice"
-          :checked="preference === choice"
+          :value="choice.value"
+          :checked="preference === choice.value"
           class="peer sr-only"
-          @change="setPreference(choice)"
+          @change="setPreference(choice.value)"
         />
         <span
-          class="block rounded-lg px-3 py-2 text-sm font-medium capitalize peer-checked:bg-slate-900 peer-checked:text-white peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-teal-700 dark:peer-checked:bg-slate-100 dark:peer-checked:text-slate-950 dark:peer-focus-visible:outline-teal-300"
-          >{{ choice }}</span
+          class="text-muted-foreground hover:text-foreground peer-checked:bg-card peer-checked:text-foreground peer-focus-visible:outline-ring grid size-7 place-items-center rounded-md transition-colors peer-checked:shadow-xs peer-focus-visible:outline-2"
         >
+          <component :is="choice.icon" class="size-4" aria-hidden="true" />
+          <span class="sr-only">{{ choice.label }}</span>
+        </span>
       </label>
     </div>
     <p
       v-if="storageUnavailable"
       role="status"
-      class="mt-2 max-w-xs text-sm text-amber-800 dark:text-amber-200"
+      class="text-warning absolute top-full right-0 mt-2 w-64 text-xs leading-5"
     >
       This browser could not save your preference. It applies until this page is closed.
     </p>
