@@ -1,7 +1,7 @@
 name: serversend
 services:
   server:
-    image: serversend:dev
+    image: ${SERVER_SEND_IMAGE:-ghcr.io/chironjit/serversend:0.1}
     container_name: serversend
     restart: unless-stopped
     read_only: true

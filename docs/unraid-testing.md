@@ -4,6 +4,8 @@ Use TCP **58443** permanently, with a DHCP reservation for the Unraid LAN addres
 
 This image uses Debian Bookworm slim and runs as UID/GID 10001.
 
+For versioned images from GHCR and update subscriptions, start with [releases and GHCR deployment](releases.md). The manual image transfer below remains available for local development builds.
+
 ## Build and transfer the image
 
 On your development computer, from the repository root (Docker must be running):
@@ -44,7 +46,7 @@ Add a container (enable Advanced View where needed):
 
 Do not enable privileged mode. Enable Autostart after setup. Unraid saves this template, including mappings and settings, for later recreations. If using Tailscale too, supply LAN and Tailscale IPv4 addresses comma-separated in `SERVER_SEND_TLS_IPS`.
 
-Alternatively, if Docker Compose is already available, copy `apps/server/deploy/compose.unraid.yaml` and `unraid.env.example` to a persistent directory. Rename the env example `serversend.env`, edit the IP once, and use:
+Alternatively, if Docker Compose is already available, copy `apps/server/deploy/compose.unraid.yaml` and `unraid.env.example` to a persistent directory. Rename the env example `serversend.env`, edit the IP once, and use `SERVER_SEND_IMAGE=serversend:dev` for the locally loaded image (the default is the published GHCR `0.1` channel), then run:
 
 ```sh
 docker compose --env-file serversend.env -f compose.unraid.yaml up -d

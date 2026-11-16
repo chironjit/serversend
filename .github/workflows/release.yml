@@ -1,0 +1,70 @@
+name: Release server
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-server
+  cancel-in-progress: false
+
+jobs:
+  check:
+    uses: ./.github/workflows/check.yml
+
+  publish:
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo 'Use a release tag such as v0.1.0; prereleases are not published by this workflow.' >&2
+            exit 1
+          fi
+          newest=$(git tag --list | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -n 1)
+          test "$RELEASE_TAG" = "$newest" || { echo 'Publish versions in increasing order.' >&2; exit 1; }
+          version=${RELEASE_TAG#v}
+          echo "IMAGE=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "SERIES=${version%.*}" >> "$GITHUB_ENV"
+      - name: Build linux/amd64 image
+        run: |
+          docker build --platform linux/amd64 \
+            -f apps/server/deploy/Dockerfile \
+            --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" \
+            --label "org.opencontainers.image.version=$VERSION" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            -t "$IMAGE:$VERSION" -t "$IMAGE:$SERIES" -t "$IMAGE:latest" .
+      - name: Check container TLS and persistence
+        run: |
+          bash apps/server/scripts/check_container.sh "$IMAGE:$VERSION" --private-ipv4
+          bash apps/server/scripts/check_container.sh "$IMAGE:$VERSION" external
+      - name: Sign in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Publish version and update channels
+        run: |
+          docker push "$IMAGE:$VERSION"
+          docker push "$IMAGE:$SERIES"
+          docker push "$IMAGE:latest"
+      - name: Sign out of GHCR
+        if: always()
+        run: docker logout ghcr.io
