@@ -17,10 +17,20 @@ func WithAuthentication(service *auth.Service) Option {
 	return func(o *options) { o.authentication = service }
 }
 
-// serveAuthentication recognizes only restricted password attempts. No access
-// token, cookie, device registration or admin permission is issued here.
+const (
+	passwordPath        = api.BasePath + "/auth/password"
+	passwordReplacePath = api.BasePath + "/auth/password/replace"
+	totpEnrollPath      = api.BasePath + "/auth/totp/enroll"
+	totpConfirmPath     = api.BasePath + "/auth/totp/confirm"
+)
+
+// serveAuthentication recognizes only restricted onboarding attempts. No
+// access token, cookie, device registration or admin permission is issued
+// here; second-factor login belongs to the session endpoints.
 func serveAuthentication(w http.ResponseWriter, r *http.Request, service *auth.Service) bool {
-	if r.URL.Path != api.BasePath+"/auth/password" && r.URL.Path != api.BasePath+"/auth/password/replace" {
+	switch r.URL.Path {
+	case passwordPath, passwordReplacePath, totpEnrollPath, totpConfirmPath:
+	default:
 		return false
 	}
 	if r.Method != http.MethodPost {
@@ -43,7 +53,7 @@ func serveAuthentication(w http.ResponseWriter, r *http.Request, service *auth.S
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, api.MaxAuthenticationBytes)
 	defer r.Body.Close()
-	if r.URL.Path == api.BasePath+"/auth/password" {
+	if r.URL.Path == passwordPath {
 		request, err := api.DecodePasswordAuthentication(r.Body)
 		if err != nil {
 			writeAuthenticationDecodeError(w, r, err)
@@ -62,16 +72,43 @@ func serveAuthentication(w http.ResponseWriter, r *http.Request, service *auth.S
 		writeAuthenticationError(w, r, auth.ErrCredentials)
 		return true
 	}
-	request, err := api.DecodePasswordReplacement(r.Body)
-	if err != nil {
-		writeAuthenticationDecodeError(w, r, err)
-		return true
+	token := parts[1]
+	switch r.URL.Path {
+	case passwordReplacePath:
+		request, err := api.DecodePasswordReplacement(r.Body)
+		if err != nil {
+			writeAuthenticationDecodeError(w, r, err)
+			return true
+		}
+		if err := service.ReplacePassword(r.Context(), token, request.Password); err != nil {
+			writeAuthenticationError(w, r, err)
+			return true
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case totpEnrollPath:
+		if err := api.DecodeEmptyRequest(r.Body); err != nil {
+			writeAuthenticationDecodeError(w, r, err)
+			return true
+		}
+		enrollment, err := service.BeginTOTPEnrollment(r.Context(), token)
+		if err != nil {
+			writeAuthenticationError(w, r, err)
+			return true
+		}
+		writeJSON(w, r, 200, enrollment)
+	case totpConfirmPath:
+		request, err := api.DecodeSecondFactorCode(r.Body)
+		if err != nil {
+			writeAuthenticationDecodeError(w, r, err)
+			return true
+		}
+		codes, err := service.ConfirmTOTPEnrollment(r.Context(), token, request.Code)
+		if err != nil {
+			writeAuthenticationError(w, r, err)
+			return true
+		}
+		writeJSON(w, r, 200, api.RecoveryCodes{Codes: codes})
 	}
-	if err := service.ReplacePassword(r.Context(), parts[1], request.Password); err != nil {
-		writeAuthenticationError(w, r, err)
-		return true
-	}
-	w.WriteHeader(http.StatusNoContent)
 	return true
 }
 
@@ -93,6 +130,8 @@ func writeAuthenticationError(w http.ResponseWriter, r *http.Request, err error)
 	case errors.Is(err, auth.ErrOverloaded):
 		w.Header().Set("Retry-After", "1")
 		writeJSON(w, r, 429, api.ErrorResponse{Error: api.Error{Code: api.Overloaded, Message: "Too many authentication attempts; wait and try again", RetryAfterSeconds: 1}})
+	case errors.Is(err, auth.ErrTwoFactorUnavailable):
+		writeError(w, r, 503, api.Unavailable, "Two-factor authentication is not available; contact the server operator")
 	default:
 		writeError(w, r, 503, api.Unavailable, "Authentication is temporarily unavailable; try again shortly")
 	}

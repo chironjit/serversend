@@ -200,6 +200,19 @@ func TestServerUpgradeEveryPriorSchema(t *testing.T) {
 					t.Fatalf("prior reservation lost: %d %v", reserved, err)
 				}
 			}
+			if prior >= 3 {
+				c, err := NewRepository(db).CredentialsByUsername(context.Background(), string(ownerA))
+				if err != nil || c.Revision != 2 || c.Epoch != 3 || c.TemporaryExpiresAt.Int64 != 200000 || c.SecondFactorBlockedUntil != 0 {
+					t.Fatalf("prior credentials lost: %+v %v", c, err)
+				}
+				var failures, audits int
+				if err := db.QueryRow(`SELECT failures FROM auth_challenges WHERE account_id=?`, ownerA).Scan(&failures); err != nil || failures != 0 {
+					t.Fatalf("prior challenge lost: %d %v", failures, err)
+				}
+				if err := db.QueryRow(`SELECT count(*) FROM audit_events`).Scan(&audits); err != nil || audits != 1 {
+					t.Fatalf("prior audit lost: %d %v", audits, err)
+				}
+			}
 			if prior > 0 {
 				var id string
 				var seed []byte

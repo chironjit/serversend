@@ -10,11 +10,11 @@ Implement the architecture in [Implementation plan](implementation-plan.md) in s
 | 02 | Complete (contracts) | Versioned wire types, scoped identifiers, lifecycle validation, TLS-bound signed identity proofs, pagination, upload/manifest/catalog/event contracts, fifteen JSON fixtures and the requirement-to-test map are implemented and locally checked. Runtime handlers remain in their owning later chunks. See [protocol foundation](protocol-foundation.md). |
 | 03 | Platform verification pending | Initial server account/upload/storage and desktop profile/queue schemas and repositories, private opening policy, transaction helpers, metadata snapshots, deterministic fault fixtures and Linux acceptance checks are implemented. Windows/macOS native CGO qualification remains; the activated CI matrix covers it once hosted runs execute. See [SQLite foundation](sqlite-foundation.md). |
 | 04 | In progress | TLS-only process, automatic private IPv4 certificates/renewal, persistent Ed25519 identity, storage checks, health/readiness/capability endpoints, graceful shutdown and non-root container image/Compose example are implemented. An embedded Vue admin shell with readiness and persisted Light/Dark/System themes is implemented; its 24 UI tests pass. The user approved `@tailwindcss/vite` on 2026-11-16; production CSS and server checks now pass. Updated container validation remains. Full deployment qualification and the persistence dependency gates remain. See [server development](server-development.md). |
-| 05 | In progress | Receiver-based server/desktop repositories, schema-3 authentication state, account issuance/recovery/reset/disable services, persistent backoff, one-use scoped password challenges, atomic replacement, audit rollback and HTTP adapter/contracts are implemented and tested. Production Argon2id selection awaits dependency approval; executable/CLI integration and full session-backed administrator authorization remain. |
-| 06 | In progress | TOTP secret/QR generation, deterministic verification, server/account-bound AES-GCM secret protection and scoped high-entropy recovery-code helpers are implemented. A private, durable configuration-key helper is tested for concurrent initialization, restart, corruption and injected filesystem failures. Enrollment state, persisted encrypted secrets, atomic replay/code consumption and account-flow integration remain. See [TOTP foundation](twofactor-foundation.md). |
+| 05 | In progress | Receiver-based repositories, authentication state, account issuance/recovery/reset/disable services, persistent backoff, one-use scoped password challenges, atomic replacement and audit rollback are implemented and tested. Production Argon2id (`golang.org/x/crypto`, approved 2026-11-16) is the process hasher; the executable mounts the restricted password/TOTP onboarding endpoints and provides local `-bootstrap-admin` / `-recover-bootstrap-admin` operator commands. Remaining: administrator operations (create user, reset, disable) have no caller until Chunk 07 sessions produce a reauthenticated principal; Argon2id parameters are the RFC 9106 64 MiB profile and are not yet calibrated on target Unraid hardware. |
+| 06 | In progress | TOTP secret/QR generation, deterministic verification, server/account-bound AES-GCM secret protection, scoped recovery-code helpers and the durable configuration-key helper are implemented. Schema 4 and the account flow now persist encrypted provisional/confirmed secrets, consume TOTP time steps and recovery codes atomically with the one-use challenge, apply an independent persistent second-factor backoff, replace recovery codes and perform the audited administrator TOTP reset; restricted enroll/confirm HTTP endpoints exist. The process loads the durable protection key with the retained-secret guard. Remaining: the second-factor login endpoint and callers for recovery-code replacement/TOTP reset arrive with Chunk 07 sessions and Chunk 22. See [TOTP foundation](twofactor-foundation.md). |
 | All others | Not started | Follow the dependencies and acceptance criteria below. |
 
-The other partial foundation slices do not complete their chunks or bypass integration dependencies. SQLite and OTP dependencies were added with the user's explicit approval, recorded in root `AGENTS.md`.
+The other partial foundation slices do not complete their chunks or bypass integration dependencies. SQLite, OTP and `golang.org/x/crypto` dependencies were added with the user's explicit approval, recorded in root `AGENTS.md`.
 
 ## Completion rules for every chunk
 
@@ -109,9 +109,9 @@ Two disposable spikes run ahead of their milestone order, both before chunk 11 f
 **Location:** `apps/server/internal/auth`, `apps/server/internal/users`, `apps/server/internal/httpapi`. **Dependencies:** 03–04.
 
 - [x] Adopt the repository receiver convention from the implementation plan, converting the existing package-level account/upload/profile/queue database functions in the same change.
-- [ ] Add expiring one-time bootstrap and admin/user roles.
-- [ ] Implement user creation, random temporary passwords, Argon2id hashing and onboarding scopes.
-- [ ] Implement password replacement, throttling and audited administrator resets.
+- [x] Add expiring one-time bootstrap and admin/user roles. Bootstrap is a local operator command (`serversend -bootstrap-admin <username>`), never a network endpoint.
+- [ ] Implement user creation, random temporary passwords, Argon2id hashing and onboarding scopes. All implemented and tested; user creation has no HTTP caller until a session can prove a reauthenticated administrator (07, 22).
+- [ ] Implement password replacement, throttling and audited administrator resets. Implemented and tested; administrator resets await the same session-backed caller.
 - [x] Define account disablement and session invalidation hooks. Account-wide `auth_epoch` changes atomically invalidate restricted attempts; Chunk 07 must check this epoch on every access/refresh and cancel active streams.
 
 **Tests and acceptance:** Bootstrap reuse/expiry, duplicate accounts, weak/malformed input, wrong/expired temporary password, concurrent replacement, direct API onboarding bypass, cross-user access and non-admin administration attempts. Hashes and secrets are absent from API/log outputs.
@@ -122,12 +122,14 @@ Two disposable spikes run ahead of their milestone order, both before chunk 11 f
 
 - [x] Resolve the `rsc.io/2fa` CLI mismatch: the user approved `github.com/pquerna/otp`.
 - [x] Implement and test TOTP enrollment material and deterministic verification helpers; persist replay consumption in the account flow before granting access.
-- [ ] Add provisional enrollment, QR provisioning, code verification and encrypted secret storage.
-- [ ] Add single-use hashed recovery codes and safe replacement.
-- [ ] Enforce password-change plus TOTP completion before full access.
-- [ ] Add distinct lost-TOTP recovery and password-reset flows with admin reauthentication.
+- [x] Add provisional enrollment, QR provisioning, code verification and encrypted secret storage. Service, schema 4 and restricted `POST /auth/totp/enroll` and `/auth/totp/confirm` endpoints are implemented; the executable mounts them.
+- [x] Add single-use hashed recovery codes and safe replacement. Consumption deletes the hash in the transaction that spends the challenge; replacement swaps the whole set and requires a reauthenticated principal, which only Chunk 07 sessions can produce.
+- [ ] Enforce password-change plus TOTP completion before full access. The account state machine enforces it and administrator actions recheck it live; completion requires Chunk 07 to issue sessions only from a verified second factor.
+- [ ] Add distinct lost-TOTP recovery and password-reset flows with admin reauthentication. Both services are implemented, audited and tested as distinct operations; the reauthenticating administrator session and endpoints remain (07, 22).
 
 **Tests and acceptance:** Correct/wrong codes, skew boundaries, replayed time steps, enrollment interruption, racing recovery-code use, expired onboarding session, rate limits, password reset preserving TOTP and TOTP reset forcing reenrollment. Admin onboarding has no exemption.
+
+**Verified locally (2026-11-16):** `internal/auth/two_factor_test.go`, `internal/database/two_factor_test.go` and `internal/httpapi/two_factor_test.go` cover every scenario above against real SQLite with a manual clock, including restart mid-enrollment, future-skew replay, concurrent identical TOTP/recovery codes, challenge revocation after five wrong codes, backoff surviving a correct password and a restart, a missing or replaced protection key failing closed without backoff, and the frozen schema-3 upgrade. Recovery-code use is not written to the audit log because the shipped schema-3 action list does not include it; add it with the next audit schema change.
 
 ## Chunk 07 Implement device sessions and revocation
 

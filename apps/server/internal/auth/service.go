@@ -4,6 +4,7 @@ package auth
 
 import (
 	"errors"
+	"github.com/chironjit/serversend/apps/server/internal/auth/twofactor"
 	"github.com/chironjit/serversend/apps/server/internal/database"
 	"github.com/chironjit/serversend/shared/protocol"
 	"sync"
@@ -16,6 +17,9 @@ var (
 	ErrPasswordPolicy = errors.New("use a password with 12 to 128 characters and at most 256 bytes, without control characters")
 	ErrForbidden      = errors.New("reauthenticated administrator access is required")
 	ErrOverloaded     = errors.New("too many authentication attempts; try again shortly")
+	// ErrTwoFactorUnavailable reports missing or unusable server configuration,
+	// never a wrong code. It must not be shown as a credential failure.
+	ErrTwoFactorUnavailable = errors.New("two-factor authentication is not configured or its protection key cannot open the stored secret")
 )
 
 const TemporaryPasswordLifetime = time.Hour
@@ -37,6 +41,23 @@ type Service struct {
 	mu         sync.Mutex
 	tokens     float64
 	lastRefill time.Time
+	serverID   protocol.ID
+	protector  *twofactor.SecretProtector
+}
+
+type Option func(*Service) error
+
+// WithTwoFactor supplies the persistent server ID and the protector built from
+// the durable configuration key. Without it, enrollment and second-factor
+// verification fail closed with ErrTwoFactorUnavailable.
+func WithTwoFactor(serverID protocol.ID, protector *twofactor.SecretProtector) Option {
+	return func(s *Service) error {
+		if serverID.Validate() != nil || protector == nil {
+			return errors.New("two-factor authentication requires a valid server ID and secret protector")
+		}
+		s.serverID, s.protector = serverID, protector
+		return nil
+	}
 }
 
 // Principal is produced only after full authentication by the session layer.
@@ -48,7 +69,7 @@ type Principal struct {
 	reauthenticatedAt time.Time
 }
 
-func New(repo *database.Repository, passwords PasswordHasher, now func() time.Time) (*Service, error) {
+func New(repo *database.Repository, passwords PasswordHasher, now func() time.Time, options ...Option) (*Service, error) {
 	if repo == nil || passwords == nil {
 		return nil, errors.New("authentication repository and password hasher are required")
 	}
@@ -59,7 +80,13 @@ func New(repo *database.Repository, passwords PasswordHasher, now func() time.Ti
 	if err != nil {
 		return nil, err
 	}
-	return &Service{repo: repo, passwords: passwords, now: now, dummyHash: dummy, workers: make(chan struct{}, 2), tokens: 10, lastRefill: now()}, nil
+	s := &Service{repo: repo, passwords: passwords, now: now, dummyHash: dummy, workers: make(chan struct{}, 2), tokens: 10, lastRefill: now()}
+	for _, option := range options {
+		if err := option(s); err != nil {
+			return nil, err
+		}
+	}
+	return s, nil
 }
 
 func (s *Service) acquire() (func(), error) {

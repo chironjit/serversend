@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"time"
@@ -55,4 +56,46 @@ func DecodePasswordReplacement(r io.Reader) (PasswordReplacement, error) {
 		return request, errors.New("password is required within its length limit")
 	}
 	return request, nil
+}
+
+// TOTPEnrollment is sensitive provisional material shown only to the enrolling
+// user. QRPNG is base64 in JSON. Nothing is active until a code is confirmed.
+type TOTPEnrollment struct {
+	Secret string `json:"secret"`
+	URI    string `json:"uri"`
+	QRPNG  []byte `json:"qr_png"`
+}
+
+// SecondFactorCode carries six TOTP digits or, at login, one recovery code.
+type SecondFactorCode struct {
+	Code string `json:"code"`
+}
+
+// RecoveryCodes is returned once; the server retains only hashes.
+type RecoveryCodes struct {
+	Codes []string `json:"recovery_codes"`
+}
+
+func DecodeSecondFactorCode(r io.Reader) (SecondFactorCode, error) {
+	var request SecondFactorCode
+	if err := decode(r, MaxAuthenticationBytes, &request); err != nil {
+		return request, err
+	}
+	if request.Code == "" || len(request.Code) > 64 {
+		return request, errors.New("code is required within its length limit")
+	}
+	return request, nil
+}
+
+// DecodeEmptyRequest requires one JSON object without fields, so bodiless
+// actions still pass the same bounded, strict request parsing.
+func DecodeEmptyRequest(r io.Reader) error {
+	var request map[string]json.RawMessage
+	if err := decode(r, MaxAuthenticationBytes, &request); err != nil {
+		return err
+	}
+	if request == nil {
+		return errors.New("a JSON object is required")
+	}
+	return nil
 }

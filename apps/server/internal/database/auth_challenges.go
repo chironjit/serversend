@@ -45,7 +45,7 @@ func (r *Repository) BeginChallenge(ctx context.Context, c Credentials, ch AuthC
 		if _, err := tx.ExecContext(ctx, `DELETE FROM auth_challenges WHERE account_id=? OR expires_at<=?`, c.ID, now.UnixMilli()); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO auth_challenges VALUES(?,?,?,?,?,?)`, ch.TokenHash, ch.AccountID, ch.Scope, ch.Revision, ch.Epoch, ch.ExpiresAt.UnixMilli()); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO auth_challenges(token_hash,account_id,scope,credential_revision,auth_epoch,expires_at) VALUES(?,?,?,?,?,?)`, ch.TokenHash, ch.AccountID, ch.Scope, ch.Revision, ch.Epoch, ch.ExpiresAt.UnixMilli()); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE accounts SET failed_attempts=0,blocked_until=0 WHERE id=?`, c.ID)

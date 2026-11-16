@@ -12,10 +12,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/chironjit/serversend/apps/server/internal/auth"
+	"github.com/chironjit/serversend/apps/server/internal/auth/twofactor"
 	"github.com/chironjit/serversend/apps/server/internal/config"
 	"github.com/chironjit/serversend/apps/server/internal/database"
 	"github.com/chironjit/serversend/apps/server/internal/httpapi"
 	"github.com/chironjit/serversend/apps/server/internal/identity"
+	"github.com/chironjit/serversend/shared/protocol"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -24,6 +27,7 @@ type Server struct {
 	db           *sql.DB
 	tls          *tls.Config
 	identity     identity.Identity
+	accounts     *auth.Service
 	draining     atomic.Bool
 	drainTimeout time.Duration
 }
@@ -53,8 +57,36 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Server{db: db, tls: tlsConfig, identity: id, drainTimeout: shutdownTimeout}, nil
+	accounts, err := newAccounts(ctx, db, c.ConfigDir, id)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &Server{db: db, tls: tlsConfig, identity: id, accounts: accounts, drainTimeout: shutdownTimeout}, nil
 }
+
+// newAccounts loads the TOTP protection key before any account request can be
+// served. A key is created only while no encrypted secret depends on one; a
+// missing key beside retained secrets is a restore fault that stops startup.
+func newAccounts(ctx context.Context, db *sql.DB, configDir string, id identity.Identity) (*auth.Service, error) {
+	repo := database.NewRepository(db)
+	retained, err := repo.HasTOTPSecrets(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("inspect two-factor state: %w", err)
+	}
+	key, err := twofactor.LoadProtectionKey(configDir, !retained)
+	if err != nil {
+		return nil, fmt.Errorf("load TOTP protection key (restore totp.key with the database if accounts are enrolled): %w", err)
+	}
+	protector, err := twofactor.NewSecretProtector(key)
+	if err != nil {
+		return nil, err
+	}
+	return auth.New(repo, auth.NewArgon2id(), nil, auth.WithTwoFactor(protocol.ID(id.ID), protector))
+}
+
+// Accounts exposes account operations to local operator commands.
+func (s *Server) Accounts() *auth.Service { return s.accounts }
 
 // Identity returns public material only; it is not itself proof of trust.
 func (s *Server) Identity() identity.Identity { return s.identity }
@@ -65,7 +97,7 @@ func (s *Server) Close() error { return s.db.Close() }
 // unready before draining requests. A timeout forcibly closes active requests.
 // The instance is intended for a single Serve call.
 func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
-	return s.serve(ctx, listener, httpapi.New(s.ready))
+	return s.serve(ctx, listener, httpapi.New(s.ready, httpapi.WithAuthentication(s.accounts)))
 }
 
 func (s *Server) ready(ctx context.Context) error {

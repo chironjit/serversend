@@ -11,3 +11,5 @@ The user approved `github.com/mattn/go-sqlite3` for SQLite persistence and `gith
 For Chunk 01, the user accepted Vitest, `@vue/test-utils` and `happy-dom` for frontend tests, and selected Oxc (`oxlint`, `oxlint-tsgolint`, `oxfmt`) for linting, checking and formatting. Do not add ESLint, Prettier or Playwright. The CI draft was reviewed and its activation approved on 2026-11-16; it is active at `.github/workflows/check.yml`. The user also approved removing the unused iOS/Android scaffold assets on 2026-11-16; mobile clients remain deferred.
 
 The user explicitly approved installing `@tailwindcss/vite` for the admin shell's Tailwind build on 2026-11-16. It is pinned to `4.3.5`, matching `tailwindcss`.
+
+The user approved `golang.org/x/crypto` for production Argon2id password hashing on 2026-11-16. It is used only by `apps/server` (`golang.org/x/crypto/argon2`); its `golang.org/x/sys` requirement is part of that integration. Other uses of `x/crypto` packages in new areas (for example the private file format) should still be confirmed.

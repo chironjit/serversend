@@ -1,6 +1,6 @@
 # TOTP helper foundation
 
-`apps/server/internal/auth/twofactor` uses the approved `github.com/pquerna/otp` library for enrollment and code verification. It is not an authentication service: HTTP endpoints, enrollment state, persisted encrypted secrets, rate limits and atomic recovery-code consumption remain separate work. Account/password state services exist independently, with production composition still pending.
+`apps/server/internal/auth/twofactor` uses the approved `github.com/pquerna/otp` library for enrollment and code verification. The helpers themselves hold no state; the account flow described under [Account-flow integration](#account-flow-integration) persists enrollment, replay and recovery-code state. The server process composes it at startup.
 
 ## Enrollment
 
@@ -34,6 +34,24 @@ These primitives do not make codes single-use. The account service must consume 
 
 `LoadProtectionKey(configDir, createIfMissing)` loads `totp.key` from an existing absolute private configuration directory. The versioned file contains a 32-byte random key and an integrity checksum for accidental corruption. New keys are written to a private 0600 temporary file, flushed, exclusively linked into place and directory-flushed before use. Concurrent initializers return the winning persisted key. Existing corrupt files, unsafe permissions, symlinks, nonregular files and missing directories are rejected without replacement. Failed directory flush reports uncertainty while retaining any already published key. An unpublished crash temporary file does not become the key.
 
-The runtime must allow creation only when the database contains no retained encrypted TOTP secrets. A missing key with enrolled accounts is a restore failure, not permission to generate a replacement. The helper cannot establish this database invariant itself; runtime integration remains pending. Back up the key with the database and identity. Windows ACLs and durable directory flushing remain native qualification gates; unsupported flushing fails rather than reporting successful initialization.
+The runtime must allow creation only when the database contains no retained encrypted TOTP secrets. A missing key with enrolled accounts is a restore failure, not permission to generate a replacement. The helper cannot establish this database invariant itself; `internal/server` supplies it. Back up the key with the database and identity. Windows ACLs and durable directory flushing remain native qualification gates; unsupported flushing fails rather than reporting successful initialization.
 
 Protection/recovery tests cover wrong context/key, tampering, malformed input, independent random values and entropy failures. Key-file tests additionally cover restart decryption, 32 concurrent creators, unsafe paths, corruption, read-only storage and injected create/write/short-write/sync/close/link failures. These tests use real temporary files and do not claim account enrollment or code-consumption integration.
+
+## Account-flow integration
+
+Schema version 4 adds `totp_secrets` (one sealed envelope per account, `confirmed` flag and `last_step` replay watermark), `recovery_codes` (scoped SHA-256 hashes only), a per-challenge failure count and account-level `second_factor_failures`/`second_factor_blocked_until`. `auth.New(..., auth.WithTwoFactor(serverID, protector))` enables the flow; without it every two-factor operation returns `ErrTwoFactorUnavailable`.
+
+| Operation | Authority | Effect |
+| --- | --- | --- |
+| `BeginTOTPEnrollment` / `POST /api/v1/auth/totp/enroll` | `enroll_totp` challenge | Stores a fresh sealed provisional secret, replacing any earlier unconfirmed one, and returns the secret, URI and QR PNG. An interrupted enrollment simply starts again. A confirmed secret is never overwritten. |
+| `ConfirmTOTPEnrollment` / `POST /api/v1/auth/totp/confirm` | same challenge plus a valid code | One transaction confirms exactly the verified envelope, consumes the accepted step, stores ten recovery-code hashes, activates the account, spends the challenge and audits `enroll_totp`. The codes are returned once. |
+| `VerifySecondFactor` | `second_factor` challenge plus six digits or a recovery code | One transaction advances the watermark (`last_step < accepted`) or deletes the recovery-code hash, and spends the challenge. Of concurrent identical submissions exactly one succeeds. Returns `Authenticated` for the session layer; it has no HTTP endpoint until Chunk 07 can issue a session from it. |
+| `ReplaceRecoveryCodes` | recently reauthenticated principal, own account, live epoch | Replaces the whole set atomically; audited. |
+| `ResetTOTP` | recently reauthenticated live administrator | Lost-authenticator recovery: deletes the secret and all recovery codes, forces re-enrollment, keeps the password (and any pending password replacement), increments `auth_epoch` and audits `reset_totp`. A password reset, by contrast, leaves the TOTP secret usable. |
+
+Every wrong code extends a persistent exponential account backoff (one second doubling to a five-minute ceiling) that is separate from password backoff: a correct password does not clear it, only a successful second factor or an administrator TOTP reset does. A challenge is revoked after five wrong codes. Wrong codes, replays, expired or foreign challenges and attempts during backoff are indistinguishable `401` credential failures. A missing or replaced protection key is reported as `503` unavailable, records no failure and consumes nothing, so restoring the correct key resumes normal login.
+
+After an administrator TOTP reset the user re-enrolls using the password alone, exactly as in first onboarding. Operators who suspect the password is also compromised should reset the password as well.
+
+The process loads `totp.key` at startup and allows creation only while `Repository.HasTOTPSecrets` reports false. A missing key beside retained secrets stops startup as a restore fault; no replacement is written.

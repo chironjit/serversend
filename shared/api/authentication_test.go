@@ -32,4 +32,20 @@ func TestAuthenticationRequestBoundaries(t *testing.T) {
 			t.Fatal("malformed replacement request accepted")
 		}
 	}
+	if code, err := DecodeSecondFactorCode(strings.NewReader(`{"code":"123456"}`)); err != nil || code.Code != "123456" {
+		t.Fatal("valid second-factor code rejected")
+	}
+	for _, body := range []string{`null`, `{}`, `{"code":null}`, `{"code":""}`, `{"code":123456}`, `{"code":"1","CODE":"2"}`, `{"code":"` + strings.Repeat("1", 65) + `"}`} {
+		if _, err := DecodeSecondFactorCode(strings.NewReader(body)); err == nil {
+			t.Fatal("malformed second-factor code accepted")
+		}
+	}
+	if err := DecodeEmptyRequest(strings.NewReader(`{"future_field":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{``, `null`, `[]`, `"x"`, `{}{}`} {
+		if DecodeEmptyRequest(strings.NewReader(body)) == nil {
+			t.Fatal("malformed empty request accepted")
+		}
+	}
 }

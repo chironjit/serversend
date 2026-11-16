@@ -17,14 +17,17 @@ type Credentials struct {
 	Revision, Epoch    int64
 	FailedAttempts     int
 	BlockedUntil       int64
+	// SecondFactorBlockedUntil is separate so a correct password cannot reset
+	// the guessing budget for TOTP and recovery codes.
+	SecondFactorBlockedUntil int64
 }
 
-const credentialColumns = `id,username,role,state,totp_enrolled,disabled,created_at,password_hash,temporary_expires_at,credential_revision,auth_epoch,failed_attempts,blocked_until`
+const credentialColumns = `id,username,role,state,totp_enrolled,disabled,created_at,password_hash,temporary_expires_at,credential_revision,auth_epoch,failed_attempts,blocked_until,second_factor_blocked_until`
 
 func scanCredentials(row interface{ Scan(...any) error }) (Credentials, error) {
 	var c Credentials
 	var created int64
-	err := row.Scan(&c.ID, &c.Username, &c.Role, &c.Status.State, &c.Status.TOTPEnrolled, &c.Status.Disabled, &created, &c.PasswordHash, &c.TemporaryExpiresAt, &c.Revision, &c.Epoch, &c.FailedAttempts, &c.BlockedUntil)
+	err := row.Scan(&c.ID, &c.Username, &c.Role, &c.Status.State, &c.Status.TOTPEnrolled, &c.Status.Disabled, &created, &c.PasswordHash, &c.TemporaryExpiresAt, &c.Revision, &c.Epoch, &c.FailedAttempts, &c.BlockedUntil, &c.SecondFactorBlockedUntil)
 	c.CreatedAt = time.UnixMilli(created).UTC()
 	return c, err
 }
