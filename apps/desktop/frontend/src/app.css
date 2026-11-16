@@ -1,12 +1,12 @@
 /* Light is the base palette; dark applies by system preference unless the
    user chose Light, and always when the user chose Dark. */
 :root {
-  --ground: #f5f6f8;
+  --ground: #f8f9fc;
   --surface: #ffffff;
-  --border: #d5d9e0;
+  --border: #e4e5ed;
   --text: #171a21;
   --muted: #5a6372;
-  --accent: #1f5fd1;
+  --accent: #6d4aff;
   --accent-text: #ffffff;
   --danger: #b3261e;
   --ok: #1b7a3d;
@@ -21,7 +21,7 @@
     --border: #343946;
     --text: #eceff4;
     --muted: #a0a8b8;
-    --accent: #7aa7ff;
+    --accent: #ac98ff;
     --accent-text: #0d1220;
     --danger: #ff8a80;
     --ok: #6fd08c;
@@ -35,7 +35,7 @@
   --border: #343946;
   --text: #eceff4;
   --muted: #a0a8b8;
-  --accent: #7aa7ff;
+  --accent: #ac98ff;
   --accent-text: #0d1220;
   --danger: #ff8a80;
   --ok: #6fd08c;

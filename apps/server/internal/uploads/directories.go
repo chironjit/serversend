@@ -12,3 +12,28 @@ func (s *Service) CreateDirectory(ctx context.Context, account protocol.ID, requ
 	}
 	return s.repo.CreateDirectory(ctx, account, request)
 }
+
+func (s *Service) DeleteEntry(ctx context.Context, account, id protocol.ID) error {
+	if id.Validate() != nil {
+		return api.Error{Code: api.InvalidRequest, Message: "Invalid file or folder ID"}
+	}
+	if _, err := s.repo.DeleteEntry(ctx, account, id); err != nil {
+		return err
+	}
+	return s.cleanupDeleted(ctx)
+}
+func (s *Service) cleanupDeleted(ctx context.Context) error {
+	ids, err := s.repo.DeletedObjects(ctx)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := s.store.Delete(id); err != nil {
+			return err
+		}
+		if err := s.repo.ForgetDeletedObject(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}

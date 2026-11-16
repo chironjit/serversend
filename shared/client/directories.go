@@ -27,3 +27,10 @@ func (c *Client) CreateUser(ctx context.Context, username string) (api.Temporary
 	}{username}, &issued)
 	return issued, err
 }
+
+func (c *Client) DeleteEntry(ctx context.Context, id protocol.ID) error {
+	if err := id.Validate(); err != nil {
+		return err
+	}
+	return c.exchange(ctx, call{method: "DELETE", path: "/catalog/" + string(id), token: c.token()}, nil, nil)
+}

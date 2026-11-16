@@ -94,3 +94,7 @@ func (s *TransferService) ChooseAndUploadFolder(ctx context.Context, parent stri
 	}
 	return s.manager.UploadFolder(ctx, path, parent)
 }
+
+func (s *TransferService) DeleteEntry(ctx context.Context, id string) error {
+	return s.manager.DeleteEntry(ctx, id)
+}

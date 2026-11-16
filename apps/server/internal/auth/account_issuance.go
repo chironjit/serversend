@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// IssuedPassword is returned once to the operator; never log or persist it.
+// IssuedPassword must never be logged or persisted in plaintext.
 type IssuedPassword = api.TemporaryPassword
 
 func (s *Service) BootstrapAdmin(ctx context.Context, username string) (IssuedPassword, error) {
@@ -76,7 +76,14 @@ func (s *Service) issue(ctx context.Context, actor Principal, username, role str
 	now := s.now().UTC()
 	issued := IssuedPassword{AccountID: newID(), Username: username, TemporaryPassword: password, ExpiresAt: now.Add(TemporaryPasswordLifetime)}
 	account := database.Account{ID: issued.AccountID, Username: username, Role: role, Status: protocol.AccountStatus{State: protocol.PasswordRequired}, CreatedAt: now}
-	err = s.repo.IssueAccount(ctx, account, hash, issued.ExpiresAt, actor.accountID, actor.epoch)
+	var protected []byte
+	if role == "user" && s.protector != nil {
+		protected, err = s.protector.SealPassword(protocol.Scope{ServerID: s.serverID, AccountID: account.ID}, password)
+		if err != nil {
+			return IssuedPassword{}, err
+		}
+	}
+	err = s.repo.IssueAccount(ctx, account, hash, issued.ExpiresAt, actor.accountID, actor.epoch, protected)
 	if err != nil {
 		return IssuedPassword{}, err
 	}

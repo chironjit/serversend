@@ -186,7 +186,7 @@ serversend -bootstrap-admin admin
 # container: docker exec -it <container> serversend -bootstrap-admin admin
 ```
 
-The command prints a one-hour temporary password to standard output only (never the log) and exits without serving. It may run while the server is running. If the password expires or is lost before that administrator finishes TOTP enrollment, run `serversend -recover-bootstrap-admin admin`; it works only for the sole, still-unenrolled first administrator. The administrator then signs in, replaces the password and enrolls TOTP through the endpoints below. A fully onboarded account can open a slice device session (`POST /api/v1/sessions`); administrator actions (creating users, resets, disablement) still have no network caller.
+The command prints a one-hour temporary password to standard output only (never the log) and exits without serving. It may run while the server is running. If the password expires or is lost before that administrator finishes TOTP enrollment, run `serversend -recover-bootstrap-admin admin`; it works only for the sole, still-unenrolled first administrator. The administrator then signs in, replaces the password and enrolls TOTP through the endpoints below. A fully onboarded account can open a slice device session (`POST /api/v1/sessions`); administrators can create users with `POST /api/v1/admin/users` after a recent sign-in and list users with `GET /api/v1/admin/users`. Resets and disablement still have no network caller.
 
 Passwords are hashed with Argon2id using 64 MiB, three passes and four lanes (the RFC 9106 memory-constrained profile), a random 128-bit salt and the self-describing PHC string format, so parameters can be raised later without invalidating stored hashes. At most two hashes run at once, bounding KDF memory near 128 MiB. Verification rejects stored parameters above 256 MiB, ten passes or sixteen lanes. These parameters are not yet calibrated on target Unraid hardware. State-machine and adapter tests inject an explicitly test-only fast hasher and are not cryptographic password tests; `auth/argon2id_test.go`, `server/accounts_test.go` and the command tests use the real one.
 
@@ -227,3 +227,10 @@ new `/config/tls/ca.crt` through the same authenticated operator channel.
 A browser without the new CA will show an unknown-issuer warning after the TLS
 handshake succeeds. Accounts, TOTP keys, uploaded files and server identity are
 outside the TLS directory and are retained. Do not delete Docker volumes.
+
+
+## User list and file deletion iteration
+
+The admin list refreshes every five seconds. Newly issued user temporary passwords are stored encrypted under the existing `/config/totp.key`, with authenticated context distinct from TOTP secrets. They survive reloads and restarts until replacement or the existing one-hour expiry. Replacing or resetting the password clears the old envelope transactionally; a list request purges expired envelopes. Old hash-only credentials cannot be recovered. The administrator bootstrap credential remains a one-time local output. Responses containing pending passwords use `Cache-Control: no-store`; the browser does not persist passwords locally.
+
+`DELETE /api/v1/catalog/{entry}` permanently deletes the authenticated user's file (including all versions) or complete directory tree. Other accounts see NotFound; admin sessions cannot use transfer routes. Active uploads block deletion. Metadata changes and catalog revision updates commit together; object removals are journaled so interrupted cleanup resumes on server restart. The desktop asks for confirmation before sending the request.

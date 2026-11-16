@@ -105,3 +105,18 @@ func syncDirectory(path string) error {
 	defer dir.Close()
 	return dir.Sync()
 }
+
+func (s *Store) Delete(id protocol.ID) error {
+	path, err := s.path(id)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Dir(path))
+}

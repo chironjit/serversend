@@ -47,7 +47,11 @@ func New(repo *database.Repository, store *storage.Store, serverID protocol.ID, 
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{repo: repo, store: store, serverID: serverID, limits: limits, now: now}, nil
+	s := &Service{repo: repo, store: store, serverID: serverID, limits: limits, now: now}
+	if err := s.cleanupDeleted(context.Background()); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 func (s *Service) Limits() protocol.TransferLimits { return s.limits }

@@ -60,6 +60,15 @@ func (r *Repository) CreateTransfer(ctx context.Context, t Transfer) (Transfer, 
 	var recorded Transfer
 	created := false
 	err := r.write(ctx, func(tx *sql.Tx) error {
+		if t.ParentID != "" {
+			var found int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM directories WHERE account_id=? AND id=?`, t.AccountID, t.ParentID).Scan(&found); err != nil {
+				return err
+			}
+			if found != 1 {
+				return api.Error{Code: api.NotFound, Message: "Destination folder no longer exists"}
+			}
+		}
 		existing, err := scanTransfer(tx.QueryRowContext(ctx, `SELECT `+transferColumns+` FROM uploads WHERE account_id=? AND idempotency_key=? AND file_id IS NOT NULL`, t.AccountID, t.IdempotencyKey))
 		if err == nil {
 			recorded = existing

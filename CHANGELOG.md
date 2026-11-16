@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Usability iteration
+
+- Persistent admin user list with encrypted pending passwords until replacement or one-hour expiry; refreshes every five seconds. Passwords issued before this upgrade cannot be recovered from their hashes.
+- Clickable desktop folder names and breadcrumb navigation; one Upload menu for native file and folder pickers.
+- Confirmed permanent file and recursive folder deletion, scoped to the signed-in user. Active uploads block deletion; stored-object cleanup survives restarts.
+- Bounded, independently scrollable transfer queue and file list.
+- Vue-native workspace layouts, compact navigation, violet accents, and light/dark themes inspired by the Artifact template; no new dependencies.
+
 ### Build and release tooling
 
 - Independent server and desktop checks and component-prefixed version tags.

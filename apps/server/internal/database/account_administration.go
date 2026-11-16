@@ -17,7 +17,7 @@ var (
 
 // IssueAccount atomically closes bootstrap or checks live administrator status,
 // inserts a hashed temporary credential, and records an audit event.
-func (r *Repository) IssueAccount(ctx context.Context, account Account, passwordHash string, expires time.Time, actor protocol.ID, epoch int64) error {
+func (r *Repository) IssueAccount(ctx context.Context, account Account, passwordHash string, expires time.Time, actor protocol.ID, epoch int64, protected ...[]byte) error {
 	if account.ID.Validate() != nil || account.CreatedAt.UnixMilli() < 0 || account.CreatedAt.IsZero() || !expires.After(account.CreatedAt) || passwordHash == "" || account.Status != (protocol.AccountStatus{State: protocol.PasswordRequired}) {
 		return ErrAuthConflict
 	}
@@ -46,6 +46,11 @@ func (r *Repository) IssueAccount(ctx context.Context, account Account, password
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO accounts(id,username,role,state,password_hash,created_at,temporary_expires_at) VALUES(?,?,?,'password_required',?,?,?)`, account.ID, account.Username, account.Role, passwordHash, account.CreatedAt.UnixMilli(), expires.UnixMilli()); err != nil {
 			return err
+		}
+		if len(protected) > 0 {
+			if _, err := tx.ExecContext(ctx, `UPDATE accounts SET temporary_password=? WHERE id=?`, protected[0], account.ID); err != nil {
+				return err
+			}
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,target_id,action,created_at) VALUES(?,?,?,?)`, actorValue, account.ID, action, account.CreatedAt.UnixMilli())
 		return err

@@ -31,7 +31,9 @@ describe('public admin shell', () => {
       localStorage.setItem('serversend.admin.theme', theme);
       wrapper = mount(App);
       expect(wrapper.text()).toContain('Checking server…');
-      expect(wrapper.get('button').attributes('disabled')).toBeDefined();
+      expect(
+        wrapper.get('section[aria-labelledby="status-heading"] button').attributes('disabled'),
+      ).toBeDefined();
       expect(wrapper.get('main').attributes('id')).toBe('main');
       expect(wrapper.get('a').attributes('href')).toBe('#main');
       expect(wrapper.find('form').exists()).toBe(true);
@@ -60,7 +62,7 @@ describe('public admin shell', () => {
     expect(wrapper.text()).toContain('Server is unavailable');
     expect(wrapper.text()).toContain('Check your network connection');
     expect(wrapper.text()).not.toContain('private diagnostic');
-    await wrapper.get('button').trigger('click');
+    await wrapper.get('section[aria-labelledby="status-heading"] button').trigger('click');
     await flushPromises();
     expect(wrapper.text()).toContain('Server is responding');
   });
@@ -92,12 +94,12 @@ describe('public admin shell', () => {
         }),
     );
     wrapper = mount(App);
-    await wrapper.get('button').trigger('click');
+    await wrapper.get('section[aria-labelledby="status-heading"] button').trigger('click');
     expect(request).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(5000);
     expect(aborted).toBe(true);
     expect(wrapper.text()).toContain('Server is unavailable');
-    await wrapper.get('button').trigger('click');
+    await wrapper.get('section[aria-labelledby="status-heading"] button').trigger('click');
     await flushPromises();
     expect(request).toHaveBeenCalledTimes(2);
     expect(wrapper.text()).toContain('Server is responding');

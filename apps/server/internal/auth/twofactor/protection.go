@@ -102,3 +102,23 @@ func canonicalSecret(secret string) bool {
 	decoded, err := base32.StdEncoding.DecodeString(secret)
 	return err == nil && len(decoded) == secretBytes && base32.StdEncoding.EncodeToString(decoded) == secret
 }
+
+// Pending passwords use a separate authenticated purpose from TOTP secrets.
+func (p *SecretProtector) SealPassword(scope protocol.Scope, password string) ([]byte, error) {
+	if p == nil || p.aead == nil || scope.Validate() != nil {
+		return nil, ErrProtectedSecret
+	}
+	nonce := make([]byte, p.aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	return p.aead.Seal(nonce, nonce, []byte(password), []byte("ServerSend/pending-password/v1\x00"+string(scope.ServerID)+string(scope.AccountID))), nil
+}
+func (p *SecretProtector) OpenPassword(scope protocol.Scope, data []byte) (string, error) {
+	if p == nil || p.aead == nil || scope.Validate() != nil || len(data) < p.aead.NonceSize()+p.aead.Overhead() {
+		return "", ErrProtectedSecret
+	}
+	n := p.aead.NonceSize()
+	plain, err := p.aead.Open(nil, data[:n], data[n:], []byte("ServerSend/pending-password/v1\x00"+string(scope.ServerID)+string(scope.AccountID)))
+	return string(plain), err
+}

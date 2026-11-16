@@ -12,6 +12,16 @@ func serveUsers(w http.ResponseWriter, r *http.Request, service *auth.Service) b
 	if r.URL.Path != api.BasePath+"/admin/users" {
 		return false
 	}
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method == "GET" {
+		users, err := service.Users(r.Context(), bearer(r))
+		if err != nil {
+			writeAuthenticationError(w, r, err)
+		} else {
+			writeJSON(w, r, 200, users)
+		}
+		return true
+	}
 	if r.Method != "POST" {
 		writeError(w, r, 405, api.InvalidRequest, "Use POST")
 		return true

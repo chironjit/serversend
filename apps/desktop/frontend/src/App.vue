@@ -67,12 +67,19 @@ const openFolder = (file: File) =>
     folders.value.push({ id: file.id, name: file.name });
     files.value = list ?? [];
   });
-const upFolder = () =>
+const navigate = (depth: number) =>
   attempt(async () => {
-    const id = folders.value.at(-2)?.id ?? '';
-    const list = await TransferService.Files(id);
-    folders.value.pop();
+    const list = await TransferService.Files(folders.value[depth - 1]?.id ?? '');
+    folders.value = folders.value.slice(0, depth);
     files.value = list ?? [];
+  });
+const pendingDelete = ref<File>();
+const deleteEntry = () =>
+  attempt(async () => {
+    if (!pendingDelete.value) return;
+    await TransferService.DeleteEntry(pendingDelete.value.id);
+    pendingDelete.value = undefined;
+    files.value = (await TransferService.Files(parent.value)) ?? [];
   });
 const createFolder = () =>
   attempt(async () => {
@@ -80,8 +87,10 @@ const createFolder = () =>
     folderName.value = '';
     files.value = (await TransferService.Files(parent.value)) ?? [];
   });
+const uploadMenu = ref(false);
 const uploadFolder = () =>
   attempt(async () => {
+    uploadMenu.value = false;
     await TransferService.ChooseAndUploadFolder(parent.value);
     files.value = (await TransferService.Files(parent.value)) ?? [];
   });
@@ -175,7 +184,9 @@ const refresh = () =>
 
 const upload = () =>
   attempt(async () => {
+    uploadMenu.value = false;
     await TransferService.ChooseAndUpload(parent.value);
+    files.value = (await TransferService.Files(parent.value)) ?? [];
   });
 
 const download = (file: File) =>
@@ -262,9 +273,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="shell">
+  <div class="shell" :class="{ workspace: view === 'files' }">
     <header class="bar">
-      <h1>ServerSend</h1>
+      <h1><span class="brand-mark">S</span> ServerSend<span class="brand-dot">.</span></h1>
       <span v-if="account" class="who">{{ account.username }} · {{ account.origin }}</span>
       <label class="theme">
         <span>Theme</span>
@@ -282,6 +293,28 @@ onUnmounted(() => {
       </button>
     </header>
 
+    <aside v-if="view === 'files'" class="sidebar" aria-label="Workspace navigation">
+      <p class="eyebrow">YOUR WORKSPACE</p>
+      <a href="#library" class="nav-active">▱ <span>File library</span></a>
+      <a href="#transfers"
+        >⇅ <span>Transfers</span
+        ><span class="count">{{
+          transfers.filter((t) => t.state === 'active' || t.state === 'queued').length
+        }}</span></a
+      >
+      <div class="sidebar-note">
+        <span class="connection">● Private connection</span>
+        <p>Your files stay on your server.</p>
+      </div>
+    </aside>
+    <div v-if="view === 'files'" class="workspace-heading">
+      <div>
+        <p class="eyebrow">WORKSPACE / FILES</p>
+        <h2>Your files, in one place.</h2>
+        <p class="hint">Browse your library and keep an eye on your transfers.</p>
+      </div>
+      <span class="connection">● Connected</span>
+    </div>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
 
     <form v-if="view === 'connect'" class="card" @submit.prevent="check">
@@ -421,19 +454,63 @@ onUnmounted(() => {
     </form>
 
     <main v-else-if="view === 'files'" class="columns">
-      <section class="card">
+      <section id="library" class="card">
         <div class="row spread">
-          <h2>Files on the server</h2>
+          <h2>File library <span class="count">{{ files.length }}</span></h2>
           <div class="row">
             <button type="button" class="quiet" :disabled="busy" @click="refresh">Refresh</button>
-            <button type="button" :disabled="busy" @click="upload">Upload files…</button>
+            <div class="upload-menu" @keydown.esc="uploadMenu = false">
+              <button
+                type="button"
+                :disabled="busy"
+                :aria-expanded="uploadMenu"
+                @click="uploadMenu = !uploadMenu"
+              >
+                Upload… ▾
+              </button>
+              <div v-if="uploadMenu" class="upload-options">
+                <button @click="upload">Files…</button
+                ><button @click="uploadFolder">Folder…</button>
+              </div>
+            </div>
           </div>
         </div>
-        <p>Location: /{{ folders.map((f) => f.name).join('/') }}</p>
-        <div class="row">
-          <button v-if="folders.length" :disabled="busy" @click="upFolder">Up one folder</button
-          ><button :disabled="busy" @click="uploadFolder">Upload folder…</button>
-        </div>
+        <nav class="breadcrumbs" aria-label="Folder path">
+          <button class="quiet" :disabled="busy" @click="navigate(0)">All files</button>
+          <template v-for="(folder, index) in folders" :key="folder.id"
+            ><span aria-hidden="true">/</span
+            ><button
+              class="quiet"
+              :disabled="busy"
+              :aria-current="index === folders.length - 1 ? 'page' : undefined"
+              @click="navigate(index + 1)"
+            >
+              {{ folder.name }}
+            </button></template
+          >
+        </nav>
+        <section
+          v-if="pendingDelete"
+          class="delete-confirm"
+          role="alertdialog"
+          aria-label="Confirm deletion"
+        >
+          <h3>Delete “{{ pendingDelete.name }}”?</h3>
+          <p>
+            {{
+              pendingDelete.directory
+                ? 'This folder and everything inside it will be permanently deleted.'
+                : 'This file and all its versions will be permanently deleted.'
+            }}
+            This cannot be undone.
+          </p>
+          <div class="row">
+            <button class="danger" :disabled="busy" @click="deleteEntry">Delete permanently</button
+            ><button class="quiet" :disabled="busy" @click="pendingDelete = undefined">
+              Cancel
+            </button>
+          </div>
+        </section>
         <form class="row" @submit.prevent="createFolder">
           <label>New folder name<input v-model="folderName" required maxlength="255" /></label
           ><button :disabled="busy">Create folder</button>
@@ -442,20 +519,43 @@ onUnmounted(() => {
           Showing the first 1,000 entries. This test build does not yet support catalog pagination.
         </p>
         <p v-if="files.length === 0" class="hint">
-          Nothing uploaded yet. Choose “Upload files…” to send your first file.
+          Nothing uploaded yet. Choose “Upload…” to send your first file.
         </p>
-        <ul v-else class="list">
+        <ul v-else class="list file-list" aria-label="Files">
           <li v-for="file in files" :key="file.id">
-            <span class="name">{{ file.directory ? '📁 ' : '' }}{{ file.name }}</span>
-            <button v-if="file.directory" :disabled="busy" @click="openFolder(file)">Open</button>
-            <button v-else type="button" class="quiet" :disabled="busy" @click="download(file)">
+            <button
+              v-if="file.directory"
+              class="folder-link name"
+              :disabled="busy"
+              @click="openFolder(file)"
+            >
+              <span class="file-icon" aria-hidden="true">▱</span>{{ file.name }}
+            </button>
+            <span v-else class="name"
+              ><span class="file-icon" aria-hidden="true">▤</span>{{ file.name }}</span
+            >
+            <button
+              v-if="!file.directory"
+              type="button"
+              class="quiet"
+              :disabled="busy"
+              @click="download(file)"
+            >
               Download…
+            </button>
+            <button
+              class="quiet delete-action"
+              :aria-label="'Delete ' + file.name"
+              :disabled="busy"
+              @click="pendingDelete = file"
+            >
+              Delete
             </button>
           </li>
         </ul>
       </section>
-      <section class="card">
-        <h2>Transfers</h2>
+      <section id="transfers" class="card">
+        <h2>Transfers <span class="count">{{ transfers.length }}</span></h2>
         <p>↑ {{ size(speed.up) }}/s · ↓ {{ size(speed.down) }}/s</p>
         <svg
           viewBox="0 0 300 64"
@@ -466,13 +566,13 @@ onUnmounted(() => {
           <polyline :points="chart('down')" fill="none" stroke="var(--ok)" stroke-width="2" />
         </svg>
         <p class="hint">
-          Upload: blue · Download: green. Acknowledged/verified bytes per second; includes disk and
-          verification time.
+          Upload: violet · Download: green. Acknowledged/verified bytes per second; includes disk
+          and verification time.
         </p>
         <p v-if="transfers.length === 0" class="hint">
           Uploads and downloads from this session appear here.
         </p>
-        <ul v-else class="list">
+        <ul v-else class="list transfer-list" tabindex="0" aria-label="Transfer queue">
           <li v-for="item in recentTransfers" :key="item.id" class="transfer">
             <div class="row spread">
               <span class="name"
@@ -492,16 +592,18 @@ onUnmounted(() => {
 
 <style scoped>
 .shell {
-  max-width: 960px;
+  max-width: 1440px;
   margin: 0 auto;
-  padding: 16px 20px 32px;
+  padding: 0 32px 32px;
 }
 .bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 28px;
+  min-height: 76px;
+  border-bottom: 1px solid var(--border);
 }
 .bar h1 {
   margin: 0 auto 0 0;
@@ -527,11 +629,12 @@ onUnmounted(() => {
   padding: 20px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 14px;
+  box-shadow: 0 2px 8px #00000003;
 }
 .columns {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: minmax(0, 1fr) 340px;
   gap: 16px;
   align-items: start;
 }
@@ -663,5 +766,213 @@ progress {
   width: 100%;
   height: 6px;
   accent-color: var(--accent);
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  column-gap: 32px;
+}
+.workspace .bar {
+  grid-column: 1/-1;
+  margin-bottom: 0;
+}
+.workspace .workspace-heading,
+.workspace .columns,
+.workspace > .error {
+  grid-column: 2;
+}
+.sidebar {
+  grid-column: 1;
+  grid-row: 2/6;
+  padding-top: 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-right: 1px solid var(--border);
+  padding-right: 20px;
+}
+.sidebar a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  text-decoration: none;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 13px;
+}
+.sidebar .nav-active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.sidebar .eyebrow {
+  margin-bottom: 12px;
+  font-size: 10px;
+}
+.sidebar-note {
+  margin-top: 32px;
+  font-size: 12px;
+  color: var(--muted);
+}
+@media (max-width: 1100px) {
+  .workspace {
+    display: block;
+  }
+  .sidebar {
+    display: none;
+  }
+}
+.upload-menu {
+  position: relative;
+}
+.upload-options {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 5;
+  display: grid;
+  min-width: 160px;
+  padding: 6px;
+  gap: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px #0002;
+}
+.upload-options button {
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  text-align: left;
+}
+.upload-options button:hover {
+  background: var(--ground);
+}
+.brand-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-right: 8px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+.brand-dot {
+  color: var(--accent);
+}
+.workspace-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 32px 0;
+}
+.workspace-heading h2 {
+  font-size: 28px;
+  letter-spacing: -0.8px;
+  margin: 8px 0;
+}
+.eyebrow {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 1.5px;
+}
+.connection {
+  font-size: 12px;
+  color: var(--ok);
+}
+.count {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--ground);
+  color: var(--muted);
+}
+.breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 0;
+  border-block: 1px solid var(--border);
+}
+.breadcrumbs button {
+  border: 0;
+  padding: 4px 8px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+button.folder-link {
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  padding: 10px 0;
+  text-align: left;
+  white-space: normal;
+  flex: 1;
+}
+button.folder-link:hover {
+  color: var(--accent);
+}
+.file-icon {
+  display: inline-block;
+  color: var(--accent);
+  background: var(--ground);
+  padding: 4px 10px;
+  margin-right: 10px;
+  border-radius: 8px;
+}
+.file-list {
+  max-height: 55vh;
+  overflow-y: auto;
+}
+.transfer-list {
+  max-height: min(48vh, 480px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 8px;
+}
+.list li {
+  padding: 12px 0;
+}
+.list .name {
+  flex: 1;
+}
+.delete-action {
+  font-size: 12px;
+}
+button.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: white;
+}
+.delete-confirm {
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+.delete-confirm h3 {
+  margin: 0;
+}
+@media (max-width: 900px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .shell {
+    padding: 0 16px 24px;
+  }
+  .who {
+    width: 100%;
+    order: 3;
+  }
+  .bar {
+    padding: 12px 0;
+  }
 }
 </style>

@@ -110,6 +110,7 @@ func newTransferRoutes(accounts *auth.Service, service *uploads.Service) *transf
 		"GET " + api.BasePath + "/uploads/{upload}/missing":                       t.missing,
 		"PUT " + api.BasePath + "/uploads/{upload}/chunks/{index}":                t.putChunk,
 		"POST " + api.BasePath + "/uploads/{upload}/finalize":                     t.finalize,
+		"DELETE " + api.BasePath + "/catalog/{entry}":                             t.deleteEntry,
 		"POST " + api.BasePath + "/directories":                                   t.directory,
 		"GET " + api.BasePath + "/catalog":                                        t.catalog,
 		"GET " + api.BasePath + "/files/{file}/versions/{version}/manifest":       t.manifest,
@@ -286,4 +287,12 @@ func (t *transferRoutes) directory(w http.ResponseWriter, r *http.Request, accou
 		writeJSON(w, r, 201, entry)
 	}
 	return err
+}
+
+func (t *transferRoutes) deleteEntry(w http.ResponseWriter, r *http.Request, account protocol.ID) error {
+	if err := t.service.DeleteEntry(r.Context(), account, protocol.ID(r.PathValue("entry"))); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
 }

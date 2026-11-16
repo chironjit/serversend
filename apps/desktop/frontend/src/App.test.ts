@@ -14,7 +14,12 @@ const bridge = vi.hoisted(() => ({
     ConfirmEnrollment: vi.fn<(code: string) => Promise<string[] | null>>(),
     CompleteSignIn: vi.fn<(code: string) => Promise<unknown>>(),
     SignOut: vi.fn<() => Promise<void>>(),
-    Files: vi.fn<() => Promise<{ id: string; name: string }[] | null>>(),
+    Files:
+      vi.fn<
+        (parent: string) => Promise<{ id: string; name: string; directory?: boolean }[] | null>
+      >(),
+    DeleteEntry: vi.fn<(id: string) => Promise<void>>(),
+    ChooseAndUploadFolder: vi.fn<(parent: string) => Promise<void>>(),
     ChooseAndUpload: vi.fn<() => Promise<number>>(),
     ChooseAndDownload: vi.fn<(id: string) => Promise<boolean>>(),
   },
@@ -176,6 +181,55 @@ describe('desktop transfer slice', () => {
     expect(wrapper.text()).toContain('Done · 1.0 MiB');
     expect(wrapper.text()).toContain('Sign in again to continue');
     expect(wrapper.findAll('.list')[0]?.text()).toContain('video.mp4');
+  });
+
+  it('browses folder names and breadcrumbs, shares one upload menu, and confirms deletion', async () => {
+    bridge.service.SignIn.mockResolvedValue({ next: 'second_factor' });
+    bridge.service.CompleteSignIn.mockResolvedValue({
+      username: 'alice',
+      origin: 'https://server.test',
+      serverId: 's',
+    });
+    bridge.service.Files.mockResolvedValue([{ id: 'folder', name: 'Photos', directory: true }]);
+    bridge.service.DeleteEntry.mockResolvedValue();
+    bridge.service.ChooseAndUploadFolder.mockResolvedValue();
+    const wrapper = mount(App);
+    await submit(wrapper);
+    await wrapper.find('button').trigger('click');
+    await flushPromises();
+    await submit(wrapper);
+    await submit(wrapper);
+    bridge.service.Files.mockResolvedValue([{ id: 'file', name: 'image.jpg' }]);
+    await wrapper.get('.folder-link').trigger('click');
+    await flushPromises();
+    expect(bridge.service.Files).toHaveBeenLastCalledWith('folder');
+    expect(wrapper.get('.breadcrumbs').text()).toContain('Photos');
+    await wrapper.get('.upload-menu > button').trigger('click');
+    expect(wrapper.get('.upload-options').text()).toContain('Files…');
+    expect(wrapper.get('.upload-options').text()).toContain('Folder…');
+    await wrapper.get('.upload-options').findAll('button')[1]!.trigger('click');
+    await flushPromises();
+    expect(bridge.service.ChooseAndUploadFolder).toHaveBeenCalledWith('folder');
+    await wrapper.get('[aria-label="Delete image.jpg"]').trigger('click');
+    expect(bridge.service.DeleteEntry).not.toHaveBeenCalled();
+    await wrapper.get('.delete-confirm .quiet').trigger('click');
+    expect(wrapper.find('.delete-confirm').exists()).toBe(false);
+    await wrapper.get('[aria-label="Delete image.jpg"]').trigger('click');
+    bridge.service.DeleteEntry.mockRejectedValueOnce(new Error('Wait for uploads'));
+    await wrapper.get('.delete-confirm .danger').trigger('click');
+    await flushPromises();
+    expect(wrapper.get('[role="alert"]').text()).toContain('Wait for uploads');
+    expect(wrapper.find('.delete-confirm').exists()).toBe(true);
+    bridge.service.Files.mockResolvedValue([]);
+    await wrapper.get('.delete-confirm .danger').trigger('click');
+    await flushPromises();
+    expect(bridge.service.DeleteEntry).toHaveBeenLastCalledWith('file');
+    expect(wrapper.find('.delete-confirm').exists()).toBe(false);
+    await wrapper.get('.breadcrumbs button').trigger('click');
+    await flushPromises();
+    expect(bridge.service.Files).toHaveBeenLastCalledWith('');
+    expect(wrapper.get('.breadcrumbs').text()).not.toContain('Photos');
+    wrapper.unmount();
   });
 
   it('applies and persists the chosen theme', async () => {

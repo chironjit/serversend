@@ -58,6 +58,10 @@ export function CreateDirectory(parent: string, name: string): $CancellablePromi
     return $Call.ByID(2501948237, parent, name);
 }
 
+export function DeleteEntry(id: string): $CancellablePromise<void> {
+    return $Call.ByID(2574672075, id);
+}
+
 export function Files(parent: string): $CancellablePromise<transfer$0.File[] | null> {
     return $Call.ByID(3648180037, parent);
 }

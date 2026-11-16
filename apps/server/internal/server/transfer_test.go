@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -243,6 +244,48 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 		}
 	}
 
+	// Deletion is recursive, owner-scoped, and removes immutable downloads too.
+	if err := other.DeleteEntry(t.Context(), folder.ID); !errors.As(err, &failure) || failure.Code != api.NotFound {
+		t.Fatalf("foreign delete: %v", err)
+	}
+	if err := adminClient.DeleteEntry(t.Context(), folder.ID); !errors.As(err, &failure) || failure.Code != api.PermissionDenied {
+		t.Fatalf("admin delete: %v", err)
+	}
+	if err := admin.DeleteEntry(t.Context(), folder.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := admin.DeleteEntry(t.Context(), folder.ID); !errors.As(err, &failure) || failure.Code != api.NotFound {
+		t.Fatalf("repeat delete: %v", err)
+	}
+	for _, entry := range contents.Entries {
+		if entry.Kind == api.File {
+			if err := admin.Download(t.Context(), entry, filepath.Join(restored, "deleted.txt"), nil); !errors.As(err, &failure) || failure.Code != api.NotFound {
+				t.Fatalf("deleted download: %v", err)
+			}
+		}
+	}
+	after, err := admin.Catalog(t.Context())
+	if err != nil || len(after.Entries) != len(page.Entries) {
+		t.Fatalf("catalog after deletion: %+v %v", after, err)
+	}
+	var objectsAfter int64
+	if err := filepath.WalkDir(filepath.Join(config.DataDir, "objects"), func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			objectsAfter++
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if objectsAfter != objects {
+		t.Fatalf("deleted objects not reclaimed: %d != %d", objectsAfter, objects)
+	}
+	if err := admin.DeleteEntry(t.Context(), page.Entries[0].ID); err != nil {
+		t.Fatal(err)
+	}
 	// Sign-out ends the session on the server, not only locally.
 	if err := other.SignOut(t.Context()); err != nil {
 		t.Fatal(err)

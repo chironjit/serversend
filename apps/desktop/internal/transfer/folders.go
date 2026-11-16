@@ -78,3 +78,11 @@ func (m *Manager) UploadFolder(ctx context.Context, root, parent string) error {
 	}
 	return visit(filepath.Clean(root), protocol.ID(parent))
 }
+
+func (m *Manager) DeleteEntry(ctx context.Context, id string) error {
+	c, err := m.current()
+	if err != nil {
+		return err
+	}
+	return message(c.DeleteEntry(ctx, protocol.ID(id)))
+}
