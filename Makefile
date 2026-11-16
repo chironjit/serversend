@@ -1,4 +1,4 @@
-.PHONY: check check-shared check-server check-desktop check-layout check-bindings check-smoke
+.PHONY: check check-shared check-server check-desktop check-layout check-bindings check-smoke check-persistence
 
 # Component checks own their tooling and run without changing dependencies.
 check: check-layout check-shared check-server check-desktop check-bindings check-smoke
@@ -21,3 +21,6 @@ check-bindings:
 
 check-smoke:
 	bash apps/desktop/scripts/check_smoke.sh
+
+check-persistence:
+	bash shared/scripts/check_persistence.sh

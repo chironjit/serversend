@@ -54,7 +54,7 @@ func TestExplicitEmptyTLSSettings(t *testing.T) {
 }
 
 func TestLoadUsesProcessEnvironment(t *testing.T) {
-	for _, name := range []string{"SERVER_SEND_TLS_CERT_FILE", "SERVER_SEND_TLS_KEY_FILE"} {
+	for _, name := range []string{"SERVER_SEND_TLS_CERT_FILE", "SERVER_SEND_TLS_KEY_FILE", "SERVER_SEND_TLS_IPS"} {
 		t.Setenv(name, "")
 	}
 	for name, value := range map[string]string{

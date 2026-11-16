@@ -4,7 +4,12 @@ set -euo pipefail
 # Run after building the image. Only disposable, uniquely named test resources
 # are touched; no host bind mounts or production deployment are used.
 image="${1:-serversend:dev}"
-for tool in docker openssl curl rg; do
+mode="${2:-external}"
+if [[ "$mode" != external && "$mode" != --private-ipv4 ]]; then
+  printf 'Usage: %s [image] [--private-ipv4]\n' "$0" >&2
+  exit 1
+fi
+for tool in docker openssl curl rg cmp; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     printf 'Missing container-check prerequisite: %s\n' "$tool" >&2
     exit 1
@@ -31,9 +36,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-openssl req -x509 -newkey ed25519 -noenc -days 1 \
-  -subj /CN=localhost -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
-  -keyout "$fixture_dir/key.pem" -out "$fixture_dir/cert.pem" >/dev/null 2>&1
+tls_settings=(-e SERVER_SEND_TLS_IPS=127.0.0.1)
+if [[ "$mode" == external ]]; then
+  openssl req -x509 -newkey ed25519 -noenc -days 1 \
+    -subj /CN=localhost -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+    -keyout "$fixture_dir/key.pem" -out "$fixture_dir/cert.pem" >/dev/null 2>&1
+  tls_settings=(-e SERVER_SEND_TLS_CERT_FILE=/config/cert.pem -e SERVER_SEND_TLS_KEY_FILE=/config/key.pem)
+fi
 
 mounts=(
   --mount "type=volume,src=${volumes[0]},dst=/config"
@@ -42,13 +51,14 @@ mounts=(
 )
 docker create --name "$container_name" --read-only --stop-timeout 15 \
   "${mounts[@]}" -p 127.0.0.1::8443/tcp \
-  -e SERVER_SEND_TLS_CERT_FILE=/config/cert.pem \
-  -e SERVER_SEND_TLS_KEY_FILE=/config/key.pem "$image" >/dev/null
-docker cp "$fixture_dir/cert.pem" "$container_name:/config/cert.pem"
-docker cp "$fixture_dir/key.pem" "$container_name:/config/key.pem"
+  "${tls_settings[@]}" "$image" >/dev/null
+if [[ "$mode" == external ]]; then
+  docker cp "$fixture_dir/cert.pem" "$container_name:/config/cert.pem"
+  docker cp "$fixture_dir/key.pem" "$container_name:/config/key.pem"
+fi
 # Set ownership on these test volumes only, while the application is stopped.
 docker run --rm --user 0:0 --entrypoint sh "${mounts[@]}" "$image" -c \
-  'chown -R 10001:10001 /config /data /staging; chmod 0700 /config /data /staging; chmod 0600 /config/key.pem' >/dev/null
+  'chown -R 10001:10001 /config /data /staging; chmod 0700 /config /data /staging; if [ -f /config/key.pem ]; then chmod 0600 /config/key.pem; fi' >/dev/null
 
 [[ "$(docker inspect --format '{{.Config.User}}' "$container_name")" == 10001:10001 ]]
 
@@ -62,6 +72,17 @@ wait_ready() {
 }
 
 docker start "$container_name" >/dev/null
+if [[ "$mode" == --private-ipv4 ]]; then
+  # Wait only for initial generation, then export the public CA through Docker's
+  # authenticated operator channel. No TLS verification is disabled.
+  for attempt in {1..30}; do
+    if docker cp "$container_name:/config/tls/ca.crt" "$fixture_dir/cert.pem" 2>/dev/null; then break; fi
+    sleep 0.1
+  done
+  [[ -s "$fixture_dir/cert.pem" ]]
+  [[ "$(docker exec "$container_name" stat -c '%a' /config/tls/authority.pem)" == 600 ]]
+  [[ "$(docker exec "$container_name" stat -c '%a' /config/tls/server.pem)" == 600 ]]
+fi
 wait_ready
 first_identity="$(docker logs "$container_name" 2>&1 | rg -o 'Server [0-9a-f]{32} listening' | tail -n 1)"
 [[ -n "$first_identity" ]]
@@ -72,9 +93,13 @@ docker stop "$container_name" >/dev/null
 [[ "$(docker inspect --format '{{.State.ExitCode}}' "$container_name")" == 0 ]]
 docker start "$container_name" >/dev/null
 wait_ready
+if [[ "$mode" == --private-ipv4 ]]; then
+  docker cp "$container_name:/config/tls/ca.crt" "$fixture_dir/ca-after-restart.crt"
+  cmp -s "$fixture_dir/cert.pem" "$fixture_dir/ca-after-restart.crt"
+fi
 second_identity="$(docker logs "$container_name" 2>&1 | rg -o 'Server [0-9a-f]{32} listening' | tail -n 1)"
 [[ "$first_identity" == "$second_identity" ]]
 docker stop "$container_name" >/dev/null
 [[ "$(docker inspect --format '{{.State.ExitCode}}' "$container_name")" == 0 ]]
 
-printf 'Container checks passed: verified TLS, non-root user, read-only root, restart identity, SIGTERM\n'
+printf 'Container checks passed (%s): verified TLS, non-root user, read-only root, restart identity/trust, SIGTERM\n' "$mode"

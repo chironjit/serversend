@@ -37,11 +37,11 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	tlsConfig, err := loadTLS(c, time.Now())
-	if err != nil {
+	if err := c.CheckStorage(); err != nil {
 		return nil, err
 	}
-	if err := c.CheckStorage(); err != nil {
+	tlsConfig, err := loadTLS(c, time.Now())
+	if err != nil {
 		return nil, err
 	}
 	db, err := database.Open(ctx, c.ConfigDir)

@@ -8,11 +8,23 @@ import (
 	"time"
 
 	"github.com/chironjit/serversend/apps/server/internal/config"
+	"github.com/chironjit/serversend/apps/server/internal/localtls"
 )
 
 func loadTLS(c config.Config, now time.Time) (*tls.Config, error) {
+	if c.TLSIPs != "" {
+		addresses, err := c.PrivateTLSAddresses()
+		if err != nil {
+			return nil, err
+		}
+		manager, err := localtls.Open(c.ConfigDir, addresses)
+		if err != nil {
+			return nil, err
+		}
+		return manager.TLSConfig(), nil
+	}
 	if c.TLSCertFile == "" || c.TLSKeyFile == "" {
-		return nil, errors.New("TLS is required: set SERVER_SEND_TLS_CERT_FILE and SERVER_SEND_TLS_KEY_FILE")
+		return nil, errors.New("TLS is required: set SERVER_SEND_TLS_IPS for private IPv4 HTTPS, or SERVER_SEND_TLS_CERT_FILE and SERVER_SEND_TLS_KEY_FILE")
 	}
 	certificate, err := tls.LoadX509KeyPair(c.TLSCertFile, c.TLSKeyFile)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -22,7 +23,7 @@ func TestOpenSchemaAndFutureGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	var version int
-	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != len(migrations) {
 		t.Fatalf("schema version=%d, error=%v", version, err)
 	}
 	for _, query := range []string{
@@ -39,7 +40,7 @@ func TestOpenSchemaAndFutureGuard(t *testing.T) {
 			t.Fatalf("constraint accepted: %s", query)
 		}
 	}
-	if _, err := db.Exec("PRAGMA user_version = 2"); err != nil {
+	if _, err := db.Exec("PRAGMA user_version = 99"); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -53,6 +54,9 @@ func TestOpenSchemaAndFutureGuard(t *testing.T) {
 func TestOpenRejectsUnsafePaths(t *testing.T) {
 	for _, scenario := range []string{"missing", "relative", "public config", "public database", "symlink database", "corrupt database"} {
 		t.Run(scenario, func(t *testing.T) {
+			if runtime.GOOS == "windows" && (scenario == "public config" || scenario == "public database" || scenario == "symlink database") {
+				t.Skip("POSIX permissions and symlink privileges require native platform qualification")
+			}
 			dir := t.TempDir()
 			if err := os.Chmod(dir, 0o700); err != nil {
 				t.Fatal(err)

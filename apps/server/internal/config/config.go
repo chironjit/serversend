@@ -4,7 +4,8 @@ package config
 import "os"
 
 // Config contains the server's deployment settings. Empty TLS paths mean that
-// TLS provisioning is incomplete, not that plaintext serving is permitted.
+// TLS provisioning is incomplete unless TLSIPs selects private IP certificates.
+// Plaintext serving is never permitted.
 type Config struct {
 	TCPAddress  string
 	UDPAddress  string
@@ -13,6 +14,7 @@ type Config struct {
 	StagingDir  string
 	TLSCertFile string
 	TLSKeyFile  string
+	TLSIPs      string
 }
 
 // Defaults returns the initial Unraid container settings.
@@ -47,6 +49,7 @@ func FromEnvironment(lookup func(string) (string, bool)) (Config, error) {
 		{"SERVER_SEND_STAGING_DIR", &c.StagingDir},
 		{"SERVER_SEND_TLS_CERT_FILE", &c.TLSCertFile},
 		{"SERVER_SEND_TLS_KEY_FILE", &c.TLSKeyFile},
+		{"SERVER_SEND_TLS_IPS", &c.TLSIPs},
 	}
 	for _, setting := range settings {
 		if value, ok := lookup(setting.name); ok {

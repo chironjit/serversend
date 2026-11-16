@@ -1,0 +1,25 @@
+# Run from the repository root:
+# docker compose -f apps/server/deploy/compose.yaml up -d --build
+# No public domain, external CA, OpenSSL setup or DNS API is required.
+name: serversend-local
+services:
+  server:
+    image: serversend:dev
+    build:
+      context: ../../..
+      dockerfile: apps/server/deploy/Dockerfile
+    read_only: true
+    stop_grace_period: 15s
+    ports:
+      - "${SERVER_SEND_BIND_IP:-127.0.0.1}:${SERVER_SEND_PORT:-8443}:8443/tcp"
+    environment:
+      # Set the LAN address clients actually use; Docker cannot infer it.
+      SERVER_SEND_TLS_IPS: "${SERVER_SEND_TLS_IPS:-127.0.0.1}"
+    volumes:
+      - config:/config
+      - data:/data
+      - staging:/staging
+volumes:
+  config:
+  data:
+  staging:

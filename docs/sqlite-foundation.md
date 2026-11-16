@@ -30,10 +30,58 @@ Versions must start at 1 and be consecutive, with nonempty SQL. Invalid historie
 
 The helper begins one immediate transaction, reads `PRAGMA user_version`, and applies all pending migrations in that transaction. Schema changes, data changes and the version marker commit together; any failure rolls the entire pending batch back. The version is read after acquiring the writer reservation, so concurrent migrators using this connection policy serialize rather than both applying the same migration. Calling again with the same history is safe.
 
-An existing version greater than the supplied history returns an error wrapping `sqlite.ErrFutureSchema`. Negative schema markers are rejected. No downgrade is attempted. Backups, restore procedures and production upgrade coordination are separate application work.
+An existing version greater than the supplied history returns an error wrapping `sqlite.ErrFutureSchema`. Negative schema markers are rejected. No downgrade is attempted. The metadata snapshot primitive is described below. Full restore procedures, automatic pre-upgrade backups and production upgrade coordination remain Chunk 26 work.
+
+## Application schemas and repositories
+
+The server now opens schema **2** in `/config/serversend.sqlite`. Version 1 remains the shipped singleton identity schema; version 2 adds accounts, uploads, reservations and committed-chunk metadata. Identity material survives the upgrade unchanged. An independent frozen `apps/server/internal/database/testdata/v1.sql` fixture tests compatibility with the shipped schema rather than rebuilding the prior database from current migration code. A version-0 empty database is also supported. The pending migration batch rolls back on failure; errors do not authorize schema repair or identity replacement.
+
+The desktop opens schema **1** through `apps/desktop/internal/database.Open(ctx, absoluteDirectory)` in `desktop.sqlite`. It requires an existing private application directory. Tables hold paired profiles and public trust pins, approved endpoints, jobs, file tasks, source fingerprints, chunk acknowledgements and catalog revision checkpoints. Every remote key and foreign key includes server ID and account ID. Catalog revisions use canonical decimal text to preserve the protocol's full unsigned 64-bit range. No passwords, refresh credentials or vault keys belong in this database. Local source paths are local queue metadata; encrypted remote metadata caches are added by Chunk 20.
+
+New tables use SQLite STRICT typing plus constraints for canonical IDs, enums, lengths, nonnegative counts and ownership. The original v1 identity table remains unchanged. Composite foreign keys prevent a chunk/reservation/task from attaching to another owner's resource. File bytes remain outside SQLite. Later chunks add their own migrations for TOTP, sessions, full catalogs, vault envelopes, audit records and lifecycle-specific fields as those implementations need them; these initial tables do not implement those workflows.
+
+Repositories are concrete package functions. No repository interfaces have been invented ahead of a consumer:
+
+- Server `CreateAccount` inserts only the initial password-required, unenrolled state with an opaque encoded password hash. `GetAccount` excludes hashes and secret material. Authorization, hashing, temporary-password expiry, state changes and audit logic belong to the auth/user chunks.
+- Server `CreateUpload` inserts the upload and reservation together; `GetUpload` requires an owner and returns `sql.ErrNoRows` for absent/foreign IDs. Capacity checks, request replay, durable object acknowledgement and finalization belong to the upload/storage chunks. A reservation record alone is not capacity enforcement.
+- Desktop `CreateProfile` inserts a previously verified pin and approved HTTPS origins atomically. A duplicate cannot overwrite an existing pin; pairing and explicit trust repair belong to Chunk 08. Profiles have a maximum of sixteen configured endpoints, independently of batch size.
+- Desktop `CreateJob`, bounded keyset `ListJobs` (1–1000 rows), and `TransitionJob` provide persistence for later scheduling. Transitions validate the shared state machine and atomically compare the prior state. Missing/foreign/stale transitions return the same conflict error. Running jobs are persisted as running; Chunk 13 owns restart reconciliation before scheduling any work.
+
+Times in these repositories are stored as Unix milliseconds and read as UTC. The desktop now references the existing shared workspace module and the already approved SQLite driver; its Go minimum matches shared's `1.26.3`. No new third-party selection or workspace module was added.
+
+## Transactions and private paths
+
+`sqlite.Write(ctx, db, callback)` commits a short immediate transaction only when its callback and context succeed. Errors and panics roll back, with the original error/panic preserved. Callbacks must use the supplied `*sql.Tx`, never the one-connection pool, and must not hold the writer lock during filesystem/network work. There is no automatic retry of callback side effects. Existing single-connection limits, five-second busy timeout, foreign keys and WAL/FULL policy apply equally to both applications; multiple local handles serialize writes through SQLite.
+
+`sqlite.OpenPrivate` centralizes application directory/database checks and refuses symlinks at the database filename. Unix directories/files must be private (0700/0600). Existing access is never silently changed. Windows callers must provision user-only ACLs: POSIX mode bits are not evidence of Windows privacy. Parent paths must be trusted against local replacement races. Database directories must be on local storage with working SQLite locking, not SMB/NFS.
+
+## Metadata snapshots
+
+`sqlite.Backup(ctx, db, newAbsoluteFilename)` uses SQLite `VACUUM INTO` to capture a consistent standalone metadata database, including committed WAL data. It exclusively reserves the destination so an existing backup, source file or symlink is never overwritten; a failed call removes only its newly reserved destination. The destination must be in a trusted existing directory and must not be used until the call succeeds. It flushes the finished file and, on Unix, the containing directory. Windows directory flushing and restore semantics still require native qualification.
+
+This primitive is tested by reopening the snapshot, checking integrity and verifying that later source commits do not appear in it. It is **not** a complete ServerSend backup: configuration keys, identity handling, referenced objects, garbage-collection suspension, maintenance coordination, retention and automatic pre-migration backup remain Chunk 26. Until that workflow exists, stop the process and preserve the complete deployment before upgrading; retain the pre-upgrade backup for a downgrade. Never copy only a live main SQLite file.
+
+## Deterministic failure fixtures
+
+`shared/testutil` supplies a mutex-protected manual clock (`Now`/`Advance`), seeded `io.Reader` random source, named one-shot faults, real-file wrappers for open/read/write/sync/close/rename/remove failures, a partial-write byte budget, and `net.Conn` wrappers that interrupt reads/writes after independent byte budgets. A negative connection budget disables that direction's injection. Closing/reconnecting remains the test's responsibility. The clock does not simulate timers; finite entropy failures use the standard library's `bytes.Reader`.
+
+These adapters are test-only choices, especially the noncryptographic random source. They do not alter production randomness or add retry policy. Tests use real temporary files and `net.Pipe`, so failures do not depend on physical disk exhaustion or wall-clock sleeps. A reservation-trigger failure also proves the repository's two-statement write rolls back, and a two-handle state race proves only one job transition wins.
 
 ## Verification
 
 The tests use real temporary SQLite files. They cover connection settings, persistent contents after close/reopen, foreign keys and not-null constraints, missing parents, literal special-character filenames, invalid paths, corruption, Unix read-only files, cancelled contexts, concurrent handles, concurrent migrations, version guards, invalid histories, failed-batch rollback and retry after failure.
 
 Run `bash shared/scripts/check.sh` for formatting, vet and module tests. The approved module must already be available in the local module cache; checks do not download dependencies or edit manifests. Run `go test -mod=readonly -race ./...` from `shared` for race checks on a supported native platform. Linux tests do not replace Windows/macOS packaging, credential-storage or filesystem qualification.
+
+
+## Chunk 03 platform qualification
+
+Run `make check-persistence` natively on each supported target. It requires CGO and a real C compiler, runs vet/race tests against shared persistence/fault fixtures and both application database packages, and explicitly links their test binaries. It refuses non-CGO stubs and foreign targets. It uses offline, read-only module settings and does not activate CI. The existing draft `docs/ci-workflow.yml` includes this command for Linux, Windows and macOS, awaiting the already required CI review.
+
+| Platform | Recorded result |
+| --- | --- |
+| Linux amd64 | Passed locally on 2026-11-16: native CGO builds, vet, race tests, migrations, constraints, ownership isolation, concurrent writes, rollback and restart persistence. Full `make check` also passed, including frontend/native desktop build, regenerated bindings and live smoke checks. Loopback tests required sandbox permission. |
+| Windows | Not run: target C compiler/runtime unavailable on this Linux host. Native build/test and user-only ACL checks remain acceptance gates. |
+| macOS | Not run: target SDK/compiler/runtime unavailable on this Linux host. Native build/test and filesystem checks remain acceptance gates. |
+
+All Chunk 03 implementation checkboxes are addressed; the chunk is not marked fully accepted until the Windows/macOS driver qualification passes. A Linux build or a non-CGO cross build is not evidence for those platforms. Hosted CI remains inactive.

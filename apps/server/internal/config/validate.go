@@ -39,6 +39,12 @@ func (c Config) Validate() error {
 	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
 		return errors.New("SERVER_SEND_TLS_CERT_FILE and SERVER_SEND_TLS_KEY_FILE must both be set or both be empty")
 	}
+	if _, err := c.PrivateTLSAddresses(); err != nil {
+		return err
+	}
+	if c.TLSIPs != "" && c.TLSCertFile != "" {
+		return errors.New("SERVER_SEND_TLS_IPS cannot be combined with external TLS certificate/key files")
+	}
 	if c.TLSCertFile != "" {
 		for _, file := range []struct{ name, value string }{
 			{"SERVER_SEND_TLS_CERT_FILE", c.TLSCertFile},
@@ -86,4 +92,27 @@ func pathsOverlap(a, b string) bool {
 	a, b = filepath.Clean(a), filepath.Clean(b)
 	separator := string(filepath.Separator)
 	return a == b || strings.HasPrefix(a, b+separator) || strings.HasPrefix(b, a+separator)
+}
+
+// PrivateTLSAddresses returns explicit client-visible addresses. Never infer these
+// from a wildcard listener or Docker interface, which may be hidden by NAT.
+func (c Config) PrivateTLSAddresses() ([]netip.Addr, error) {
+	if c.TLSIPs == "" {
+		return nil, nil
+	}
+	parts := strings.Split(c.TLSIPs, ",")
+	if len(parts) > 16 {
+		return nil, errors.New("SERVER_SEND_TLS_IPS supports at most 16 addresses")
+	}
+	ips := make([]netip.Addr, 0, len(parts))
+	seen := make(map[netip.Addr]bool)
+	for _, part := range parts {
+		ip, err := netip.ParseAddr(part)
+		if err != nil || !ip.Is4() || (!ip.IsGlobalUnicast() && !ip.IsLoopback()) || seen[ip] {
+			return nil, errors.New("SERVER_SEND_TLS_IPS must contain distinct unicast IPv4 addresses separated by commas")
+		}
+		seen[ip] = true
+		ips = append(ips, ip)
+	}
+	return ips, nil
 }

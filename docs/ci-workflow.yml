@@ -68,6 +68,8 @@ jobs:
       - name: Linux server, shared code, and real scaffold smoke
         if: runner.os == 'Linux'
         run: make check-shared check-server check-smoke
+      - name: Native CGO persistence builds and recovery tests
+        run: make check-persistence
       - name: Linux persistence and server race checks
         if: runner.os == 'Linux'
         run: |

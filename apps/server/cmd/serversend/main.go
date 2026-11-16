@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/chironjit/serversend/apps/server/internal/config"
@@ -45,6 +46,9 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer s.Close()
+	if c.TLSIPs != "" {
+		log.Printf("Private IPv4 HTTPS enabled; export the public trust certificate from %s through a trusted operator channel", filepath.Join(c.ConfigDir, "tls", "ca.crt"))
+	}
 	if *check {
 		log.Printf("Configuration and metadata ready; server ID %s", s.Identity().ID)
 		return nil

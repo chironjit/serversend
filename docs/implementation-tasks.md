@@ -8,8 +8,8 @@ Implement the architecture in [Implementation plan](implementation-plan.md) in s
 | --- | --- | --- |
 | 01 | In progress | Local workspace/layout checks, Oxc lint/check/format tools, Vue tests, Go tests, native Linux build, binding regeneration and live scaffold smoke checks pass, including a clean Git checkout of the source snapshot. CI is drafted for review but not activated or run on hosted Windows/macOS runners. See [desktop development](desktop-development.md) and the [CI draft](ci-workflow.yml). |
 | 02 | Complete (contracts) | Versioned wire types, scoped identifiers, lifecycle validation, TLS-bound signed identity proofs, pagination, upload/manifest/catalog/event contracts, fifteen JSON fixtures and the requirement-to-test map are implemented and locally checked. Runtime handlers remain in their owning later chunks. See [protocol foundation](protocol-foundation.md). |
-| 03 | In progress | Shared SQLite opening policy and transactional migrations, plus the initial server identity schema, are implemented with real-database tests. Account/storage and desktop schemas, repositories, backups and platform qualification remain. See [SQLite foundation](sqlite-foundation.md). |
-| 04 | In progress | TLS-only process, persistent Ed25519 identity, storage checks, health/readiness/capability endpoints, graceful shutdown and non-root container image are implemented. Admin shell and full deployment qualification remain; this does not complete the contract/persistence dependencies. See [server development](server-development.md). |
+| 03 | Platform verification pending | Initial server account/upload/storage and desktop profile/queue schemas and repositories, private opening policy, transaction helpers, metadata snapshots, deterministic fault fixtures and Linux acceptance checks are implemented. Windows/macOS native CGO qualification remains; the CI matrix is still a review draft. See [SQLite foundation](sqlite-foundation.md). |
+| 04 | In progress | TLS-only process, automatic private IPv4 certificates/renewal, persistent Ed25519 identity, storage checks, health/readiness/capability endpoints, graceful shutdown and non-root container image/Compose example are implemented. Admin shell and full deployment qualification remain; this does not complete the contract/persistence dependencies. See [server development](server-development.md). |
 | 06 | In progress | TOTP secret/QR generation and deterministic code verification helpers are implemented. Enrollment state, encrypted storage, atomic replay consumption, rate limits and recovery codes remain. See [TOTP foundation](twofactor-foundation.md). |
 | All others | Not started | Follow the dependencies and acceptance criteria below. |
 
@@ -76,12 +76,14 @@ Chunk 17's format prototype should run after chunks 02–03 and before chunk 11 
 **Location:** `apps/server/internal/database`, `apps/desktop/internal/database`, `shared/testutil`. **Dependencies:** 01–02.
 
 - [x] Obtain approval and pin `github.com/mattn/go-sqlite3` for shared persistence.
-- [ ] Define application-owned initial schemas and repositories using the shared migration helper.
-- [ ] Add foreign-key enforcement, transaction helpers, busy-timeout policy and controlled writes.
-- [ ] Add deterministic clocks, random-source test adapters, network interruption and filesystem-failure fixtures.
-- [ ] Add upgrade compatibility guards and repository interfaces only where needed.
+- [x] Define application-owned initial schemas and repositories using the shared migration helper.
+- [x] Add foreign-key enforcement, transaction helpers, busy-timeout policy and controlled writes.
+- [x] Add deterministic clocks, random-source test adapters, network interruption and filesystem-failure fixtures.
+- [x] Add upgrade compatibility guards and repository interfaces only where needed.
 
 **Tests and acceptance:** Fresh database, repeated startup, migration from each supported prior fixture, migration failure, newer-schema rejection, concurrent writes, transaction rollback, missing/read-only paths and restart persistence. Cross-platform driver builds pass.
+
+**Verified locally:** `make check-persistence` passes on Linux amd64 with CGO, including vet, race tests and explicit driver-consumer linking. `make check` passes, including the desktop build, binding regeneration and live scaffold smoke. Server migrations cover empty/v1 fixtures, failed upgrades and future-version rejection; repository tests cover ownership collisions, atomic writes, concurrent writers, queue CAS races and restart persistence. Consistent metadata snapshots are tested separately from the full deployment backup workflow in Chunk 26. **Remaining acceptance gate:** Windows/macOS native CGO builds/tests and platform permission qualification could not run on this Linux host. The draft CI includes the native persistence check but remains inactive pending review. See [SQLite foundation](sqlite-foundation.md).
 
 ## Chunk 04 Build the server process and container skeleton
 
