@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/chironjit/serversend/shared/protocol"
-	"github.com/chironjit/serversend/shared/sqlite"
 )
 
 // Upload is only the durable upload/reservation foundation. Later upload logic
@@ -24,7 +23,7 @@ type Upload struct {
 
 // CreateUpload records both the initial upload and its reservation atomically.
 // The caller must enforce account authorization and available capacity.
-func CreateUpload(ctx context.Context, db *sql.DB, upload Upload) error {
+func (r *Repository) CreateUpload(ctx context.Context, upload Upload) error {
 	if err := upload.AccountID.Validate(); err != nil {
 		return err
 	}
@@ -34,7 +33,7 @@ func CreateUpload(ctx context.Context, db *sql.DB, upload Upload) error {
 	if upload.State != protocol.UploadOpen || upload.CreatedAt.IsZero() || upload.CreatedAt.UnixMilli() < 0 {
 		return errors.New("new uploads must be open with a creation time")
 	}
-	return sqlite.Write(ctx, db, func(tx *sql.Tx) error {
+	return r.write(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO uploads(account_id,id,state,mode,idempotency_key,expected_bytes,created_at) VALUES(?,?,?,?,?,?,?)`, upload.AccountID, upload.ID, upload.State, upload.Mode, upload.IdempotencyKey, upload.ExpectedBytes, upload.CreatedAt.UnixMilli())
 		if err != nil {
 			return err
@@ -46,7 +45,7 @@ func CreateUpload(ctx context.Context, db *sql.DB, upload Upload) error {
 
 // GetUpload always scopes by owner; absent and foreign uploads both return
 // sql.ErrNoRows. Knowledge of an ID does not grant access to another owner.
-func GetUpload(ctx context.Context, db *sql.DB, accountID, id protocol.ID) (Upload, error) {
+func (r *Repository) GetUpload(ctx context.Context, accountID, id protocol.ID) (Upload, error) {
 	if err := accountID.Validate(); err != nil {
 		return Upload{}, err
 	}
@@ -55,7 +54,7 @@ func GetUpload(ctx context.Context, db *sql.DB, accountID, id protocol.ID) (Uplo
 	}
 	var upload Upload
 	var millis int64
-	err := db.QueryRowContext(ctx, `SELECT account_id,id,state,mode,idempotency_key,expected_bytes,created_at FROM uploads WHERE account_id=? AND id=?`, accountID, id).Scan(&upload.AccountID, &upload.ID, &upload.State, &upload.Mode, &upload.IdempotencyKey, &upload.ExpectedBytes, &millis)
+	err := r.db.QueryRowContext(ctx, `SELECT account_id,id,state,mode,idempotency_key,expected_bytes,created_at FROM uploads WHERE account_id=? AND id=?`, accountID, id).Scan(&upload.AccountID, &upload.ID, &upload.State, &upload.Mode, &upload.IdempotencyKey, &upload.ExpectedBytes, &millis)
 	if err != nil {
 		return Upload{}, err
 	}

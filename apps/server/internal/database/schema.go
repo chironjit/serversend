@@ -13,6 +13,7 @@ var schema embed.FS
 var migrations = []sqlite.Migration{
 	{Version: 1, SQL: migrationSQL("001_identity.sql")},
 	{Version: 2, SQL: migrationSQL("002_accounts_uploads.sql")},
+	{Version: 3, SQL: migrationSQL("003_authentication.sql")},
 }
 
 func migrationSQL(name string) string {

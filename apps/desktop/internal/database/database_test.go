@@ -47,14 +47,14 @@ func TestDesktopScopeIsolationAndRestart(t *testing.T) {
 	db, dir := openDatabase(t)
 	scopes := []protocol.Scope{{ServerID: serverA, AccountID: accountA}, {ServerID: serverB, AccountID: accountA}, {ServerID: serverA, AccountID: accountB}}
 	for _, scope := range scopes {
-		if err := CreateProfile(ctx, db, profileFor(scope)); err != nil {
+		if err := NewRepository(db).CreateProfile(ctx, profileFor(scope)); err != nil {
 			t.Fatal(err)
 		}
-		if err := CreateJob(ctx, db, jobFor(scope)); err != nil {
+		if err := NewRepository(db).CreateJob(ctx, jobFor(scope)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := TransitionJob(ctx, db, jobFor(scopes[0]).Key, protocol.Queued, protocol.Running); err != nil {
+	if err := NewRepository(db).TransitionJob(ctx, jobFor(scopes[0]).Key, protocol.Queued, protocol.Running); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -66,11 +66,11 @@ func TestDesktopScopeIsolationAndRestart(t *testing.T) {
 	}
 	defer db.Close()
 	for i, scope := range scopes {
-		got, err := GetProfile(ctx, db, scope)
+		got, err := NewRepository(db).GetProfile(ctx, scope)
 		if err != nil || !reflect.DeepEqual(got, profileFor(scope)) {
 			t.Fatalf("profile=%+v error=%v", got, err)
 		}
-		jobs, err := ListJobs(ctx, db, scope, "", 10)
+		jobs, err := NewRepository(db).ListJobs(ctx, scope, "", 10)
 		if err != nil || len(jobs) != 1 {
 			t.Fatalf("jobs=%+v error=%v", jobs, err)
 		}
@@ -83,14 +83,14 @@ func TestDesktopScopeIsolationAndRestart(t *testing.T) {
 		}
 	}
 	foreign := protocol.Scope{ServerID: serverB, AccountID: accountB}
-	if _, err := GetProfile(ctx, db, foreign); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := NewRepository(db).GetProfile(ctx, foreign); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("foreign profile returned: %v", err)
 	}
-	jobs, err := ListJobs(ctx, db, foreign, "", 10)
+	jobs, err := NewRepository(db).ListJobs(ctx, foreign, "", 10)
 	if err != nil || len(jobs) != 0 {
 		t.Fatalf("foreign jobs=%+v error=%v", jobs, err)
 	}
-	if err := TransitionJob(ctx, db, jobFor(foreign).Key, protocol.Queued, protocol.Running); !errors.Is(err, ErrJobConflict) {
+	if err := NewRepository(db).TransitionJob(ctx, jobFor(foreign).Key, protocol.Queued, protocol.Running); !errors.Is(err, ErrJobConflict) {
 		t.Fatalf("foreign mutation: %v", err)
 	}
 }
@@ -104,23 +104,23 @@ func TestProfileTrustAndAtomicRoutes(t *testing.T) {
 	} {
 		p := profileFor(scope)
 		change(&p)
-		if err := CreateProfile(ctx, db, p); err == nil {
+		if err := NewRepository(db).CreateProfile(ctx, p); err == nil {
 			t.Fatalf("invalid profile accepted: %+v", p)
 		}
-		if _, err := GetProfile(ctx, db, scope); !errors.Is(err, sql.ErrNoRows) {
+		if _, err := NewRepository(db).GetProfile(ctx, scope); !errors.Is(err, sql.ErrNoRows) {
 			t.Fatalf("partial profile left: %v", err)
 		}
 	}
 	p := profileFor(scope)
-	if err := CreateProfile(ctx, db, p); err != nil {
+	if err := NewRepository(db).CreateProfile(ctx, p); err != nil {
 		t.Fatal(err)
 	}
 	replaced := profileFor(scope)
 	replaced.IdentityKey[0] = 1
-	if err := CreateProfile(ctx, db, replaced); err == nil {
+	if err := NewRepository(db).CreateProfile(ctx, replaced); err == nil {
 		t.Fatal("trust pin overwritten")
 	}
-	got, err := GetProfile(ctx, db, scope)
+	got, err := NewRepository(db).GetProfile(ctx, scope)
 	if err != nil || !reflect.DeepEqual(got, p) {
 		t.Fatal("duplicate changed trust pin")
 	}
@@ -130,30 +130,30 @@ func TestJobValidationPaginationAndRacingTransition(t *testing.T) {
 	ctx := context.Background()
 	db, dir := openDatabase(t)
 	scope := protocol.Scope{ServerID: serverA, AccountID: accountA}
-	if err := CreateJob(ctx, db, jobFor(scope)); err == nil {
+	if err := NewRepository(db).CreateJob(ctx, jobFor(scope)); err == nil {
 		t.Fatal("foreign key bypassed")
 	}
-	if err := CreateProfile(ctx, db, profileFor(scope)); err != nil {
+	if err := NewRepository(db).CreateProfile(ctx, profileFor(scope)); err != nil {
 		t.Fatal(err)
 	}
 	for _, change := range []func(*Job){func(j *Job) { j.Key.ID = "bad" }, func(j *Job) { j.State = protocol.Complete }, func(j *Job) { j.Mode = "other" }, func(j *Job) { j.CreatedAt = time.Time{} }} {
 		j := jobFor(scope)
 		change(&j)
-		if err := CreateJob(ctx, db, j); err == nil {
+		if err := NewRepository(db).CreateJob(ctx, j); err == nil {
 			t.Fatalf("invalid job accepted: %+v", j)
 		}
 	}
 	for i := 1; i <= 5; i++ {
 		j := jobFor(scope)
 		j.Key.ID = protocol.ID(fmt.Sprintf("%032x", i))
-		if err := CreateJob(ctx, db, j); err != nil {
+		if err := NewRepository(db).CreateJob(ctx, j); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var after protocol.ID
 	seen := 0
 	for {
-		jobs, err := ListJobs(ctx, db, scope, after, 2)
+		jobs, err := NewRepository(db).ListJobs(ctx, scope, after, 2)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -175,16 +175,16 @@ func TestJobValidationPaginationAndRacingTransition(t *testing.T) {
 		t.Fatalf("seen=%d", seen)
 	}
 	for _, limit := range []int{-1, 0, 1001} {
-		if _, err := ListJobs(ctx, db, scope, "", limit); err == nil {
+		if _, err := NewRepository(db).ListJobs(ctx, scope, "", limit); err == nil {
 			t.Fatal("invalid page size accepted")
 		}
 	}
-	if _, err := ListJobs(ctx, db, scope, "bad", 1); err == nil {
+	if _, err := NewRepository(db).ListJobs(ctx, scope, "bad", 1); err == nil {
 		t.Fatal("invalid cursor accepted")
 	}
 	key := jobFor(scope).Key
 	key.ID = protocol.ID(fmt.Sprintf("%032x", 1))
-	if err := TransitionJob(ctx, db, key, protocol.Queued, protocol.Complete); err == nil {
+	if err := NewRepository(db).TransitionJob(ctx, key, protocol.Queued, protocol.Complete); err == nil {
 		t.Fatal("state machine bypassed")
 	}
 	other, err := Open(ctx, dir)
@@ -195,7 +195,7 @@ func TestJobValidationPaginationAndRacingTransition(t *testing.T) {
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
 	for _, handle := range []*sql.DB{db, other} {
-		wg.Go(func() { results <- TransitionJob(ctx, handle, key, protocol.Queued, protocol.Running) })
+		wg.Go(func() { results <- NewRepository(handle).TransitionJob(ctx, key, protocol.Queued, protocol.Running) })
 	}
 	wg.Wait()
 	close(results)
@@ -280,10 +280,10 @@ func TestDesktopMigrationFailureAndOwnedTaskReferences(t *testing.T) {
 	db.Close()
 	db, _ = openDatabase(t)
 	scope := protocol.Scope{ServerID: serverA, AccountID: accountA}
-	if err := CreateProfile(ctx, db, profileFor(scope)); err != nil {
+	if err := NewRepository(db).CreateProfile(ctx, profileFor(scope)); err != nil {
 		t.Fatal(err)
 	}
-	if err := CreateJob(ctx, db, jobFor(scope)); err != nil {
+	if err := NewRepository(db).CreateJob(ctx, jobFor(scope)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO file_tasks(server_id,account_id,job_id,id,source_path) VALUES(?,?,?,?,?)`, serverA, accountB, jobID, jobID, "local"); err == nil {

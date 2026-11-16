@@ -1,5 +1,16 @@
 # Build from the repository root:
 # docker build -f apps/server/deploy/Dockerfile -t serversend:dev .
+FROM node:26-bookworm-slim AS admin-build
+WORKDIR /admin
+COPY apps/server/admin/package.json apps/server/admin/package-lock.json ./
+RUN npm ci
+COPY apps/server/admin/index.html apps/server/admin/tsconfig.json apps/server/admin/vite.config.ts ./
+COPY apps/server/admin/src ./src
+COPY apps/server/admin/public ./public
+COPY apps/server/admin/checks ./checks
+COPY apps/server/admin/scripts ./scripts
+RUN npm run build
+
 FROM golang:1.26.3-bookworm AS build
 WORKDIR /src
 ENV GOWORK=off CGO_ENABLED=1
@@ -13,6 +24,8 @@ COPY shared/protocol ./shared/protocol
 COPY shared/sqlite ./shared/sqlite
 COPY apps/server/cmd ./apps/server/cmd
 COPY apps/server/internal ./apps/server/internal
+COPY apps/server/admin/assets.go ./apps/server/admin/assets.go
+COPY --from=admin-build /admin/dist ./apps/server/admin/dist
 WORKDIR /src/apps/server
 RUN go build -mod=readonly -trimpath -ldflags='-s -w' -o /out/serversend ./cmd/serversend
 

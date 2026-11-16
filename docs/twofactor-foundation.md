@@ -1,6 +1,6 @@
 # TOTP helper foundation
 
-`apps/server/internal/auth/twofactor` uses the approved `github.com/pquerna/otp` library for enrollment and code verification. It is not an authentication service: HTTP endpoints, password checks, enrollment state, encrypted storage, rate limits and recovery codes remain separate work.
+`apps/server/internal/auth/twofactor` uses the approved `github.com/pquerna/otp` library for enrollment and code verification. It is not an authentication service: HTTP endpoints, enrollment state, persisted encrypted secrets, rate limits and atomic recovery-code consumption remain separate work. Account/password state services exist independently, with production composition still pending.
 
 ## Enrollment
 
@@ -21,3 +21,19 @@ The verifier computes the TOTP counter explicitly and uses the library's HOTP ve
 ## Validation
 
 Tests cover fresh-secret uniqueness, provisioning parameters and label encoding, QR dimensions/bounds, randomness failures, RFC 6238 SHA1 vectors reduced to six digits, step/skew boundaries, malformed input, epoch handling and replay rejection including future-window acceptance. Run the server check script and `go test -race ./internal/auth/twofactor` from `apps/server` with the approved dependencies available.
+
+## Secret protection and recovery-code primitives
+
+`NewSecretProtector` accepts a separately managed 32-byte configuration key and encrypts canonical TOTP secrets with AES-256-GCM, a fresh random 96-bit nonce and a versioned fixed-size binary envelope. Additional authenticated data binds the purpose/version and canonical server/account IDs. Modified, truncated, cross-account, cross-server and wrong-key envelopes return no plaintext. It does not prevent rollback to a previous valid secret for the same account; account enrollment revisions and atomic state transitions must provide that boundary. Rotate the protection key well before 2^32 seals; key rotation and re-encryption are not implemented.
+
+`GenerateRecoveryCodes(scope)` returns ten independently random 128-bit codes, each with its scoped SHA-256 hash. Only display values are returned once to the authenticated account; persist only hashes. The parser accepts compact hexadecimal or the exact four-group display form, ignores ASCII case and outer whitespace, and rejects interior whitespace, incorrect separators, non-ASCII digits and oversized input. Comparison uses constant-time digest comparison. Generation rejects duplicate random values rather than silently issuing fewer codes or retrying indefinitely.
+
+These primitives do not make codes single-use. The account service must consume a matching hash in the same transaction that grants authentication, and atomically replace the whole set on recovery-code renewal. Racing-code consumption, provisional enrollment persistence, secret rotation and reset integration remain Chunk 06 acceptance work.
+
+## Durable protection-key helper
+
+`LoadProtectionKey(configDir, createIfMissing)` loads `totp.key` from an existing absolute private configuration directory. The versioned file contains a 32-byte random key and an integrity checksum for accidental corruption. New keys are written to a private 0600 temporary file, flushed, exclusively linked into place and directory-flushed before use. Concurrent initializers return the winning persisted key. Existing corrupt files, unsafe permissions, symlinks, nonregular files and missing directories are rejected without replacement. Failed directory flush reports uncertainty while retaining any already published key. An unpublished crash temporary file does not become the key.
+
+The runtime must allow creation only when the database contains no retained encrypted TOTP secrets. A missing key with enrolled accounts is a restore failure, not permission to generate a replacement. The helper cannot establish this database invariant itself; runtime integration remains pending. Back up the key with the database and identity. Windows ACLs and durable directory flushing remain native qualification gates; unsupported flushing fails rather than reporting successful initialization.
+
+Protection/recovery tests cover wrong context/key, tampering, malformed input, independent random values and entropy failures. Key-file tests additionally cover restart decryption, 32 concurrent creators, unsafe paths, corruption, read-only storage and injected create/write/short-write/sync/close/link failures. These tests use real temporary files and do not claim account enrollment or code-consumption integration.

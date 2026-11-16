@@ -49,7 +49,7 @@ func TestFailuresUseSafeTypedErrors(t *testing.T) {
 		code         api.ErrorCode
 	}{
 		{"GET", "/readyz", 503, api.Unavailable},
-		{"GET", "/admin", 404, api.NotFound},
+		{"GET", "/admin/unknown", 404, api.NotFound},
 		{"GET", "/api/v1/files", 404, api.NotFound},
 		{"POST", "/healthz", 405, api.InvalidRequest},
 	} {

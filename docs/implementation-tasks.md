@@ -9,8 +9,9 @@ Implement the architecture in [Implementation plan](implementation-plan.md) in s
 | 01 | In progress | Local workspace/layout checks, Oxc lint/check/format tools, Vue tests, Go tests, native Linux build, binding regeneration and live scaffold smoke checks pass, including a clean Git checkout of the source snapshot. The reviewed CI workflow is activated at `.github/workflows/check.yml` (2026-11-16); hosted Windows/macOS runs are pending the first push. Unused iOS/Android scaffold assets were removed. See [desktop development](desktop-development.md). |
 | 02 | Complete (contracts) | Versioned wire types, scoped identifiers, lifecycle validation, TLS-bound signed identity proofs, pagination, upload/manifest/catalog/event contracts, fifteen JSON fixtures and the requirement-to-test map are implemented and locally checked. Runtime handlers remain in their owning later chunks. See [protocol foundation](protocol-foundation.md). |
 | 03 | Platform verification pending | Initial server account/upload/storage and desktop profile/queue schemas and repositories, private opening policy, transaction helpers, metadata snapshots, deterministic fault fixtures and Linux acceptance checks are implemented. Windows/macOS native CGO qualification remains; the activated CI matrix covers it once hosted runs execute. See [SQLite foundation](sqlite-foundation.md). |
-| 04 | In progress | TLS-only process, automatic private IPv4 certificates/renewal, persistent Ed25519 identity, storage checks, health/readiness/capability endpoints, graceful shutdown and non-root container image/Compose example are implemented. Admin shell and full deployment qualification remain; this does not complete the contract/persistence dependencies. See [server development](server-development.md). |
-| 06 | In progress | TOTP secret/QR generation and deterministic code verification helpers are implemented. Enrollment state, encrypted storage, atomic replay consumption, rate limits and recovery codes remain. See [TOTP foundation](twofactor-foundation.md). |
+| 04 | In progress | TLS-only process, automatic private IPv4 certificates/renewal, persistent Ed25519 identity, storage checks, health/readiness/capability endpoints, graceful shutdown and non-root container image/Compose example are implemented. An embedded Vue admin shell with readiness and persisted Light/Dark/System themes is implemented; its 24 UI tests pass. The user approved `@tailwindcss/vite` on 2026-11-16; production CSS and server checks now pass. Updated container validation remains. Full deployment qualification and the persistence dependency gates remain. See [server development](server-development.md). |
+| 05 | In progress | Receiver-based server/desktop repositories, schema-3 authentication state, account issuance/recovery/reset/disable services, persistent backoff, one-use scoped password challenges, atomic replacement, audit rollback and HTTP adapter/contracts are implemented and tested. Production Argon2id selection awaits dependency approval; executable/CLI integration and full session-backed administrator authorization remain. |
+| 06 | In progress | TOTP secret/QR generation, deterministic verification, server/account-bound AES-GCM secret protection and scoped high-entropy recovery-code helpers are implemented. A private, durable configuration-key helper is tested for concurrent initialization, restart, corruption and injected filesystem failures. Enrollment state, persisted encrypted secrets, atomic replay/code consumption and account-flow integration remain. See [TOTP foundation](twofactor-foundation.md). |
 | All others | Not started | Follow the dependencies and acceptance criteria below. |
 
 The other partial foundation slices do not complete their chunks or bypass integration dependencies. SQLite and OTP dependencies were added with the user's explicit approval, recorded in root `AGENTS.md`.
@@ -46,7 +47,7 @@ Chunk 17's format prototype should run after chunks 02–03 and before chunk 11 
 
 Two disposable spikes run ahead of their milestone order, both before chunk 11 freezes the manifest and chunk API. Neither produces production code, ships features, or bypasses chunk acceptance; each records its findings in `docs` and may force contract revisions while they are still cheap.
 
-- **Vertical transfer spike.** A deliberately crude end-to-end exercise of the chunk 02 upload contracts — create upload, send chunks, finalize, download, compare — using a throwaway handler and client, without authentication or durability guarantees. Its purpose is to validate the `shared/api` upload/manifest contracts against a real consumer before the identity chunks build on them. Contracts were specified before any handler existed; expect and record revisions.
+- **Vertical transfer spike (implemented test rig).** `shared/tests/transfer_spike_test.go` exercises verified TLS 1.3/HTTP/2 create/replay, missing queries, reversed/duplicate/conflicting chunks, finalization/replay, immutable download and byte comparison for empty, multichunk and interrupted/retried fixtures. This bounded, test-local handler/client has no authentication or durability guarantees. Preserve exact manifest bytes (including JSON whitespace) before creation; an empty manifest uses `chunks:[]`, not `null`; structural validation must be combined with actual object validation; finalize replay must precede lifecycle validation. Creation currently needs finalized manifest hashes/length before chunk sending, implying an up-front hashing/encryption pass whose large/private-file staging cost remains unmeasured. No contract revision was required by this rig; it does not freeze the contracts or replace either the target-hardware overhead benchmark or production acceptance.
 - **Small-file overhead benchmark.** Measure raw per-file request/metadata overhead over HTTP/2 (and HTTP/3 where practical) on the target deployment hardware at a scale representative of 100,000 small files. The primary workload is many small files; if per-request overhead dominates, the fix changes the public API, so this must be known before the chunk 11 freeze, not at chunk 24.
 
 ## Chunk 01 Validate the workspace and establish checks
@@ -99,7 +100,7 @@ Two disposable spikes run ahead of their milestone order, both before chunk 11 f
 - [x] Implement validated configuration, persistent server ID/key and graceful process lifecycle.
 - [x] Add health/readiness endpoints, TLS configuration and API capability endpoint.
 - [x] Build a non-root multi-stage image with explicit `/config`, `/data`, `/staging` mounts and TCP/UDP port declarations.
-- [ ] Embed an initial admin shell without application credentials or open enrollment.
+- [x] Embed an initial admin shell without application credentials or open enrollment.
 
 **Tests and acceptance:** Container restart retains identity; invalid certificates/configuration fail clearly; SIGTERM drains requests; permissions and missing mounts fail predictably; no persistent application data lands only in the container layer.
 
@@ -107,11 +108,11 @@ Two disposable spikes run ahead of their milestone order, both before chunk 11 f
 
 **Location:** `apps/server/internal/auth`, `apps/server/internal/users`, `apps/server/internal/httpapi`. **Dependencies:** 03–04.
 
-- [ ] Adopt the repository receiver convention from the implementation plan, converting the existing package-level account/upload/queue database functions in the same change.
+- [x] Adopt the repository receiver convention from the implementation plan, converting the existing package-level account/upload/profile/queue database functions in the same change.
 - [ ] Add expiring one-time bootstrap and admin/user roles.
 - [ ] Implement user creation, random temporary passwords, Argon2id hashing and onboarding scopes.
 - [ ] Implement password replacement, throttling and audited administrator resets.
-- [ ] Define account disablement and session invalidation hooks.
+- [x] Define account disablement and session invalidation hooks. Account-wide `auth_epoch` changes atomically invalidate restricted attempts; Chunk 07 must check this epoch on every access/refresh and cancel active streams.
 
 **Tests and acceptance:** Bootstrap reuse/expiry, duplicate accounts, weak/malformed input, wrong/expired temporary password, concurrent replacement, direct API onboarding bypass, cross-user access and non-admin administration attempts. Hashes and secrets are absent from API/log outputs.
 

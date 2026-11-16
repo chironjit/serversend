@@ -22,6 +22,9 @@ if [[ -n "$unformatted" ]]; then
   exit 1
 fi
 
+# Production assets must exist before Go's embed directive is evaluated.
+bash scripts/check_admin.sh
+
 go vet -mod=readonly ./...
 go test -mod=readonly ./...
 

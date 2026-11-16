@@ -105,7 +105,7 @@ func TestTLSHTTP2AndRestart(t *testing.T) {
 	go func() { done <- s.Serve(ctx, listener) }()
 	client := testClient(t, c)
 	base := "https://" + listener.Addr().String()
-	for _, path := range []string{"/healthz", "/readyz", api.BasePath + "/capabilities"} {
+	for _, path := range []string{"/healthz", "/readyz", api.BasePath + "/capabilities", "/admin/", "/admin/theme-init.js"} {
 		response, err := client.Get(base + path)
 		if err != nil {
 			t.Fatal(err)

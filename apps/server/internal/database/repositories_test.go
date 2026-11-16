@@ -41,7 +41,7 @@ func uploadFor(owner protocol.ID) Upload {
 }
 func mustAccount(t *testing.T, db *sql.DB, id protocol.ID) {
 	t.Helper()
-	if err := CreateAccount(context.Background(), db, accountFor(id), "opaque-encoded-hash"); err != nil {
+	if err := NewRepository(db).CreateAccount(context.Background(), accountFor(id), "opaque-encoded-hash"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -52,18 +52,18 @@ func TestRepositoriesScopeAtomicityAndRestart(t *testing.T) {
 	mustAccount(t, db, ownerA)
 	mustAccount(t, db, ownerB)
 	a := uploadFor(ownerA)
-	if err := CreateUpload(ctx, db, a); err != nil {
+	if err := NewRepository(db).CreateUpload(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := GetUpload(ctx, db, ownerB, uploadID); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := NewRepository(db).GetUpload(ctx, ownerB, uploadID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("foreign lookup: %v", err)
 	}
-	if err := CreateUpload(ctx, db, a); err == nil {
+	if err := NewRepository(db).CreateUpload(ctx, a); err == nil {
 		t.Fatal("duplicate idempotency key accepted")
 	}
 	b := uploadFor(ownerB)
 	b.Mode = "private"
-	if err := CreateUpload(ctx, db, b); err != nil {
+	if err := NewRepository(db).CreateUpload(ctx, b); err != nil {
 		t.Fatal(err)
 	}
 	// Abort the second statement to prove upload + reservation atomicity.
@@ -73,16 +73,16 @@ func TestRepositoriesScopeAtomicityAndRestart(t *testing.T) {
 	failed := a
 	failed.ID = "dddddddddddddddddddddddddddddddd"
 	failed.IdempotencyKey = "create-2"
-	if err := CreateUpload(ctx, db, failed); err == nil {
+	if err := NewRepository(db).CreateUpload(ctx, failed); err == nil {
 		t.Fatal("injected failure ignored")
 	}
-	if _, err := GetUpload(ctx, db, ownerA, failed.ID); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := NewRepository(db).GetUpload(ctx, ownerA, failed.ID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("partial upload left after rollback: %v", err)
 	}
 	if _, err := db.Exec(`DROP TRIGGER fail_reservation`); err != nil {
 		t.Fatal(err)
 	}
-	if err := CreateUpload(ctx, db, failed); err != nil {
+	if err := NewRepository(db).CreateUpload(ctx, failed); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -94,12 +94,12 @@ func TestRepositoriesScopeAtomicityAndRestart(t *testing.T) {
 	}
 	defer db.Close()
 	for _, want := range []Upload{a, b, failed} {
-		got, err := GetUpload(ctx, db, want.AccountID, want.ID)
+		got, err := NewRepository(db).GetUpload(ctx, want.AccountID, want.ID)
 		if err != nil || got != want {
 			t.Fatalf("restart got=%+v error=%v", got, err)
 		}
 	}
-	got, err := GetAccount(ctx, db, ownerA)
+	got, err := NewRepository(db).GetAccount(ctx, ownerA)
 	if err != nil || got != accountFor(ownerA) {
 		t.Fatalf("account restart: %+v %v", got, err)
 	}
@@ -117,18 +117,18 @@ func TestRepositoriesRejectInvalidAndForeignReferences(t *testing.T) {
 	} {
 		a := accountFor(ownerA)
 		change(&a)
-		if err := CreateAccount(ctx, db, a, "hash"); err == nil {
+		if err := NewRepository(db).CreateAccount(ctx, a, "hash"); err == nil {
 			t.Fatalf("invalid account accepted: %+v", a)
 		}
 	}
-	if err := CreateAccount(ctx, db, accountFor(ownerA), ""); err == nil {
+	if err := NewRepository(db).CreateAccount(ctx, accountFor(ownerA), ""); err == nil {
 		t.Fatal("empty hash accepted")
 	}
 	mustAccount(t, db, ownerA)
-	if err := CreateAccount(ctx, db, accountFor(ownerA), "hash"); err == nil {
+	if err := NewRepository(db).CreateAccount(ctx, accountFor(ownerA), "hash"); err == nil {
 		t.Fatal("duplicate account accepted")
 	}
-	if _, err := GetAccount(ctx, db, "bad"); err == nil {
+	if _, err := NewRepository(db).GetAccount(ctx, "bad"); err == nil {
 		t.Fatal("invalid account ID accepted")
 	}
 	for _, change := range []func(*Upload){
@@ -136,11 +136,11 @@ func TestRepositoriesRejectInvalidAndForeignReferences(t *testing.T) {
 	} {
 		u := uploadFor(ownerA)
 		change(&u)
-		if err := CreateUpload(ctx, db, u); err == nil {
+		if err := NewRepository(db).CreateUpload(ctx, u); err == nil {
 			t.Fatalf("invalid upload accepted: %+v", u)
 		}
 	}
-	if err := CreateUpload(ctx, db, uploadFor(ownerA)); err != nil {
+	if err := NewRepository(db).CreateUpload(ctx, uploadFor(ownerA)); err != nil {
 		t.Fatal(err)
 	}
 	mustAccount(t, db, ownerB)
@@ -168,8 +168,8 @@ func TestServerUpgradeEveryPriorSchema(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if prior == 1 {
-				fixture, err := os.ReadFile("testdata/v1.sql")
+			if prior > 0 {
+				fixture, err := os.ReadFile(fmt.Sprintf("testdata/v%d.sql", prior))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -184,8 +184,23 @@ func TestServerUpgradeEveryPriorSchema(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer db.Close()
-			mustAccount(t, db, ownerA)
-			if prior == 1 {
+			if prior < 2 {
+				mustAccount(t, db, ownerA)
+			} else {
+				account, err := NewRepository(db).GetAccount(context.Background(), ownerA)
+				if err != nil || account != accountFor(ownerA) {
+					t.Fatalf("prior account lost: %+v %v", account, err)
+				}
+				upload, err := NewRepository(db).GetUpload(context.Background(), ownerA, uploadID)
+				if err != nil || upload != uploadFor(ownerA) {
+					t.Fatalf("prior upload lost: %+v %v", upload, err)
+				}
+				var reserved int64
+				if err := db.QueryRow(`SELECT bytes FROM reservations WHERE account_id=? AND upload_id=?`, ownerA, uploadID).Scan(&reserved); err != nil || reserved != 42 {
+					t.Fatalf("prior reservation lost: %d %v", reserved, err)
+				}
+			}
+			if prior > 0 {
 				var id string
 				var seed []byte
 				if err := db.QueryRow(`SELECT server_id,key_seed FROM server_identity`).Scan(&id, &seed); err != nil || id != string(ownerA) || fmt.Sprintf("%x", seed) != "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f" {
@@ -250,7 +265,7 @@ func TestConcurrentRepositoryWrites(t *testing.T) {
 			if i%2 == 1 {
 				handle = other
 			}
-			failures <- CreateAccount(context.Background(), handle, a, "hash")
+			failures <- NewRepository(handle).CreateAccount(context.Background(), a, "hash")
 		})
 	}
 	wg.Wait()

@@ -71,6 +71,21 @@ wait_ready() {
   rg -q '"status":"ready"' "$fixture_dir/ready.json"
 }
 
+check_admin() {
+  local address script_path style_path
+  address="$(docker port "$container_name" 8443/tcp)"
+  curl --silent --show-error --fail --max-time 2 \
+    --cacert "$fixture_dir/cert.pem" "https://$address/admin/" >"$fixture_dir/admin.html"
+  rg -q 'ServerSend administration' "$fixture_dir/admin.html"
+  script_path="$(rg -o '/admin/assets/[^" ]+\.js' "$fixture_dir/admin.html" | head -n 1)"
+  style_path="$(rg -o '/admin/assets/[^" ]+\.css' "$fixture_dir/admin.html" | head -n 1)"
+  [[ -n "$script_path" && -n "$style_path" ]]
+  for path in "$script_path" "$style_path" /admin/theme-init.js; do
+    curl --silent --show-error --fail --max-time 2 \
+      --cacert "$fixture_dir/cert.pem" "https://$address$path" >/dev/null
+  done
+}
+
 docker start "$container_name" >/dev/null
 if [[ "$mode" == --private-ipv4 ]]; then
   # Wait only for initial generation, then export the public CA through Docker's
@@ -84,6 +99,7 @@ if [[ "$mode" == --private-ipv4 ]]; then
   [[ "$(docker exec "$container_name" stat -c '%a' /config/tls/server.pem)" == 600 ]]
 fi
 wait_ready
+check_admin
 first_identity="$(docker logs "$container_name" 2>&1 | rg -o 'Server [0-9a-f]{32} listening' | tail -n 1)"
 [[ -n "$first_identity" ]]
 [[ "$(docker exec "$container_name" stat -c '%a' /config/serversend.sqlite)" == 600 ]]
@@ -93,6 +109,7 @@ docker stop "$container_name" >/dev/null
 [[ "$(docker inspect --format '{{.State.ExitCode}}' "$container_name")" == 0 ]]
 docker start "$container_name" >/dev/null
 wait_ready
+check_admin
 if [[ "$mode" == --private-ipv4 ]]; then
   docker cp "$container_name:/config/tls/ca.crt" "$fixture_dir/ca-after-restart.crt"
   cmp -s "$fixture_dir/cert.pem" "$fixture_dir/ca-after-restart.crt"
@@ -102,4 +119,4 @@ second_identity="$(docker logs "$container_name" 2>&1 | rg -o 'Server [0-9a-f]{3
 docker stop "$container_name" >/dev/null
 [[ "$(docker inspect --format '{{.State.ExitCode}}' "$container_name")" == 0 ]]
 
-printf 'Container checks passed (%s): verified TLS, non-root user, read-only root, restart identity/trust, SIGTERM\n' "$mode"
+printf 'Container checks passed (%s): verified TLS, embedded admin assets, non-root user, read-only root, restart identity/trust, SIGTERM\n' "$mode"

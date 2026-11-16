@@ -6,7 +6,6 @@ import (
 	"errors"
 
 	"github.com/chironjit/serversend/shared/protocol"
-	"github.com/chironjit/serversend/shared/sqlite"
 )
 
 type Profile struct {
@@ -19,7 +18,7 @@ type Profile struct {
 // CreateProfile stores a previously verified identity and approved endpoints.
 // Pairing must authenticate these values before calling this persistence layer.
 // An existing trust pin cannot be replaced through this insertion operation.
-func CreateProfile(ctx context.Context, db *sql.DB, profile Profile) error {
+func (r *Repository) CreateProfile(ctx context.Context, profile Profile) error {
 	if err := profile.Scope.Validate(); err != nil {
 		return err
 	}
@@ -31,7 +30,7 @@ func CreateProfile(ctx context.Context, db *sql.DB, profile Profile) error {
 			return err
 		}
 	}
-	return sqlite.Write(ctx, db, func(tx *sql.Tx) error {
+	return r.write(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO profiles(server_id,account_id,display_name,identity_key) VALUES(?,?,?,?)`, profile.Scope.ServerID, profile.Scope.AccountID, profile.DisplayName, profile.IdentityKey)
 		if err != nil {
 			return err
@@ -45,13 +44,13 @@ func CreateProfile(ctx context.Context, db *sql.DB, profile Profile) error {
 	})
 }
 
-func GetProfile(ctx context.Context, db *sql.DB, scope protocol.Scope) (Profile, error) {
+func (r *Repository) GetProfile(ctx context.Context, scope protocol.Scope) (Profile, error) {
 	if err := scope.Validate(); err != nil {
 		return Profile{}, err
 	}
 	profile := Profile{Scope: scope}
 	// Read pin and routes from one snapshot, even if another handle edits a profile.
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Profile{}, err
 	}

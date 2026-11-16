@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/chironjit/serversend/shared/api"
@@ -28,16 +29,28 @@ func Capabilities() api.Capabilities {
 
 // New accepts a bounded dependency check. It must honor context cancellation
 // and must never include internal diagnostic details in its public response.
-func New(ready func(context.Context) error) http.Handler {
+func New(ready func(context.Context) error, settings ...Option) http.Handler {
+	var opts options
+	for _, setting := range settings {
+		setting(&opts)
+	}
+	admin := adminHandler()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		if opts.authentication != nil && serveAuthentication(w, r, opts.authentication) {
+			return
+		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			writeError(w, r, http.StatusMethodNotAllowed, api.InvalidRequest, "Use GET or HEAD for this endpoint")
+			return
+		}
+		if r.URL.Path == "/admin" || strings.HasPrefix(r.URL.Path, "/admin/") {
+			admin.ServeHTTP(w, r)
 			return
 		}
 		switch r.URL.Path {

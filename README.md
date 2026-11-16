@@ -2,7 +2,7 @@
 
 ServerSend is a desktop client and private file-storage server for LAN and Tailscale access. The planned server runs in Docker on Unraid. The desktop targets Linux first, then Windows, with macOS support also required.
 
-Implementation is at the foundation stage. The server now runs with TLS, persistent identity/metadata, health checks and capability discovery, with a non-root container image. A local Docker Compose example supports automatic private certificates for IPv4 addresses, without a domain. File serving and authentication are not implemented; the desktop is still a Wails/Vue scaffold. See the [implementation plan](docs/implementation-plan.md) and [task breakdown](docs/implementation-tasks.md) for scope and dependencies.
+Implementation is at the foundation stage. The server runs with TLS, persistent identity/metadata, health checks and capability discovery, with a non-root container image. The embedded admin shell at `/admin/` shows public readiness and offers Light, Dark and System themes, with Tailwind CSS compiled through the approved Vite plugin. A local Docker Compose example supports automatic private certificates for IPv4 addresses, without a domain. File serving and authentication are not implemented; the desktop is still a Wails/Vue scaffold. See the [implementation plan](docs/implementation-plan.md) and [task breakdown](docs/implementation-tasks.md) for scope and dependencies.
 
 ## Repository layout
 
@@ -17,7 +17,7 @@ Read [AGENTS.md](AGENTS.md) before adding modules or dependencies. Keep the exis
 
 ## Development checks
 
-Use the Go version declared in `go.work`, and the desktop prerequisites described in [desktop development](docs/desktop-development.md). From the repository root:
+Use the Go version declared in `go.work`, and the desktop prerequisites described in [desktop development](docs/desktop-development.md). Restore frontend dependencies with `npm ci` in both `apps/desktop/frontend` and `apps/server/admin`. From the repository root:
 
 ```sh
 make check
@@ -28,6 +28,7 @@ Checks can also run individually:
 ```sh
 make check-shared
 make check-server
+make check-admin
 make check-desktop
 make check-persistence
 ```
