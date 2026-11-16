@@ -38,7 +38,7 @@ trap cleanup EXIT
 
 tls_settings=(-e SERVER_SEND_TLS_IPS=127.0.0.1)
 if [[ "$mode" == external ]]; then
-  openssl req -x509 -newkey ed25519 -noenc -days 1 \
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc -days 1 \
     -subj /CN=localhost -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
     -keyout "$fixture_dir/key.pem" -out "$fixture_dir/cert.pem" >/dev/null 2>&1
   tls_settings=(-e SERVER_SEND_TLS_CERT_FILE=/config/cert.pem -e SERVER_SEND_TLS_KEY_FILE=/config/key.pem)
@@ -50,7 +50,7 @@ mounts=(
   --mount "type=volume,src=${volumes[2]},dst=/staging"
 )
 docker create --name "$container_name" --read-only --stop-timeout 15 \
-  "${mounts[@]}" -p 127.0.0.1::8443/tcp \
+  "${mounts[@]}" -p 127.0.0.1::58443/tcp \
   "${tls_settings[@]}" "$image" >/dev/null
 if [[ "$mode" == external ]]; then
   docker cp "$fixture_dir/cert.pem" "$container_name:/config/cert.pem"
@@ -64,16 +64,28 @@ docker run --rm --user 0:0 --entrypoint sh "${mounts[@]}" "$image" -c \
 
 wait_ready() {
   local address
-  address="$(docker port "$container_name" 8443/tcp)"
+  address="$(docker port "$container_name" 58443/tcp)"
   curl --silent --show-error --fail --retry 20 --retry-all-errors \
     --retry-delay 1 --retry-max-time 15 --max-time 2 \
     --cacert "$fixture_dir/cert.pem" "https://$address/readyz" >"$fixture_dir/ready.json"
   rg -q '"status":"ready"' "$fixture_dir/ready.json"
 }
 
+check_browser_tls() {
+  local address
+  address="$(docker port "$container_name" 58443/tcp)"
+  # Restrict certificate authentication to browser-supported ECDSA P-256.
+  # Go/curl default clients also accept Ed25519 and missed this regression.
+  printf 'GET /readyz HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n' |
+    openssl s_client -quiet -tls1_3 -sigalgs ecdsa_secp256r1_sha256 \
+      -verify_return_error -verify_ip 127.0.0.1 -CAfile "$fixture_dir/cert.pem" \
+      -connect "$address" >"$fixture_dir/browser-response.txt" 2>"$fixture_dir/browser-tls.log"
+  rg -q '"status":"ready"' "$fixture_dir/browser-response.txt"
+}
+
 check_admin() {
   local address script_path style_path
-  address="$(docker port "$container_name" 8443/tcp)"
+  address="$(docker port "$container_name" 58443/tcp)"
   curl --silent --show-error --fail --max-time 2 \
     --cacert "$fixture_dir/cert.pem" "https://$address/admin/" >"$fixture_dir/admin.html"
   rg -q 'ServerSend administration' "$fixture_dir/admin.html"
@@ -99,6 +111,7 @@ if [[ "$mode" == --private-ipv4 ]]; then
   [[ "$(docker exec "$container_name" stat -c '%a' /config/tls/server.pem)" == 600 ]]
 fi
 wait_ready
+check_browser_tls
 check_admin
 first_identity="$(docker logs "$container_name" 2>&1 | rg -o 'Server [0-9a-f]{32} listening' | tail -n 1)"
 [[ -n "$first_identity" ]]
@@ -109,6 +122,7 @@ docker stop "$container_name" >/dev/null
 [[ "$(docker inspect --format '{{.State.ExitCode}}' "$container_name")" == 0 ]]
 docker start "$container_name" >/dev/null
 wait_ready
+check_browser_tls
 check_admin
 if [[ "$mode" == --private-ipv4 ]]; then
   docker cp "$container_name:/config/tls/ca.crt" "$fixture_dir/ca-after-restart.crt"

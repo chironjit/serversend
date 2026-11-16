@@ -28,7 +28,7 @@ export SERVER_SEND_CONFIG_DIR="$task_dir/config"
 export SERVER_SEND_DATA_DIR="$task_dir/data"
 export SERVER_SEND_STAGING_DIR="$task_dir/staging"
 export SERVER_SEND_TLS_IPS=127.0.0.1
-export SERVER_SEND_TCP_ADDRESS=127.0.0.1:8443
+export SERVER_SEND_TCP_ADDRESS=127.0.0.1:58443
 unset SERVER_SEND_TLS_CERT_FILE SERVER_SEND_TLS_KEY_FILE
 
 cd apps/server
@@ -40,14 +40,14 @@ go build -mod=readonly -o "$task_dir/serversend" ./cmd/serversend
 In another terminal, use the actual path printed by the startup message:
 
 ```sh
-curl --cacert /path/to/config/tls/ca.crt https://127.0.0.1:8443/readyz
+curl --cacert /path/to/config/tls/ca.crt https://127.0.0.1:58443/readyz
 ```
 
 `-check` validates TLS/storage and initializes certificates, metadata and identity, then exits without listening. It is not read-only. To use a LAN or Tailscale IPv4 address, set `SERVER_SEND_TLS_IPS` to the addresses clients will actually enter, e.g. `192.168.1.20,10.10.10.50`. The port belongs in the URL/listener settings, not this IP list. For Docker, these are the reachable host/published or dedicated container LAN addresses, not an internal bridge address that clients cannot reach. Reserve stable addresses where practical.
 
 ### Private certificate lifecycle and trust
 
-The server generates an independent Ed25519 private CA for each deployment and issues a certificate with IP subject alternative names for exactly the configured IPv4 addresses. It makes no public DNS, ACME or certificate-transparency requests. Configuration deliberately requires explicit IPs; a wildcard listener or Docker interface cannot tell the server its client-visible address. A maximum of sixteen distinct unicast IPv4 addresses is supported; hostnames, IPv6, unspecified/multicast addresses, ports, duplicates and surrounding whitespace are rejected by this mode.
+The server generates an independent ECDSA P-256 private CA for each deployment and issues a certificate with IP subject alternative names for exactly the configured IPv4 addresses. It makes no public DNS, ACME or certificate-transparency requests. Configuration deliberately requires explicit IPs; a wildcard listener or Docker interface cannot tell the server its client-visible address. A maximum of sixteen distinct unicast IPv4 addresses is supported; hostnames, IPv6, unspecified/multicast addresses, ports, duplicates and surrounding whitespace are rejected by this mode.
 
 Material persists under the existing protected `/config/tls` directory:
 
@@ -99,8 +99,8 @@ The TLS listener supports HTTP/2 and the standard HTTP/1.1 fallback. It requires
 
 | Variable | Default | Validation |
 | --- | --- | --- |
-| `SERVER_SEND_TCP_ADDRESS` | `:8443` | Numeric IPv4/IPv6 or empty host, decimal port 1–65535 |
-| `SERVER_SEND_UDP_ADDRESS` | `:8443` | Same syntax; may use the same port as TCP |
+| `SERVER_SEND_TCP_ADDRESS` | `:58443` | Numeric IPv4/IPv6 or empty host, decimal port 1–65535 |
+| `SERVER_SEND_UDP_ADDRESS` | `:58443` | Same syntax; may use the same port as TCP |
 | `SERVER_SEND_CONFIG_DIR` | `/config` | Absolute non-root path |
 | `SERVER_SEND_DATA_DIR` | `/data` | Absolute non-root path |
 | `SERVER_SEND_STAGING_DIR` | `/staging` | Absolute non-root path |
@@ -108,7 +108,7 @@ The TLS listener supports HTTP/2 and the standard HTTP/1.1 fallback. It requires
 | `SERVER_SEND_TLS_KEY_FILE` | Empty | Absolute key path when provisioned |
 | `SERVER_SEND_TLS_IPS` | Empty | Comma-separated client-visible unicast IPv4 addresses; enables private provisioning instead of external files |
 
-IPv6 listen addresses use brackets, such as `[::1]:8443`. Hostnames are deliberately unsupported for bind addresses; use an explicit local IP or an empty host to bind all interfaces. These are server bind settings, not client connection URLs.
+IPv6 listen addresses use brackets, such as `[::1]:58443`. Hostnames are deliberately unsupported for bind addresses; use an explicit local IP or an empty host to bind all interfaces. These are server bind settings, not client connection URLs.
 
 Storage directories must be distinct and not lexically nested after path cleaning. Shared parent directories and similar names are permitted. The certificate and key paths must either both be supplied or both be empty; they may refer to the same combined PEM file. Whitespace surrounding a path and NUL bytes are rejected; spaces inside valid paths are supported.
 
@@ -141,7 +141,7 @@ For an interactive loopback example with automatic private certificates:
 ```sh
 docker compose -f apps/server/deploy/compose.yaml up -d --build
 docker compose -f apps/server/deploy/compose.yaml cp server:/config/tls/ca.crt /tmp/serversend-ca.crt
-curl --cacert /tmp/serversend-ca.crt https://127.0.0.1:8443/readyz
+curl --cacert /tmp/serversend-ca.crt https://127.0.0.1:58443/readyz
 ```
 
 Wait until the logs report that HTTPS is listening before copying the certificate. To serve a LAN address instead, set the published host address and certificate IP explicitly (substitute the real Docker host address):
@@ -151,7 +151,7 @@ SERVER_SEND_BIND_IP=192.168.1.20 SERVER_SEND_TLS_IPS=192.168.1.20 \
   docker compose -f apps/server/deploy/compose.yaml up -d --build
 ```
 
-Then use `https://192.168.1.20:8443/readyz` with the exported CA, or open `https://192.168.1.20:8443/admin/` after installing browser CA trust. The default host port is 8443; `SERVER_SEND_PORT` changes the published port independently of the certificate. Run `docker compose -f apps/server/deploy/compose.yaml down` to stop/remove the container while keeping its named config/data/staging volumes. Preserve those volumes across replacements. The Compose example supplies the process foundation and public admin shell; there are no login or upload workflows yet.
+Then use `https://192.168.1.20:58443/readyz` with the exported CA, or open `https://192.168.1.20:58443/admin/` after installing browser CA trust. The default host port is 58443; `SERVER_SEND_PORT` changes the published port independently of the certificate. Run `docker compose -f apps/server/deploy/compose.yaml down` to stop/remove the container while keeping its named config/data/staging volumes. Preserve those volumes across replacements. The Compose example supplies the process foundation and public admin shell; there are no login or upload workflows yet.
 
 The optional container check requires Docker, OpenSSL, curl, ripgrep and cmp already installed. It uses disposable named volumes. The default mode supplies a short-lived external test certificate; `--private-ipv4` supplies no certificate and verifies automatic provisioning, private key permissions and CA stability across restart. Both modes check verified HTTPS, embedded admin HTML/JavaScript/CSS before and after restart, private metadata permissions, a read-only root filesystem, identity persistence and SIGTERM exit status, then remove their test containers/volumes. It does not touch host deployment directories.
 
@@ -165,10 +165,10 @@ docker run --rm --name serversend --read-only --stop-timeout 15 \
   --mount type=bind,src=/absolute/host/certs,dst=/certs,readonly \
   -e SERVER_SEND_TLS_CERT_FILE=/certs/server.crt \
   -e SERVER_SEND_TLS_KEY_FILE=/certs/server.key \
-  -p 8443:8443/tcp serversend:dev
+  -p 58443:58443/tcp serversend:dev
 ```
 
-Use bind mounts or explicitly managed named volumes that survive container replacement; do not rely on anonymous volumes. `--mount type=bind` rejects missing source paths instead of creating them. The image declares TCP and UDP port 8443, but UDP is reserved and need not be published yet. No app state is written into the image layer. The container image is a process foundation, not a production-ready storage service or a completed Unraid deployment template.
+Use bind mounts or explicitly managed named volumes that survive container replacement; do not rely on anonymous volumes. `--mount type=bind` rejects missing source paths instead of creating them. The image declares TCP and UDP port 58443, but UDP is reserved and need not be published yet. No app state is written into the image layer. The container image is a process foundation, not a production-ready storage service or a completed Unraid deployment template.
 
 Tests cover configuration parsing/bounds; real filesystem permission and alias failures; metadata constraints and future-schema rejection; concurrent identity initialization and restart persistence; safe typed endpoint errors; embedded asset routing/MIME/security headers and rejected traversal/mutations; verified TLS 1.3/HTTP/2 requests; invalid TLS before metadata mutation; certificate renewal; listener failures; and graceful draining. Admin UI tests cover both themes, blocked storage, early theme application, OS/tab changes, malformed readiness responses, retry/timeout and disposal. Pairing endpoint integration, complete account/storage workflows and full deployment qualification remain. Chunk 03 still awaits Windows/macOS native persistence qualification; the Chunk 04 process/shell work does not close that dependency. Chunk 02 shared contracts are complete; they do not expose these runtime workflows.
 
@@ -197,3 +197,33 @@ Password verification yields a ten-minute-or-shorter, single-use challenge restr
 Failed password attempts persist account backoff from one second up to five minutes. Unknown and blocked accounts perform dummy verification. A fixed-size global token bucket (burst ten, two attempts per second) and at most two simultaneous password operations bound unknown-username attacks and KDF resource use without per-input maps. These are provisional limits, pending KDF calibration on target hardware.
 
 The adapter recognizes only `POST /api/v1/auth/password`, `/auth/password/replace`, `/auth/totp/enroll` and `/auth/totp/confirm`. All but the first carry their challenge in a Bearer header. Replacement ends with an empty 204 response; enrollment (body `{}`) returns the secret, provisioning URI and QR PNG; confirmation (body `{"code":"123456"}`) returns the recovery codes once. See [TOTP foundation](twofactor-foundation.md). JSON bodies are capped at 4096 bytes; malformed/ambiguous/trailing bodies, compressed bodies, cross-origin browser requests, scope bypass and challenge replay are rejected. Responses are uncached, contain safe errors and set no session cookies. No administrator, device, file or setup endpoint is opened by this adapter. It is not the completed browser session/CSRF/reauthentication implementation.
+
+## Firefox certificate compatibility
+
+Generated private HTTPS authorities and server certificates use ECDSA P-256.
+Earlier development images generated Ed25519 certificates, which Firefox does
+not support for TLS authentication (distinct from X25519 key exchange). This
+causes `SSL_ERROR_NO_CYPHER_OVERLAP`; changing cipher preferences does not fix it.
+See [Mozilla’s issue](https://bugzilla.mozilla.org/show_bug.cgi?id=2037389).
+
+Existing TLS material is deliberately preserved on image updates. To migrate a
+local Compose deployment, build the fixed image, stop the serving process, and
+move only its TLS directory to a private backup before restarting:
+
+```sh
+docker compose -f apps/server/deploy/compose.yaml build
+docker compose -f apps/server/deploy/compose.yaml stop server
+docker compose -f apps/server/deploy/compose.yaml run --rm --no-deps --entrypoint sh server -c 'test ! -e /config/tls-ed25519-backup && mv /config/tls /config/tls-ed25519-backup'
+docker compose -f apps/server/deploy/compose.yaml up -d --force-recreate server
+```
+
+Run this migration once, only for the affected Ed25519 installation. If the
+backup path already exists, the command refuses to overwrite it; inspect the
+existing backup before proceeding. Keep it protected because it contains keys.
+The new certificates change the desktop approval fingerprint and public CA.
+Compare the new fingerprint with the server log and approve it in the desktop;
+if you previously imported the old CA into Firefox, replace that trust with the
+new `/config/tls/ca.crt` through the same authenticated operator channel.
+A browser without the new CA will show an unknown-issuer warning after the TLS
+handshake succeeds. Accounts, TOTP keys, uploaded files and server identity are
+outside the TLS directory and are retained. Do not delete Docker volumes.

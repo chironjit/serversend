@@ -44,7 +44,7 @@ describe('desktop transfer slice', () => {
     localStorage.clear();
     delete document.documentElement.dataset.theme;
     bridge.service.Probe.mockResolvedValue({
-      origin: 'https://server.test:8443',
+      origin: 'https://server.test:58443',
       fingerprint,
       subject: 'CN=server',
       publicly_trusted: false,
@@ -66,12 +66,12 @@ describe('desktop transfer slice', () => {
     bridge.service.ConfirmEnrollment.mockResolvedValue(['AAAA-1111', 'BBBB-2222']);
     bridge.service.CompleteSignIn.mockResolvedValue({
       username: 'admin',
-      origin: 'https://server.test:8443',
+      origin: 'https://server.test:58443',
       serverId: 's',
     });
     const wrapper = mount(App);
 
-    await wrapper.find('input').setValue('server.test:8443');
+    await wrapper.find('input').setValue('server.test:58443');
     await submit(wrapper);
     expect(wrapper.find('[data-test="fingerprint"]').text()).toBe(
       fingerprint.match(/.{4}/g)?.join(' '),
@@ -122,11 +122,11 @@ describe('desktop transfer slice', () => {
     bridge.service.SignIn.mockResolvedValue({ next: 'second_factor' });
     bridge.service.CompleteSignIn.mockResolvedValue({
       username: 'admin',
-      origin: 'https://server.test:8443',
+      origin: 'https://server.test:58443',
       serverId: 's',
     });
     const wrapper = mount(App);
-    await wrapper.find('input').setValue('server.test:8443');
+    await wrapper.find('input').setValue('server.test:58443');
     await submit(wrapper);
     await wrapper.find('button').trigger('click');
     await flushPromises();

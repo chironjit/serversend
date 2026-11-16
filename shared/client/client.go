@@ -274,7 +274,14 @@ func (c *Client) transferLimits(ctx context.Context) (protocol.TransferLimits, e
 
 // Catalog lists the signed-in account's files.
 func (c *Client) Catalog(ctx context.Context) (api.CatalogPage, error) {
-	response, err := c.do(ctx, call{method: "GET", path: "/catalog", token: c.token()})
+	return c.CatalogFolder(ctx, "")
+}
+
+func (c *Client) CatalogFolder(ctx context.Context, parent protocol.ID) (api.CatalogPage, error) {
+	if parent != "" && parent.Validate() != nil {
+		return api.CatalogPage{}, errors.New("invalid folder ID")
+	}
+	response, err := c.do(ctx, call{method: "GET", path: "/catalog?parent_id=" + string(parent), token: c.token()})
 	if err != nil {
 		return api.CatalogPage{}, err
 	}

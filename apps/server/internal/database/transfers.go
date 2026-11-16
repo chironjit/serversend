@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
 )
 
@@ -17,16 +18,16 @@ var (
 // Transfer is the immutable upload intent plus its lifecycle result. Every
 // query is scoped by owner: foreign and absent uploads are indistinguishable.
 type Transfer struct {
-	AccountID, ID, FileID, VersionID protocol.ID
-	Mode                             protocol.StorageMode
-	IdempotencyKey                   string
-	ExpectedHead                     uint64
-	ChunkCount                       int64
-	TransmittedBytes                 int64
-	ManifestBytes                    int64
-	State                            protocol.UploadState
-	CreatedAt, ExpiresAt             time.Time
-	CatalogRevision, HeadRevision    uint64
+	AccountID, ID, FileID, VersionID, ParentID protocol.ID
+	Mode                                       protocol.StorageMode
+	IdempotencyKey                             string
+	ExpectedHead                               uint64
+	ChunkCount                                 int64
+	TransmittedBytes                           int64
+	ManifestBytes                              int64
+	State                                      protocol.UploadState
+	CreatedAt, ExpiresAt                       time.Time
+	CatalogRevision, HeadRevision              uint64
 }
 
 type StoredChunk struct {
@@ -37,17 +38,18 @@ type StoredChunk struct {
 }
 
 type FileEntry struct {
-	ID, HeadVersionID protocol.ID
-	Name              string
-	HeadRevision      uint64
+	ID, HeadVersionID, ParentID protocol.ID
+	Directory                   bool
+	Name                        string
+	HeadRevision                uint64
 }
 
-const transferColumns = `account_id,id,file_id,version_id,mode,idempotency_key,expected_head,chunk_count,expected_bytes,manifest_bytes,state,created_at,expires_at,coalesce(result_catalog_revision,0),coalesce(result_head_revision,0)`
+const transferColumns = `parent_id,account_id,id,file_id,version_id,mode,idempotency_key,expected_head,chunk_count,expected_bytes,manifest_bytes,state,created_at,expires_at,coalesce(result_catalog_revision,0),coalesce(result_head_revision,0)`
 
 func scanTransfer(row interface{ Scan(...any) error }) (Transfer, error) {
 	var t Transfer
 	var created, expires int64
-	err := row.Scan(&t.AccountID, &t.ID, &t.FileID, &t.VersionID, &t.Mode, &t.IdempotencyKey, &t.ExpectedHead, &t.ChunkCount, &t.TransmittedBytes, &t.ManifestBytes, &t.State, &created, &expires, &t.CatalogRevision, &t.HeadRevision)
+	err := row.Scan(&t.ParentID, &t.AccountID, &t.ID, &t.FileID, &t.VersionID, &t.Mode, &t.IdempotencyKey, &t.ExpectedHead, &t.ChunkCount, &t.TransmittedBytes, &t.ManifestBytes, &t.State, &created, &expires, &t.CatalogRevision, &t.HeadRevision)
 	t.CreatedAt, t.ExpiresAt = time.UnixMilli(created).UTC(), time.UnixMilli(expires).UTC()
 	return t, err
 }
@@ -66,8 +68,15 @@ func (r *Repository) CreateTransfer(ctx context.Context, t Transfer) (Transfer, 
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO uploads(account_id,id,state,mode,idempotency_key,expected_bytes,created_at,file_id,version_id,chunk_count,manifest_bytes,expected_head,expires_at) VALUES(?,?,'open',?,?,?,?,?,?,?,?,?,?)`,
-			t.AccountID, t.ID, t.Mode, t.IdempotencyKey, t.TransmittedBytes, t.CreatedAt.UnixMilli(), t.FileID, t.VersionID, t.ChunkCount, t.ManifestBytes, int64(t.ExpectedHead), t.ExpiresAt.UnixMilli()); err != nil {
+		var directory int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM directories WHERE account_id=? AND id=?`, t.AccountID, t.FileID).Scan(&directory); err != nil {
+			return err
+		}
+		if directory != 0 {
+			return api.Error{Code: api.Conflict, Message: "This ID is already used by a folder"}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO uploads(account_id,id,state,mode,idempotency_key,expected_bytes,created_at,file_id,version_id,chunk_count,manifest_bytes,expected_head,expires_at,parent_id) VALUES(?,?,'open',?,?,?,?,?,?,?,?,?,?,?)`,
+			t.AccountID, t.ID, t.Mode, t.IdempotencyKey, t.TransmittedBytes, t.CreatedAt.UnixMilli(), t.FileID, t.VersionID, t.ChunkCount, t.ManifestBytes, int64(t.ExpectedHead), t.ExpiresAt.UnixMilli(), t.ParentID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO reservations(account_id,upload_id,bytes) VALUES(?,?,?)`, t.AccountID, t.ID, t.TransmittedBytes); err != nil {
@@ -177,8 +186,8 @@ func (r *Repository) CommitUpload(ctx context.Context, account, upload protocol.
 		t.State, t.CatalogRevision, t.HeadRevision = protocol.UploadConflicted, revision, head
 		if head == t.ExpectedHead {
 			t.State, t.HeadRevision = protocol.UploadCommitted, revision
-			if _, err := tx.ExecContext(ctx, `INSERT INTO files(account_id,id,name,head_version_id,head_revision) VALUES(?,?,?,?,?)
-				ON CONFLICT(account_id,id) DO UPDATE SET name=excluded.name,head_version_id=excluded.head_version_id,head_revision=excluded.head_revision`, account, t.FileID, name, t.VersionID, revision); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO files(account_id,id,name,head_version_id,head_revision,parent_id) VALUES(?,?,?,?,?,?)
+				ON CONFLICT(account_id,id) DO UPDATE SET name=excluded.name,head_version_id=excluded.head_version_id,head_revision=excluded.head_revision,parent_id=excluded.parent_id`, account, t.FileID, name, t.VersionID, revision, t.ParentID); err != nil {
 				return err
 			}
 		}
@@ -197,7 +206,7 @@ func (r *Repository) CommitUpload(ctx context.Context, account, upload protocol.
 
 // Catalog returns the account's files and revision from one snapshot. The
 // slice has a flat namespace; directories and paging arrive with Chunk 10.
-func (r *Repository) Catalog(ctx context.Context, account protocol.ID, limit int) (uint64, []FileEntry, error) {
+func (r *Repository) Catalog(ctx context.Context, account protocol.ID, parent protocol.ID, limit int) (uint64, []FileEntry, error) {
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return 0, nil, err
@@ -207,7 +216,7 @@ func (r *Repository) Catalog(ctx context.Context, account protocol.ID, limit int
 	if err := tx.QueryRowContext(ctx, `SELECT catalog_revision FROM accounts WHERE id=?`, account).Scan(&revision); err != nil {
 		return 0, nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,head_version_id,name,head_revision FROM files WHERE account_id=? ORDER BY id LIMIT ?`, account, limit)
+	rows, err := tx.QueryContext(ctx, `SELECT id,head_version_id,name,head_revision,parent_id,0 FROM files WHERE account_id=? AND parent_id=? UNION ALL SELECT id,'',name,revision,parent_id,1 FROM directories WHERE account_id=? AND parent_id=? ORDER BY id LIMIT ?`, account, parent, account, parent, limit)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -215,7 +224,7 @@ func (r *Repository) Catalog(ctx context.Context, account protocol.ID, limit int
 	entries := []FileEntry{}
 	for rows.Next() {
 		var e FileEntry
-		if err := rows.Scan(&e.ID, &e.HeadVersionID, &e.Name, &e.HeadRevision); err != nil {
+		if err := rows.Scan(&e.ID, &e.HeadVersionID, &e.Name, &e.HeadRevision, &e.ParentID, &e.Directory); err != nil {
 			return 0, nil, err
 		}
 		entries = append(entries, e)

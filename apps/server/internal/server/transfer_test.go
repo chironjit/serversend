@@ -109,8 +109,21 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin, _ := onboardedClient(t, origin, probe.Fingerprint, "admin", issued.TemporaryPassword)
-	if page, err := admin.Catalog(t.Context()); err != nil || len(page.Entries) != 0 || page.CatalogRevision != "0" {
+	adminClient, _ := onboardedClient(t, origin, probe.Fingerprint, "admin", issued.TemporaryPassword)
+	var denied api.Error
+	if _, err := adminClient.Catalog(t.Context()); !errors.As(err, &denied) || denied.Code != api.PermissionDenied {
+		t.Fatalf("admin catalog: %v", err)
+	}
+	user, err := adminClient.CreateUser(t.Context(), "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * time.Second)
+	admin, _ := onboardedClient(t, origin, probe.Fingerprint, "first", user.TemporaryPassword)
+	if _, err := admin.CreateUser(t.Context(), "forbidden"); !errors.As(err, &denied) || denied.Code != api.PermissionDenied {
+		t.Fatalf("user created account: %v", err)
+	}
+	if page, err := admin.Catalog(t.Context()); err != nil || len(page.Entries) != 0 {
 		t.Fatalf("initial catalog: %+v %v", page, err)
 	}
 
@@ -191,6 +204,45 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 		t.Fatalf("foreign file readable: %v", err)
 	}
 
+	folder, err := admin.CreateDirectory(t.Context(), "", "Backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nested, err := admin.CreateDirectory(t.Context(), folder.ID, "Empty folder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.CreateDirectory(t.Context(), folder.ID, "Empty folder"); !errors.As(err, &failure) || failure.Code != api.Conflict {
+		t.Fatalf("duplicate folder: %v", err)
+	}
+	if _, err := admin.CreateDirectory(t.Context(), "", "../escape"); err == nil {
+		t.Fatal("unsafe name accepted")
+	}
+	if _, err := other.CreateDirectory(t.Context(), folder.ID, "foreign"); !errors.As(err, &failure) || failure.Code != api.NotFound {
+		t.Fatalf("foreign parent accepted: %v", err)
+	}
+	if _, err := other.UploadTo(t.Context(), filepath.Join(source, "small.txt"), folder.ID, nil); !errors.As(err, &failure) || failure.Code != api.NotFound {
+		t.Fatalf("foreign upload parent accepted: %v", err)
+	}
+	if _, err := admin.UploadTo(t.Context(), filepath.Join(source, "small.txt"), folder.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := admin.CatalogFolder(t.Context(), folder.ID)
+	if err != nil || len(contents.Entries) != 2 {
+		t.Fatalf("folder contents %+v: %v", contents, err)
+	}
+	empty, err := admin.CatalogFolder(t.Context(), nested.ID)
+	if err != nil || len(empty.Entries) != 0 {
+		t.Fatalf("empty directory: %v", err)
+	}
+	for _, entry := range contents.Entries {
+		if entry.Kind == api.File {
+			if err := admin.Download(t.Context(), entry, filepath.Join(restored, "nested.txt"), nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
 	// Sign-out ends the session on the server, not only locally.
 	if err := other.SignOut(t.Context()); err != nil {
 		t.Fatal(err)
@@ -199,7 +251,7 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 		t.Fatalf("signed-out catalog: %v", err)
 	}
 	// Disabling an account revokes its live session on the next request.
-	if _, err := s.db.Exec(`UPDATE accounts SET disabled=1,auth_epoch=auth_epoch+1 WHERE username='admin'`); err != nil {
+	if _, err := s.db.Exec(`UPDATE accounts SET disabled=1,auth_epoch=auth_epoch+1 WHERE username='first'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := admin.Catalog(t.Context()); !errors.As(err, &failure) || failure.Code != api.AuthenticationRequired {

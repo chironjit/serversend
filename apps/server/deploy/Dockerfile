@@ -36,8 +36,8 @@ RUN mkdir /config /data /staging \
 COPY --from=build /out/serversend /usr/local/bin/serversend
 USER 10001:10001
 VOLUME ["/config", "/data", "/staging"]
-EXPOSE 8443/tcp
+EXPOSE 58443/tcp
 # Reserved for the later QUIC listener; currently no UDP service is started.
-EXPOSE 8443/udp
+EXPOSE 58443/udp
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/usr/local/bin/serversend"]

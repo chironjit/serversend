@@ -110,6 +110,7 @@ func newTransferRoutes(accounts *auth.Service, service *uploads.Service) *transf
 		"GET " + api.BasePath + "/uploads/{upload}/missing":                       t.missing,
 		"PUT " + api.BasePath + "/uploads/{upload}/chunks/{index}":                t.putChunk,
 		"POST " + api.BasePath + "/uploads/{upload}/finalize":                     t.finalize,
+		"POST " + api.BasePath + "/directories":                                   t.directory,
 		"GET " + api.BasePath + "/catalog":                                        t.catalog,
 		"GET " + api.BasePath + "/files/{file}/versions/{version}/manifest":       t.manifest,
 		"GET " + api.BasePath + "/files/{file}/versions/{version}/chunks/{index}": t.chunk,
@@ -120,6 +121,9 @@ func newTransferRoutes(accounts *auth.Service, service *uploads.Service) *transf
 			if errors.Is(err, auth.ErrCredentials) {
 				writeError(w, r, 401, api.AuthenticationRequired, "Sign in again to continue")
 				return
+			}
+			if err == nil && session.Role != "user" {
+				err = api.Error{Code: api.PermissionDenied, Message: "Administrators manage accounts in /admin/; sign in with a user account to transfer files"}
 			}
 			if err == nil {
 				err = handler(w, r, session.AccountID)
@@ -136,7 +140,7 @@ func newTransferRoutes(accounts *auth.Service, service *uploads.Service) *transf
 // typed errors instead of the mux's plain-text defaults.
 func (t *transferRoutes) serve(w http.ResponseWriter, r *http.Request) bool {
 	inside := false
-	for _, prefix := range []string{"/uploads", "/catalog", "/files"} {
+	for _, prefix := range []string{"/uploads", "/catalog", "/files", "/directories"} {
 		inside = inside || r.URL.Path == api.BasePath+prefix || strings.HasPrefix(r.URL.Path, api.BasePath+prefix+"/")
 	}
 	if !inside {
@@ -234,7 +238,7 @@ func (t *transferRoutes) finalize(w http.ResponseWriter, r *http.Request, accoun
 }
 
 func (t *transferRoutes) catalog(w http.ResponseWriter, r *http.Request, account protocol.ID) error {
-	page, err := t.service.Catalog(r.Context(), account)
+	page, err := t.service.Catalog(r.Context(), account, protocol.ID(r.URL.Query().Get("parent_id")))
 	if err == nil {
 		writeJSON(w, r, 200, page)
 	}
@@ -270,4 +274,16 @@ func (t *transferRoutes) chunk(w http.ResponseWriter, r *http.Request, account p
 	// The client verifies the digest; a short copy surfaces there as a mismatch.
 	_, _ = io.Copy(w, io.LimitReader(object, chunk.Bytes))
 	return nil
+}
+
+func (t *transferRoutes) directory(w http.ResponseWriter, r *http.Request, account protocol.ID) error {
+	request, err := api.DecodeCreateDirectory(http.MaxBytesReader(w, r.Body, api.MaxControlBytes), nil)
+	if err != nil {
+		return api.Error{Code: api.InvalidRequest, Message: "Send a valid directory name and parent"}
+	}
+	entry, err := t.service.CreateDirectory(r.Context(), account, request)
+	if err == nil {
+		writeJSON(w, r, 201, entry)
+	}
+	return err
 }

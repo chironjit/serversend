@@ -48,7 +48,7 @@ else
   detected="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+(\.[0-9]+){3}$' | tr '\n' ' ' || true)"
   [[ -z "$detected" ]] || echo "Addresses on this computer: $detected"
   LOCAL_ADDRESS="$(ask 'Address clients will use' '127.0.0.1')"
-  LOCAL_PORT="$(ask 'Port' '8443')"
+  LOCAL_PORT="$(ask 'Port' '58443')"
   if ! [[ "$LOCAL_ADDRESS" =~ ^[0-9]+(\.[0-9]+){3}$ && "$LOCAL_PORT" =~ ^[0-9]+$ ]]; then
     echo "Enter a numeric IPv4 address and a numeric port." >&2
     exit 1
@@ -89,6 +89,8 @@ fi
 
 say "Starting the server"
 cat <<TEXT
+Admin web interface:      https://$LOCAL_ADDRESS:$LOCAL_PORT/admin/
+Sign in there as admin and create a user account for desktop transfers.
 In another terminal run:   make local-test-desktop
 In the app enter:          https://$LOCAL_ADDRESS:$LOCAL_PORT
 Then compare the fingerprint the app shows with the

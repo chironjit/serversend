@@ -9,6 +9,9 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"github.com/chironjit/serversend/shared/protocol"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,25 +40,29 @@ type Account struct {
 }
 
 type File struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	Directory bool   `json:"directory"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
 }
 
 // Item is one upload or download as shown in the transfer list.
 type Item struct {
-	ID        int    `json:"id"`
-	Name      string `json:"name"`
-	Direction string `json:"direction"` // "upload" or "download"
-	State     string `json:"state"`     // "queued", "active", "done" or "failed"
-	Done      int64  `json:"done"`
-	Total     int64  `json:"total"`
-	Error     string `json:"error"`
+	Speed     float64 `json:"speed"`
+	ID        int     `json:"id"`
+	Name      string  `json:"name"`
+	Direction string  `json:"direction"` // "upload" or "download"
+	State     string  `json:"state"`     // "queued", "active", "done" or "failed"
+	Done      int64   `json:"done"`
+	Total     int64   `json:"total"`
+	Error     string  `json:"error"`
 }
 
 type job struct {
-	item  Item
-	path  string
-	entry api.CatalogEntry
+	item   Item
+	path   string
+	entry  api.CatalogEntry
+	parent protocol.ID
+	client *client.Client
 }
 
 type Manager struct {
@@ -99,6 +106,14 @@ func (m *Manager) Probe(ctx context.Context, origin string) (client.ServerProbe,
 	if !strings.Contains(origin, "://") {
 		origin = "https://" + origin
 	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return client.ServerProbe{}, err
+	}
+	if u.Port() == "" {
+		u.Host = net.JoinHostPort(u.Hostname(), "58443")
+		origin = u.String()
+	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	probe, err := client.Probe(ctx, origin)
@@ -113,6 +128,9 @@ func (m *Manager) Probe(ctx context.Context, origin string) (client.ServerProbe,
 
 // Approve pins exactly the certificate the last Probe displayed.
 func (m *Manager) Approve(fingerprint string) error {
+	if err := m.idle(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.probe.Fingerprint == "" || fingerprint != m.probe.Fingerprint {
@@ -141,6 +159,9 @@ func (m *Manager) current() (*client.Client, error) {
 // SignIn checks the password and reports the next required step. The password
 // is kept in memory only until sign-in completes, to continue onboarding.
 func (m *Manager) SignIn(ctx context.Context, username, password string) (Step, error) {
+	if err := m.idle(); err != nil {
+		return Step{}, err
+	}
 	c, err := m.current()
 	if err != nil {
 		return Step{}, err
@@ -223,6 +244,10 @@ func (m *Manager) CompleteSignIn(ctx context.Context, code string) (Account, err
 	if err != nil {
 		return Account{}, message(err)
 	}
+	if session.Role == "admin" {
+		_ = c.SignOut(ctx)
+		return Account{}, errors.New("Use the web admin interface at " + c.Origin() + "/admin/; sign in here with a user account")
+	}
 	m.mu.Lock()
 	m.password, m.challenge = "", ""
 	m.mu.Unlock()
@@ -230,6 +255,9 @@ func (m *Manager) CompleteSignIn(ctx context.Context, code string) (Account, err
 }
 
 func (m *Manager) SignOut(ctx context.Context) error {
+	if err := m.idle(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	c := m.client
 	m.password, m.challenge, m.catalog = "", "", map[string]api.CatalogEntry{}
@@ -243,12 +271,12 @@ func (m *Manager) SignOut(ctx context.Context) error {
 }
 
 // Files lists the account's files sorted by name.
-func (m *Manager) Files(ctx context.Context) ([]File, error) {
+func (m *Manager) Files(ctx context.Context, parent string) ([]File, error) {
 	c, err := m.current()
 	if err != nil {
 		return nil, err
 	}
-	page, err := c.Catalog(ctx)
+	page, err := c.CatalogFolder(ctx, protocol.ID(parent))
 	if err != nil {
 		return nil, message(err)
 	}
@@ -259,7 +287,7 @@ func (m *Manager) Files(ctx context.Context) ([]File, error) {
 			continue
 		}
 		catalog[string(entry.ID)] = entry
-		files = append(files, File{ID: string(entry.ID), Name: entry.Standard.Name})
+		files = append(files, File{ID: string(entry.ID), Name: entry.Standard.Name, Directory: entry.Kind == api.Directory})
 	}
 	m.mu.Lock()
 	m.catalog = catalog
@@ -273,7 +301,7 @@ func (m *Manager) FileName(id string) (string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	entry, ok := m.catalog[id]
-	if !ok {
+	if !ok || entry.Kind != api.File {
 		return "", false
 	}
 	return entry.Standard.Name, true
@@ -284,9 +312,9 @@ func (m *Manager) enqueue(j job) error {
 	j.item.ID, j.item.State = len(m.items)+1, "queued"
 	m.items = append(m.items, j.item)
 	m.mu.Unlock()
+	m.emit(j.item)
 	select {
 	case m.queue <- j:
-		m.emit(j.item)
 		return nil
 	default:
 		m.update(j.item.ID, func(item *Item) {
@@ -297,12 +325,13 @@ func (m *Manager) enqueue(j job) error {
 }
 
 // Upload queues local files. Each is published as a new file on the server.
-func (m *Manager) Upload(paths []string) error {
-	if _, err := m.current(); err != nil {
+func (m *Manager) Upload(paths []string, parent string) error {
+	c, err := m.current()
+	if err != nil {
 		return err
 	}
 	for _, path := range paths {
-		if err := m.enqueue(job{path: path, item: Item{Name: filepath.Base(path), Direction: "upload"}}); err != nil {
+		if err := m.enqueue(job{client: c, parent: protocol.ID(parent), path: path, item: Item{Name: filepath.Base(path), Direction: "upload"}}); err != nil {
 			return err
 		}
 	}
@@ -317,7 +346,11 @@ func (m *Manager) Download(id, destination string) error {
 	if !ok {
 		return errors.New("refresh the file list and choose the file again")
 	}
-	return m.enqueue(job{path: destination, entry: entry, item: Item{Name: entry.Standard.Name, Direction: "download"}})
+	c, err := m.current()
+	if err != nil {
+		return err
+	}
+	return m.enqueue(job{client: c, path: destination, entry: entry, item: Item{Name: entry.Standard.Name, Direction: "download"}})
 }
 
 // Transfers returns every transfer of this run, oldest first.
@@ -349,25 +382,36 @@ func (m *Manager) work(ctx context.Context) {
 
 func (m *Manager) run(ctx context.Context, j job) {
 	id := j.item.ID
-	c, err := m.current()
-	if err == nil {
+	c := j.client
+	var err error
+	if c != nil {
 		m.update(id, func(item *Item) { item.State = "active" })
 		// Progress is reported at most ten times a second so a slow window
 		// cannot hold back the transfer or flood the frontend.
-		var last time.Time
+		last := time.Now()
+		var lastDone int64
 		progress := func(done, total int64) {
+			if done == 0 {
+				last = time.Now()
+				lastDone = 0
+				m.update(id, func(item *Item) { item.Done, item.Total, item.Speed = 0, total, 0 })
+				return
+			}
 			if now := time.Now(); done == total || now.Sub(last) >= 100*time.Millisecond {
-				last = now
-				m.update(id, func(item *Item) { item.Done, item.Total = done, total })
+				elapsed := now.Sub(last).Seconds()
+				speed := float64(done-lastDone) / elapsed
+				last, lastDone = now, done
+				m.update(id, func(item *Item) { item.Done, item.Total, item.Speed = done, total, speed })
 			}
 		}
 		if j.item.Direction == "upload" {
-			_, err = c.Upload(ctx, j.path, progress)
+			_, err = c.UploadTo(ctx, j.path, j.parent, progress)
 		} else {
 			err = c.Download(ctx, j.entry, j.path, progress)
 		}
 	}
 	m.update(id, func(item *Item) {
+		item.Speed = 0
 		item.State = "done"
 		if err != nil {
 			item.State, item.Error = "failed", message(err).Error()
@@ -382,4 +426,15 @@ func sortFiles(files []File) {
 		}
 		return files[i].ID < files[j].ID
 	})
+}
+
+func (m *Manager) idle() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, item := range m.items {
+		if item.State == "queued" || item.State == "active" {
+			return errors.New("wait for transfers to finish before changing accounts or servers")
+		}
+	}
+	return nil
 }

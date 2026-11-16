@@ -20,8 +20,8 @@ type Config struct {
 // Defaults returns the initial Unraid container settings.
 func Defaults() Config {
 	return Config{
-		TCPAddress: ":8443",
-		UDPAddress: ":8443",
+		TCPAddress: ":58443",
+		UDPAddress: ":58443",
 		ConfigDir:  "/config",
 		DataDir:    "/data",
 		StagingDir: "/staging",

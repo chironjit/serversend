@@ -54,20 +54,20 @@ func (s *TransferService) CompleteSignIn(ctx context.Context, code string) (tran
 
 func (s *TransferService) SignOut(ctx context.Context) error { return s.manager.SignOut(ctx) }
 
-func (s *TransferService) Files(ctx context.Context) ([]transfer.File, error) {
-	return s.manager.Files(ctx)
+func (s *TransferService) Files(ctx context.Context, parent string) ([]transfer.File, error) {
+	return s.manager.Files(ctx, parent)
 }
 
 func (s *TransferService) Transfers() []transfer.Item { return s.manager.Transfers() }
 
 // ChooseAndUpload opens the native file picker and queues the selection. It
 // returns how many files were queued; cancelling the dialog queues none.
-func (s *TransferService) ChooseAndUpload() (int, error) {
+func (s *TransferService) ChooseAndUpload(parent string) (int, error) {
 	paths, err := application.Get().Dialog.OpenFile().SetTitle("Choose files to upload").CanChooseFiles(true).PromptForMultipleSelection()
 	if err != nil || len(paths) == 0 {
 		return 0, err
 	}
-	return len(paths), s.manager.Upload(paths)
+	return len(paths), s.manager.Upload(paths, parent)
 }
 
 // ChooseAndDownload asks where to save a listed file and queues the download.
@@ -82,4 +82,15 @@ func (s *TransferService) ChooseAndDownload(fileID string) (bool, error) {
 		return false, err
 	}
 	return true, s.manager.Download(fileID, destination)
+}
+
+func (s *TransferService) CreateDirectory(ctx context.Context, parent, name string) error {
+	return s.manager.CreateDirectory(ctx, parent, name)
+}
+func (s *TransferService) ChooseAndUploadFolder(ctx context.Context, parent string) error {
+	path, err := application.Get().Dialog.OpenFile().SetTitle("Choose folder to upload").CanChooseFiles(false).CanChooseDirectories(true).PromptForSingleSelection()
+	if err != nil || path == "" {
+		return err
+	}
+	return s.manager.UploadFolder(ctx, path, parent)
 }

@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	ErrBootstrapUsed = errors.New("administrator bootstrap is already closed")
-	ErrAdminRequired = errors.New("active reauthenticated administrator required")
+	ErrUsernameExists = errors.New("username already exists")
+	ErrBootstrapUsed  = errors.New("administrator bootstrap is already closed")
+	ErrAdminRequired  = errors.New("active reauthenticated administrator required")
 )
 
 // IssueAccount atomically closes bootstrap or checks live administrator status,
@@ -35,6 +36,13 @@ func (r *Repository) IssueAccount(ctx context.Context, account Account, password
 			actorValue = nil
 		} else if err := checkAdmin(ctx, tx, actor, epoch); err != nil {
 			return err
+		}
+		var count int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM accounts WHERE username=?`, account.Username).Scan(&count); err != nil {
+			return err
+		}
+		if count != 0 {
+			return ErrUsernameExists
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO accounts(id,username,role,state,password_hash,created_at,temporary_expires_at) VALUES(?,?,?,'password_required',?,?,?)`, account.ID, account.Username, account.Role, passwordHash, account.CreatedAt.UnixMilli(), expires.UnixMilli()); err != nil {
 			return err

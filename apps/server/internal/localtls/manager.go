@@ -2,7 +2,9 @@ package localtls
 
 import (
 	"bytes"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -115,7 +117,15 @@ func (m *Manager) loadAuthority() error {
 		return errors.New("authority certificate/key is corrupt")
 	}
 	ca := pair.Leaf
-	if _, ok := pair.PrivateKey.(ed25519.PrivateKey); !ok {
+	switch key := pair.PrivateKey.(type) {
+	case *ecdsa.PrivateKey:
+		if key.Curve != elliptic.P256() {
+			return errors.New("unexpected authority curve")
+		}
+	case ed25519.PrivateKey:
+	// Preserve existing trust until the operator explicitly replaces the legacy
+	// TLS directory. Ed25519 certificate chains are not supported by Firefox.
+	default:
 		return errors.New("unexpected authority key type")
 	}
 	if !ca.IsCA || !ca.BasicConstraintsValid || ca.CheckSignatureFrom(ca) != nil {

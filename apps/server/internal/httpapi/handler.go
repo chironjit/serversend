@@ -45,7 +45,7 @@ func New(ready func(context.Context) error, settings ...Option) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		if opts.authentication != nil && serveAuthentication(w, r, opts.authentication) {
+		if opts.authentication != nil && (serveAuthentication(w, r, opts.authentication) || serveUsers(w, r, opts.authentication)) {
 			return
 		}
 		if transfers != nil && (serveSessions(w, r, opts.authentication) || transfers.serve(w, r)) {

@@ -53,7 +53,7 @@ func (s *Service) CreateSession(ctx context.Context, challenge, code, deviceName
 	if err := s.repo.CreateSession(ctx, session, accessHash(token), now); err != nil {
 		return api.Session{}, conflictAsCredentials(err)
 	}
-	return api.Session{DeviceID: session.ID, ServerID: s.serverID, AccountID: account.ID, Username: account.Username, AccessToken: token, ExpiresAt: session.ExpiresAt}, nil
+	return api.Session{Role: account.Role, DeviceID: session.ID, ServerID: s.serverID, AccountID: account.ID, Username: account.Username, AccessToken: token, ExpiresAt: session.ExpiresAt}, nil
 }
 
 // Authorize resolves an access token against live state. Expired sessions and

@@ -36,7 +36,7 @@ func adminHandler() http.Handler {
 			return
 		}
 		w.Header().Del("Content-Type")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		http.StripPrefix("/admin", files).ServeHTTP(w, r)
 	})

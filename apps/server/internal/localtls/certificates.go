@@ -3,7 +3,9 @@
 package localtls
 
 import (
-	"crypto/ed25519"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -27,7 +29,7 @@ func serialNumber() (*big.Int, error) {
 	return n.Add(n, big.NewInt(1)), nil
 }
 
-func encodePair(template, parent *x509.Certificate, public ed25519.PublicKey, key, signer ed25519.PrivateKey) ([]byte, error) {
+func encodePair(template, parent *x509.Certificate, public crypto.PublicKey, key, signer crypto.Signer) ([]byte, error) {
 	der, err := x509.CreateCertificate(rand.Reader, template, parent, public, signer)
 	if err != nil {
 		return nil, err
@@ -41,7 +43,7 @@ func encodePair(template, parent *x509.Certificate, public ed25519.PublicKey, ke
 }
 
 func createAuthority(now time.Time) ([]byte, error) {
-	public, key, err := ed25519.GenerateKey(rand.Reader)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +57,7 @@ func createAuthority(now time.Time) ([]byte, error) {
 		IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true,
 		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 	}
-	return encodePair(template, template, public, key, key)
+	return encodePair(template, template, key.Public(), key, key)
 }
 
 func parsePair(data []byte) (tls.Certificate, error) {
@@ -71,7 +73,7 @@ func parsePair(data []byte) (tls.Certificate, error) {
 }
 
 func createLeaf(ca tls.Certificate, ips []netip.Addr, now time.Time) ([]byte, error) {
-	public, key, err := ed25519.GenerateKey(rand.Reader)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
 	}
@@ -92,5 +94,5 @@ func createLeaf(ca tls.Certificate, ips []netip.Addr, now time.Time) ([]byte, er
 	for _, ip := range ips {
 		template.IPAddresses = append(template.IPAddresses, net.IP(ip.AsSlice()))
 	}
-	return encodePair(template, ca.Leaf, public, key, ca.PrivateKey.(ed25519.PrivateKey))
+	return encodePair(template, ca.Leaf, key.Public(), key, ca.PrivateKey.(crypto.Signer))
 }

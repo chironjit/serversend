@@ -22,6 +22,7 @@ type SessionRequest struct {
 // keep it out of logs and frontend state. The scope identifies which
 // server/account every later identifier belongs to.
 type Session struct {
+	Role        string      `json:"role"`
 	DeviceID    protocol.ID `json:"device_id"`
 	ServerID    protocol.ID `json:"server_id"`
 	AccountID   protocol.ID `json:"account_id"`

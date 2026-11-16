@@ -16,6 +16,7 @@ var migrations = []sqlite.Migration{
 	{Version: 3, SQL: migrationSQL("003_authentication.sql")},
 	{Version: 4, SQL: migrationSQL("004_two_factor.sql")},
 	{Version: 5, SQL: migrationSQL("005_sessions_transfers.sql")},
+	{Version: 6, SQL: migrationSQL("006_directories.sql")},
 }
 
 func migrationSQL(name string) string {

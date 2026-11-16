@@ -38,6 +38,10 @@ func randomID() protocol.ID {
 // chunk buffer regardless of file size. The file is read twice: once to
 // describe it and once to send it, and any difference aborts the upload.
 func (c *Client) Upload(ctx context.Context, path string, progress Progress) (api.FinalizeResult, error) {
+	return c.UploadTo(ctx, path, "", progress)
+}
+
+func (c *Client) UploadTo(ctx context.Context, path string, parent protocol.ID, progress Progress) (api.FinalizeResult, error) {
 	account, signedIn := c.Account()
 	if !signedIn {
 		return api.FinalizeResult{}, api.Error{Code: api.AuthenticationRequired, Message: "Sign in before uploading"}
@@ -96,7 +100,7 @@ func (c *Client) Upload(ctx context.Context, path string, progress Progress) (ap
 	}
 
 	var upload api.Upload
-	intent := api.CreateUploadRequest{FileID: manifest.FileID, VersionID: manifest.VersionID, Mode: protocol.Standard, ExpectedHead: "0",
+	intent := api.CreateUploadRequest{ParentID: parent, FileID: manifest.FileID, VersionID: manifest.VersionID, Mode: protocol.Standard, ExpectedHead: "0",
 		ChunkCount: int64(len(manifest.Chunks)), TransmittedBytes: manifest.TotalBytes, ManifestBytes: int64(len(body))}
 	key := http.Header{api.IdempotencyKeyHeader: {string(randomID())}}
 	if err := c.exchange(ctx, call{method: "POST", path: "/uploads", token: c.token(), header: key}, intent, &upload); err != nil {

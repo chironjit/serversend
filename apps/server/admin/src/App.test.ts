@@ -34,11 +34,11 @@ describe('public admin shell', () => {
       expect(wrapper.get('button').attributes('disabled')).toBeDefined();
       expect(wrapper.get('main').attributes('id')).toBe('main');
       expect(wrapper.get('a').attributes('href')).toBe('#main');
-      expect(wrapper.find('form').exists()).toBe(false);
-      expect(wrapper.find('input[type="password"]').exists()).toBe(false);
+      expect(wrapper.find('form').exists()).toBe(true);
+      expect(wrapper.find('input[type="password"]').exists()).toBe(true);
       await flushPromises();
       expect(wrapper.text()).toContain('Server is responding');
-      expect(wrapper.text()).toContain('not available yet');
+      expect(wrapper.text()).toContain('Administrator sign-in');
       expect(document.documentElement.dataset.theme).toBe(theme);
       expect(request).toHaveBeenCalledExactlyOnceWith(
         '/readyz',

@@ -20,7 +20,7 @@ Use two terminals, both at the repository root.
 `make local-test-server-setup` asks three questions the first time. Press Enter to accept the value in brackets.
 
 1. **Address clients will use.** Keep `127.0.0.1` to test on this computer only. To connect from another device, enter this computer's LAN or Tailscale IPv4 address; the script lists the addresses it finds.
-2. **Port.** Default `8443`.
+2. **Port.** Default `58443`.
 3. **Administrator username.** Default `admin`.
 
 It then prints a **temporary password** (valid for one hour; copy it now, it is not shown again) and starts the server. Leave this terminal open. Note the log line:
@@ -33,16 +33,20 @@ Certificate fingerprint for desktop approval: 0ff6 5f99 3c3a …
 
 `make local-test-desktop` installs frontend dependencies on first use, builds the app, prints the server address to enter, and opens the window.
 
+### In the browser first
+
+Open `https://SERVER_IP:58443/admin/`, sign in with the bootstrap administrator, replace its password, enroll an authenticator and save recovery codes. Finish sign-in with a fresh code, then create a user account. Use that user’s temporary password in the desktop. Administrator accounts can no longer transfer files.
+
 ### In the app
 
-1. **Connect.** Enter the address the script printed, for example `https://127.0.0.1:8443`.
+1. **Connect.** Enter the address the script printed, for example `https://127.0.0.1:58443`.
 2. **Approve the server.** Check that the fingerprint in the app matches the one in terminal 1, then continue. If they differ, do not continue.
-3. **Sign in** with the administrator username and the temporary password.
+3. **Sign in** with the new user’s username and temporary password.
 4. **Choose your password** (at least 12 characters).
 5. **Set up two-factor sign-in.** Scan the QR code with your authenticator app and enter the six-digit code.
 6. **Save the recovery codes.** Each works once in place of an authenticator code.
 7. **Enter your code.** The code from step 5 is already used: wait for the authenticator to show the next one (up to 30 seconds), or enter one of the recovery codes.
-8. **Upload files…** and watch the Transfers list; **Download…** saves a file back to a location you choose.
+8. **Create folder**, open the destination, then **Upload files…** or **Upload folder…**. Watch throughput in the Transfers chart; **Download…** saves a file back to a location you choose.
 
 To confirm a round trip, compare a downloaded file with its original:
 
@@ -100,3 +104,7 @@ These need no manual steps and are what CI and `make check` rely on.
 | `make check-persistence` | Native SQLite builds and database tests |
 
 The automated end-to-end test does not open the desktop window or native file dialogs; the manual walkthrough above is the only check of those.
+
+For persistent Docker deployment and network measurements, see [Unraid testing](unraid-testing.md).
+
+If Firefox reports `SSL_ERROR_NO_CYPHER_OVERLAP` with an older Docker deployment, see the [private HTTPS certificate migration](server-development.md#firefox-certificate-compatibility). Updating the image alone preserves the old TLS files, so affected installations need the documented one-time backup and certificate replacement.

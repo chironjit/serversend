@@ -6,7 +6,7 @@ import (
 )
 
 func TestDefaults(t *testing.T) {
-	want := Config{TCPAddress: ":8443", UDPAddress: ":8443", ConfigDir: "/config", DataDir: "/data", StagingDir: "/staging"}
+	want := Config{TCPAddress: ":58443", UDPAddress: ":58443", ConfigDir: "/config", DataDir: "/data", StagingDir: "/staging"}
 	got, err := FromEnvironment(environment(nil))
 	if err != nil || got != want {
 		t.Fatalf("FromEnvironment() = %#v, %v; want %#v", got, err, want)

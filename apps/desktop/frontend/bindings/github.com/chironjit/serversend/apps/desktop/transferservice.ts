@@ -38,8 +38,12 @@ export function ChooseAndDownload(fileID: string): $CancellablePromise<boolean> 
  * ChooseAndUpload opens the native file picker and queues the selection. It
  * returns how many files were queued; cancelling the dialog queues none.
  */
-export function ChooseAndUpload(): $CancellablePromise<number> {
-    return $Call.ByID(2242352341);
+export function ChooseAndUpload(parent: string): $CancellablePromise<number> {
+    return $Call.ByID(2242352341, parent);
+}
+
+export function ChooseAndUploadFolder(parent: string): $CancellablePromise<void> {
+    return $Call.ByID(1602388781, parent);
 }
 
 export function CompleteSignIn(code: string): $CancellablePromise<transfer$0.Account> {
@@ -50,8 +54,12 @@ export function ConfirmEnrollment(code: string): $CancellablePromise<string[] | 
     return $Call.ByID(3707993690, code);
 }
 
-export function Files(): $CancellablePromise<transfer$0.File[] | null> {
-    return $Call.ByID(3648180037);
+export function CreateDirectory(parent: string, name: string): $CancellablePromise<void> {
+    return $Call.ByID(2501948237, parent, name);
+}
+
+export function Files(parent: string): $CancellablePromise<transfer$0.File[] | null> {
+    return $Call.ByID(3648180037, parent);
 }
 
 export function Probe(address: string): $CancellablePromise<client$0.ServerProbe> {

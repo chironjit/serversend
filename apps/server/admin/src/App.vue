@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
+import Accounts from './components/Accounts.vue';
 import ThemePicker from './components/ThemePicker.vue';
 import { checkReadiness } from './readiness';
 
@@ -54,8 +55,7 @@ onUnmounted(() => {
       </p>
       <h1 class="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">A home for your files.</h1>
       <p class="mt-4 max-w-xl text-base leading-7 text-slate-600 dark:text-slate-300">
-        This server is under development. Account setup, administration and file transfers are not
-        available yet.
+        Manage user accounts below. File transfers are available through the desktop app.
       </p>
 
       <section
@@ -105,16 +105,7 @@ onUnmounted(() => {
         </p>
       </section>
 
-      <aside
-        aria-labelledby="setup-heading"
-        class="mt-6 rounded-2xl border border-dashed border-slate-300 p-6 sm:p-8 dark:border-slate-700"
-      >
-        <h2 id="setup-heading" class="font-semibold">Account setup is coming next</h2>
-        <p class="mt-2 max-w-xl text-sm leading-6 text-slate-600 dark:text-slate-300">
-          There is no default administrator password. A future release will provide an
-          operator-controlled bootstrap process before sign-in is enabled.
-        </p>
-      </aside>
+      <Accounts />
     </main>
 
     <footer

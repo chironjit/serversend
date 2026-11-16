@@ -17,6 +17,7 @@ export interface Enrollment {
 }
 
 export interface File {
+    "directory": boolean;
     "id": string;
     "name": string;
 }
@@ -25,6 +26,7 @@ export interface File {
  * Item is one upload or download as shown in the transfer list.
  */
 export interface Item {
+    "speed": number;
     "id": number;
     "name": string;
 

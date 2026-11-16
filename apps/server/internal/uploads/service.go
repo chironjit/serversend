@@ -62,7 +62,7 @@ func revision(n uint64) protocol.Revision { return protocol.Revision(strconv.For
 
 func toAPI(t database.Transfer) api.Upload {
 	return api.Upload{ID: t.ID, State: t.State, ExpiresAt: t.ExpiresAt, CreateUploadRequest: api.CreateUploadRequest{
-		FileID: t.FileID, VersionID: t.VersionID, Mode: t.Mode, ExpectedHead: revision(t.ExpectedHead),
+		ParentID: t.ParentID, FileID: t.FileID, VersionID: t.VersionID, Mode: t.Mode, ExpectedHead: revision(t.ExpectedHead),
 		ChunkCount: t.ChunkCount, TransmittedBytes: t.TransmittedBytes, ManifestBytes: t.ManifestBytes,
 	}}
 }
@@ -79,8 +79,8 @@ func (s *Service) Create(ctx context.Context, account protocol.ID, key string, r
 	if request.Mode != protocol.Standard {
 		return api.Upload{}, false, api.Error{Code: api.UnsupportedFormat, Message: "This server does not accept private uploads yet"}
 	}
-	if request.ParentID != "" {
-		return api.Upload{}, false, api.Error{Code: api.InvalidRequest, Message: "Directories are not supported yet; upload without a parent"}
+	if err := s.repo.CheckDirectory(ctx, account, request.ParentID); err != nil {
+		return api.Upload{}, false, err
 	}
 	head, err := strconv.ParseUint(string(request.ExpectedHead), 10, 63)
 	if err != nil {
@@ -88,7 +88,7 @@ func (s *Service) Create(ctx context.Context, account protocol.ID, key string, r
 	}
 	now := s.now().UTC()
 	recorded, created, err := s.repo.CreateTransfer(ctx, database.Transfer{
-		AccountID: account, ID: newID(), FileID: request.FileID, VersionID: request.VersionID, Mode: request.Mode, IdempotencyKey: key,
+		ParentID: request.ParentID, AccountID: account, ID: newID(), FileID: request.FileID, VersionID: request.VersionID, Mode: request.Mode, IdempotencyKey: key,
 		ExpectedHead: head, ChunkCount: request.ChunkCount, TransmittedBytes: request.TransmittedBytes, ManifestBytes: request.ManifestBytes,
 		CreatedAt: now, ExpiresAt: now.Add(Lifetime),
 	})
@@ -231,14 +231,18 @@ func (s *Service) Finalize(ctx context.Context, account, upload protocol.ID, bod
 	return api.FinalizeResult{UploadID: upload, FileID: result.FileID, VersionID: result.VersionID, State: result.State, CatalogRevision: revision(result.CatalogRevision), HeadRevision: revision(result.HeadRevision)}, nil
 }
 
-func (s *Service) Catalog(ctx context.Context, account protocol.ID) (api.CatalogPage, error) {
-	current, files, err := s.repo.Catalog(ctx, account, api.MaxPageSize)
+func (s *Service) Catalog(ctx context.Context, account, parent protocol.ID) (api.CatalogPage, error) {
+	current, files, err := s.repo.Catalog(ctx, account, parent, api.MaxPageSize)
 	if err != nil {
 		return api.CatalogPage{}, err
 	}
 	page := api.CatalogPage{Page: api.Page{Snapshot: newID()}, CatalogRevision: revision(current), Entries: []api.CatalogEntry{}}
 	for _, file := range files {
-		page.Entries = append(page.Entries, api.CatalogEntry{ID: file.ID, Kind: api.File, Mode: protocol.Standard, HeadVersionID: file.HeadVersionID,
+		kind := api.File
+		if file.Directory {
+			kind = api.Directory
+		}
+		page.Entries = append(page.Entries, api.CatalogEntry{ID: file.ID, ParentID: file.ParentID, Kind: kind, Mode: protocol.Standard, HeadVersionID: file.HeadVersionID,
 			HeadRevision: revision(file.HeadRevision), Standard: &protocol.StandardMetadata{Name: file.Name}})
 	}
 	return page, nil

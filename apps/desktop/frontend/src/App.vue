@@ -34,6 +34,57 @@ const enrollment = ref<{ secret: string; qr: string }>();
 const recoveryCodes = ref<string[]>([]);
 const account = ref<Account>();
 const files = ref<File[]>([]);
+const folders = ref<{ id: string; name: string }[]>([]);
+const parent = computed(() => folders.value.at(-1)?.id ?? '');
+const folderName = ref('');
+const rates = ref<{ up: number; down: number }[]>([]);
+let rateTimer: ReturnType<typeof setInterval> | undefined;
+const speed = ref({ up: 0, down: 0 });
+const samples = new Map<number, { done: number; time: number; direction: string }>();
+function sampleRates() {
+  const now = performance.now();
+  let up = 0,
+    down = 0;
+  for (const item of transfers.value) {
+    const old = samples.get(item.id);
+    if (old) {
+      const rate = Math.max(0, item.done - old.done) / ((now - old.time) / 1000);
+      if (item.direction === 'upload') up += rate;
+      else down += rate;
+    }
+    samples.set(item.id, { done: item.done, time: now, direction: item.direction });
+  }
+  speed.value = { up, down };
+  rates.value = [...rates.value, speed.value].slice(-60);
+}
+function chart(direction: 'up' | 'down') {
+  const max = Math.max(1, ...rates.value.flatMap((r) => [r.up, r.down]));
+  return rates.value.map((r, i) => `${(i * 300) / 59},${60 - (r[direction] / max) * 56}`).join(' ');
+}
+const openFolder = (file: File) =>
+  attempt(async () => {
+    const list = await TransferService.Files(file.id);
+    folders.value.push({ id: file.id, name: file.name });
+    files.value = list ?? [];
+  });
+const upFolder = () =>
+  attempt(async () => {
+    const id = folders.value.at(-2)?.id ?? '';
+    const list = await TransferService.Files(id);
+    folders.value.pop();
+    files.value = list ?? [];
+  });
+const createFolder = () =>
+  attempt(async () => {
+    await TransferService.CreateDirectory(parent.value, folderName.value);
+    folderName.value = '';
+    files.value = (await TransferService.Files(parent.value)) ?? [];
+  });
+const uploadFolder = () =>
+  attempt(async () => {
+    await TransferService.ChooseAndUploadFolder(parent.value);
+    files.value = (await TransferService.Files(parent.value)) ?? [];
+  });
 const transfers = ref<Item[]>([]);
 const theme = ref<Theme>('system');
 let stopEvents: (() => void) | undefined;
@@ -114,17 +165,17 @@ const completeSignIn = () =>
     code.value = '';
     recoveryCodes.value = [];
     view.value = 'files';
-    files.value = (await TransferService.Files()) ?? [];
+    files.value = (await TransferService.Files(parent.value)) ?? [];
   });
 
 const refresh = () =>
   attempt(async () => {
-    files.value = (await TransferService.Files()) ?? [];
+    files.value = (await TransferService.Files(parent.value)) ?? [];
   });
 
 const upload = () =>
   attempt(async () => {
-    await TransferService.ChooseAndUpload();
+    await TransferService.ChooseAndUpload(parent.value);
   });
 
 const download = (file: File) =>
@@ -134,10 +185,11 @@ const download = (file: File) =>
 
 const signOut = () =>
   attempt(async () => {
+    await TransferService.SignOut();
     account.value = undefined;
+    folders.value = [];
     files.value = [];
     view.value = 'password';
-    await TransferService.SignOut();
   });
 
 function percent(item: Item): number {
@@ -161,17 +213,23 @@ function status(item: Item): string {
   if (item.state === 'failed') return item.error;
   if (item.state === 'queued') return 'Waiting';
   if (item.state === 'done') return `Done · ${size(item.total)}`;
-  return `${size(item.done)} of ${size(item.total)}`;
+  return `${size(item.done)} of ${size(item.total)} · ${size(item.speed ?? 0)}/s`;
 }
 
 function onTransfer(item: Item) {
   const index = transfers.value.findIndex((existing) => existing.id === item.id);
-  if (index === -1) transfers.value.push(item);
-  else transfers.value[index] = item;
+  if (index === -1) {
+    transfers.value.push(item);
+    samples.set(item.id, { done: 0, time: performance.now(), direction: item.direction });
+  } else transfers.value[index] = item;
   if (item.state === 'done' && item.direction === 'upload' && view.value === 'files') {
-    void TransferService.Files().then((list) => {
-      files.value = list ?? [];
-    });
+    void TransferService.Files(parent.value)
+      .then((list) => {
+        files.value = list ?? [];
+      })
+      .catch((reason) => {
+        error.value = failure(reason);
+      });
   }
 }
 
@@ -194,9 +252,13 @@ onMounted(() => {
     saved = null;
   }
   applyTheme(saved === 'light' || saved === 'dark' ? saved : 'system');
+  rateTimer = setInterval(sampleRates, 1000);
   stopEvents = Events.On('transfer', (event: { data: Item }) => onTransfer(event.data));
 });
-onUnmounted(() => stopEvents?.());
+onUnmounted(() => {
+  stopEvents?.();
+  clearInterval(rateTimer);
+});
 </script>
 
 <template>
@@ -230,7 +292,7 @@ onUnmounted(() => stopEvents?.());
           v-model="address"
           required
           autofocus
-          placeholder="https://192.168.1.10:8443"
+          placeholder="https://192.168.1.10:58443"
           spellcheck="false"
         />
       </label>
@@ -367,13 +429,26 @@ onUnmounted(() => stopEvents?.());
             <button type="button" :disabled="busy" @click="upload">Upload files…</button>
           </div>
         </div>
+        <p>Location: /{{ folders.map((f) => f.name).join('/') }}</p>
+        <div class="row">
+          <button v-if="folders.length" :disabled="busy" @click="upFolder">Up one folder</button
+          ><button :disabled="busy" @click="uploadFolder">Upload folder…</button>
+        </div>
+        <form class="row" @submit.prevent="createFolder">
+          <label>New folder name<input v-model="folderName" required maxlength="255" /></label
+          ><button :disabled="busy">Create folder</button>
+        </form>
+        <p v-if="files.length === 1000" class="hint">
+          Showing the first 1,000 entries. This test build does not yet support catalog pagination.
+        </p>
         <p v-if="files.length === 0" class="hint">
           Nothing uploaded yet. Choose “Upload files…” to send your first file.
         </p>
         <ul v-else class="list">
           <li v-for="file in files" :key="file.id">
-            <span class="name">{{ file.name }}</span>
-            <button type="button" class="quiet" :disabled="busy" @click="download(file)">
+            <span class="name">{{ file.directory ? '📁 ' : '' }}{{ file.name }}</span>
+            <button v-if="file.directory" :disabled="busy" @click="openFolder(file)">Open</button>
+            <button v-else type="button" class="quiet" :disabled="busy" @click="download(file)">
               Download…
             </button>
           </li>
@@ -381,6 +456,19 @@ onUnmounted(() => stopEvents?.());
       </section>
       <section class="card">
         <h2>Transfers</h2>
+        <p>↑ {{ size(speed.up) }}/s · ↓ {{ size(speed.down) }}/s</p>
+        <svg
+          viewBox="0 0 300 64"
+          role="img"
+          aria-label="Upload and download throughput over the last 60 seconds"
+        >
+          <polyline :points="chart('up')" fill="none" stroke="var(--accent)" stroke-width="2" />
+          <polyline :points="chart('down')" fill="none" stroke="var(--ok)" stroke-width="2" />
+        </svg>
+        <p class="hint">
+          Upload: blue · Download: green. Acknowledged/verified bytes per second; includes disk and
+          verification time.
+        </p>
         <p v-if="transfers.length === 0" class="hint">
           Uploads and downloads from this session appear here.
         </p>

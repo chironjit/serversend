@@ -1,0 +1,20 @@
+name: serversend
+services:
+  server:
+    image: serversend:dev
+    container_name: serversend
+    restart: unless-stopped
+    read_only: true
+    stop_grace_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      - "${SERVER_SEND_BIND_IP:?Set the Unraid LAN IP}:58443:58443/tcp"
+    environment:
+      SERVER_SEND_TLS_IPS: "${SERVER_SEND_TLS_IPS:?Set the Unraid LAN IP}"
+    volumes:
+      - "${SERVER_SEND_CONFIG_PATH:-/mnt/user/appdata/serversend/config}:/config"
+      - "${SERVER_SEND_DATA_PATH:-/mnt/user/serversend/data}:/data"
+      - "${SERVER_SEND_STAGING_PATH:-/mnt/user/serversend/staging}:/staging"
