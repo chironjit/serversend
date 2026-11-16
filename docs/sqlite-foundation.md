@@ -76,7 +76,7 @@ Run `bash shared/scripts/check.sh` for formatting, vet and module tests. The app
 
 ## Chunk 03 platform qualification
 
-Run `make check-persistence` natively on each supported target. It requires CGO and a real C compiler, runs vet/race tests against shared persistence/fault fixtures and both application database packages, and explicitly links their test binaries. It refuses non-CGO stubs and foreign targets. It uses offline, read-only module settings and does not activate CI. The existing draft `docs/ci-workflow.yml` includes this command for Linux, Windows and macOS, awaiting the already required CI review.
+Run `make check-persistence` natively on each supported target. It requires CGO and a real C compiler, runs vet/race tests against shared persistence/fault fixtures and both application database packages, and explicitly links their test binaries. It refuses non-CGO stubs and foreign targets. It uses offline, read-only module settings. The activated CI workflow at `.github/workflows/check.yml` runs this command on Linux, Windows and macOS; the platform qualification gate closes when those hosted runs pass.
 
 | Platform | Recorded result |
 | --- | --- |

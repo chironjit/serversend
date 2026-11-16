@@ -6,9 +6,9 @@ Implement the architecture in [Implementation plan](implementation-plan.md) in s
 
 | Chunk | Status | Implemented slice and remaining work |
 | --- | --- | --- |
-| 01 | In progress | Local workspace/layout checks, Oxc lint/check/format tools, Vue tests, Go tests, native Linux build, binding regeneration and live scaffold smoke checks pass, including a clean Git checkout of the source snapshot. CI is drafted for review but not activated or run on hosted Windows/macOS runners. See [desktop development](desktop-development.md) and the [CI draft](ci-workflow.yml). |
+| 01 | In progress | Local workspace/layout checks, Oxc lint/check/format tools, Vue tests, Go tests, native Linux build, binding regeneration and live scaffold smoke checks pass, including a clean Git checkout of the source snapshot. The reviewed CI workflow is activated at `.github/workflows/check.yml` (2026-11-16); hosted Windows/macOS runs are pending the first push. Unused iOS/Android scaffold assets were removed. See [desktop development](desktop-development.md). |
 | 02 | Complete (contracts) | Versioned wire types, scoped identifiers, lifecycle validation, TLS-bound signed identity proofs, pagination, upload/manifest/catalog/event contracts, fifteen JSON fixtures and the requirement-to-test map are implemented and locally checked. Runtime handlers remain in their owning later chunks. See [protocol foundation](protocol-foundation.md). |
-| 03 | Platform verification pending | Initial server account/upload/storage and desktop profile/queue schemas and repositories, private opening policy, transaction helpers, metadata snapshots, deterministic fault fixtures and Linux acceptance checks are implemented. Windows/macOS native CGO qualification remains; the CI matrix is still a review draft. See [SQLite foundation](sqlite-foundation.md). |
+| 03 | Platform verification pending | Initial server account/upload/storage and desktop profile/queue schemas and repositories, private opening policy, transaction helpers, metadata snapshots, deterministic fault fixtures and Linux acceptance checks are implemented. Windows/macOS native CGO qualification remains; the activated CI matrix covers it once hosted runs execute. See [SQLite foundation](sqlite-foundation.md). |
 | 04 | In progress | TLS-only process, automatic private IPv4 certificates/renewal, persistent Ed25519 identity, storage checks, health/readiness/capability endpoints, graceful shutdown and non-root container image/Compose example are implemented. Admin shell and full deployment qualification remain; this does not complete the contract/persistence dependencies. See [server development](server-development.md). |
 | 06 | In progress | TOTP secret/QR generation and deterministic code verification helpers are implemented. Enrollment state, encrypted storage, atomic replay consumption, rate limits and recovery codes remain. See [TOTP foundation](twofactor-foundation.md). |
 | All others | Not started | Follow the dependencies and acceptance criteria below. |
@@ -42,19 +42,26 @@ The other partial foundation slices do not complete their chunks or bypass integ
 
 Chunk 17's format prototype should run after chunks 02–03 and before chunk 11 freezes the production manifest. Its full integration follows the standard transfer implementation. The task numbers organize delivery; the explicit dependency list governs execution.
 
+### De-risking spikes before the manifest freeze
+
+Two disposable spikes run ahead of their milestone order, both before chunk 11 freezes the manifest and chunk API. Neither produces production code, ships features, or bypasses chunk acceptance; each records its findings in `docs` and may force contract revisions while they are still cheap.
+
+- **Vertical transfer spike.** A deliberately crude end-to-end exercise of the chunk 02 upload contracts — create upload, send chunks, finalize, download, compare — using a throwaway handler and client, without authentication or durability guarantees. Its purpose is to validate the `shared/api` upload/manifest contracts against a real consumer before the identity chunks build on them. Contracts were specified before any handler existed; expect and record revisions.
+- **Small-file overhead benchmark.** Measure raw per-file request/metadata overhead over HTTP/2 (and HTTP/3 where practical) on the target deployment hardware at a scale representative of 100,000 small files. The primary workload is many small files; if per-request overhead dominates, the fix changes the public API, so this must be known before the chunk 11 freeze, not at chunk 24.
+
 ## Chunk 01 Validate the workspace and establish checks
 
 **Location:** `apps/desktop`, `apps/server`, `shared`; minimal root workspace/CI entries. **Dependencies:** None.
 
 - [x] Retain `apps/desktop`, `apps/server`, root `shared`, and root `docs`; verify the existing workspace layout and scaffold assets.
 - [x] Verify existing module names, imports, `go.work`, frontend bindings, Taskfiles and packaging paths; correct inconsistencies without renaming or relocating the application modules.
-- [x] Remove or relocate scaffold examples only after identifying their purpose. Examples are retained; desktop, server-mode and unused mobile scaffold roles are documented.
-- [ ] Add component-owned formatting, static-analysis, type-check, unit-test and integration-test commands; wire CI to them. Commands are implemented; the workflow remains a review draft at the user's request.
+- [x] Remove or relocate scaffold examples only after identifying their purpose. Desktop and server-mode scaffold roles are documented; the unused iOS/Android build scaffolding was removed on 2026-11-16 because mobile clients are explicitly deferred.
+- [ ] Add component-owned formatting, static-analysis, type-check, unit-test and integration-test commands; wire CI to them. Commands are implemented and the reviewed workflow is active at `.github/workflows/check.yml`; completion requires passing hosted Linux/Windows/macOS runs.
 - [x] Add frontend test tooling and establish the Go test harness without placeholder behaviour tests.
 
 **Tests and acceptance:** Build all Go modules and desktop frontend; regenerate bindings; run scaffold smoke checks; verify workspace, build and packaging references resolve to the existing `apps/desktop` and `apps/server` paths. Demonstrate a fresh checkout following the documented commands.
 
-**Verified locally:** `make check` passes with Oxfmt, Oxlint/tsgolint, Vue template checking, eight Vue tests, Go vet/tests (desktop with race detection), production frontend/native Linux builds, generated-binding comparison, layout checks and a real Go-process bridge/event smoke test. A disposable Git commit/clone of the current source snapshot restored dependencies with `npm ci`, passed the same checks and left tracked files unchanged. Installed native prerequisites and the existing Go module cache were reused; this is not a fresh-machine or hosted CI claim. CI activation/execution awaits review of `docs/ci-workflow.yml`; no Playwright is used.
+**Verified locally:** `make check` passes with Oxfmt, Oxlint/tsgolint, Vue template checking, eight Vue tests, Go vet/tests (desktop with race detection), production frontend/native Linux builds, generated-binding comparison, layout checks and a real Go-process bridge/event smoke test. A disposable Git commit/clone of the current source snapshot restored dependencies with `npm ci`, passed the same checks and left tracked files unchanged. Installed native prerequisites and the existing Go module cache were reused; this is not a fresh-machine or hosted CI claim. The reviewed workflow is activated at `.github/workflows/check.yml`; hosted execution results are recorded once the first push runs it. No Playwright is used.
 
 ## Chunk 02 Define contracts and identity boundaries
 
@@ -69,7 +76,7 @@ Chunk 17's format prototype should run after chunks 02–03 and before chunk 11 
 
 **Tests and acceptance:** Serialization and compatibility fixtures; malformed/oversized inputs; unsupported versions; invalid state transitions; colliding IDs across servers; stable error decoding. Document examples sufficient to implement client and server independently.
 
-**Verified locally:** Full repository checks pass with the installed Wails v3.0.0 CLI, including the native Linux desktop build/binding comparison/smoke test and shared TLS channel-binding integration test. Shared race checks and a bounded parser fuzz run pass; see [requirement verification](requirements-verification.md). Chunk 01 CI activation/hosted platform checks remain deferred for user review. No dependencies or workspace modules were added. This completes contract acceptance, not the account, pairing or transfer runtime.
+**Verified locally:** Full repository checks pass with the installed Wails v3.0.0 CLI, including the native Linux desktop build/binding comparison/smoke test and shared TLS channel-binding integration test. Shared race checks and a bounded parser fuzz run pass; see [requirement verification](requirements-verification.md). Hosted platform checks run through the activated CI workflow on push. No dependencies or workspace modules were added. This completes contract acceptance, not the account, pairing or transfer runtime; the vertical transfer spike above may still force contract revisions before chunk 11 freezes them.
 
 ## Chunk 03 Establish persistence and fault injection
 
@@ -83,7 +90,7 @@ Chunk 17's format prototype should run after chunks 02–03 and before chunk 11 
 
 **Tests and acceptance:** Fresh database, repeated startup, migration from each supported prior fixture, migration failure, newer-schema rejection, concurrent writes, transaction rollback, missing/read-only paths and restart persistence. Cross-platform driver builds pass.
 
-**Verified locally:** `make check-persistence` passes on Linux amd64 with CGO, including vet, race tests and explicit driver-consumer linking. `make check` passes, including the desktop build, binding regeneration and live scaffold smoke. Server migrations cover empty/v1 fixtures, failed upgrades and future-version rejection; repository tests cover ownership collisions, atomic writes, concurrent writers, queue CAS races and restart persistence. Consistent metadata snapshots are tested separately from the full deployment backup workflow in Chunk 26. **Remaining acceptance gate:** Windows/macOS native CGO builds/tests and platform permission qualification could not run on this Linux host. The draft CI includes the native persistence check but remains inactive pending review. See [SQLite foundation](sqlite-foundation.md).
+**Verified locally:** `make check-persistence` passes on Linux amd64 with CGO, including vet, race tests and explicit driver-consumer linking. `make check` passes, including the desktop build, binding regeneration and live scaffold smoke. Server migrations cover empty/v1 fixtures, failed upgrades and future-version rejection; repository tests cover ownership collisions, atomic writes, concurrent writers, queue CAS races and restart persistence. Consistent metadata snapshots are tested separately from the full deployment backup workflow in Chunk 26. **Remaining acceptance gate:** Windows/macOS native CGO builds/tests and platform permission qualification could not run on this Linux host. The activated CI workflow includes the native persistence check on all three platforms; this gate closes when those hosted runs pass. See [SQLite foundation](sqlite-foundation.md).
 
 ## Chunk 04 Build the server process and container skeleton
 
@@ -100,6 +107,7 @@ Chunk 17's format prototype should run after chunks 02–03 and before chunk 11 
 
 **Location:** `apps/server/internal/auth`, `apps/server/internal/users`, `apps/server/internal/httpapi`. **Dependencies:** 03–04.
 
+- [ ] Adopt the repository receiver convention from the implementation plan, converting the existing package-level account/upload/queue database functions in the same change.
 - [ ] Add expiring one-time bootstrap and admin/user roles.
 - [ ] Implement user creation, random temporary passwords, Argon2id hashing and onboarding scopes.
 - [ ] Implement password replacement, throttling and audited administrator resets.
@@ -167,7 +175,7 @@ Chunk 17's format prototype should run after chunks 02–03 and before chunk 11 
 
 ## Chunk 11 Implement durable chunk storage
 
-**Location:** `apps/server/internal/storage`, `apps/server/internal/uploads`, `shared/protocol`. **Dependencies:** 03–04, 10, 17 format decision.
+**Location:** `apps/server/internal/storage`, `apps/server/internal/uploads`, `shared/protocol`. **Dependencies:** 03–04, 10, 17 format decision, and the recorded results of both de-risking spikes above; the manifest and chunk API freeze here.
 
 - [ ] Implement immutable object paths, chunk validation and durable acknowledgements.
 - [ ] Implement reservations, body-size limits and incomplete-upload metadata.

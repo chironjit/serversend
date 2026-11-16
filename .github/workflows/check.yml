@@ -1,5 +1,3 @@
-# REVIEW DRAFT. Not active in GitHub Actions.
-# After approval, place this file at .github/workflows/check.yml.
 name: Check
 
 on:

@@ -4,6 +4,8 @@ ServerSend provides private file storage and backup through an Unraid Docker ser
 
 This is the implementation specification. Work is divided into dependency-ordered chunks in [Implementation tasks](implementation-tasks.md), which also records current implementation progress. The specification describes the intended product; only completed work should be treated as available functionality.
 
+Revisit this specification at every milestone boundary. A document this detailed drifts once implementation teaches real constraints (as happened with Talos and `rsc.io/2fa`); correct it deliberately at each boundary rather than letting the per-component documents and this plan disagree. The per-component documents in `docs` record implemented truth; this plan records intent.
+
 ## Scope and operating assumptions
 
 The first release supports one server process per storage directory, independent accounts on each server, Linux-first desktop clients, followed by Windows, with macOS also required, and a Linux Docker container deployed on Unraid. Validate all three desktop platforms before advertising support. Tailscale already runs on the Unraid host. The server does not require public internet exposure; access is through the LAN or tailnet.
@@ -78,6 +80,8 @@ docs/                    project plans and cross-component architecture decision
 Create folders when their first implementation needs them, rather than creating empty abstractions. Shared code must have a plausible reusable purpose; server database models and desktop UI state stay with their owners. Shared packages never import desktop or server packages, and desktop and server never import each other's internal packages. Server deployment assets belong in `apps/server/deploy`; the existing Wails Docker build files must be inspected before deciding which are desktop build tooling.
 
 Keep entry points thin. Separate transport handling, business rules, and persistence. Prefer files named for a responsibility such as `password_reset.go`, `upload_finalize.go`, or `queue_retry.go`; split a file when it mixes independent responsibilities. Avoid general-purpose `utils` packages and interfaces that merely duplicate every method of a concrete type. Shared protocol interfaces belong in `shared`; implementation-specific dependency interfaces belong near their consumer.
+
+Database repositories use a consistent convention: as repositories multiply beyond the initial account/upload/queue functions, group them behind a receiver type that carries the database handle and makes transaction scoping explicit, rather than accumulating package-level functions that each take `*sql.DB`. Adopt the receiver convention no later than the first chunk that adds a second repository family (chunk 05); converting the existing package-level functions is part of that change.
 
 Every implemented scenario includes tests in the same change: normal operation, invalid input, authorization, relevant boundaries, and failure/recovery behaviour. Keep Go unit tests beside their implementations, UI tests beside their features, and integration suites in the owning application's `tests` directory. Generated bindings are regenerated, not manually patched.
 
@@ -223,6 +227,8 @@ Use schema versions and pre-upgrade backups. Refuse unsupported newer schemas. D
 Implement HTTPS/HTTP/2 first and add HTTP/3 through `quic-go` behind the same typed client and API. The library provides an HTTP/3 transport; the application explicitly owns fallback and replay policy. Disable 0-RTT for authentication and mutations. [quic-go HTTP/3 client](https://quic-go.net/docs/http3/client/)
 
 Probe QUIC with bounded timeouts, cache failures briefly, and fall back to verified HTTPS when UDP is unavailable. Preserve transfer identity across transport changes. Compare QUIC and HTTP/2 under LAN, direct tailnet, and relayed-tailnet conditions; adopt defaults based on measured useful throughput, CPU, memory, and fairness. QUIC is not an unconditional throughput guarantee.
+
+The small-file workload is a design risk, not only a tuning concern. Per-file request and metadata overhead at 100,000-file scale can invalidate a chunk-per-request API shape after it is frozen; the storage abstraction does not protect the public API from that outcome. Benchmark raw per-file request/metadata overhead over HTTP/2 (and HTTP/3 when available) on the target deployment hardware before chunk 11 freezes the manifest and chunk API, alongside the chunk 17 format prototype. A disposable measurement rig is sufficient; record the results in `docs`.
 
 Measure scanning, disk reads/writes, hashing, encryption, network transfer, and finalization independently. Start without compression or deduplication. Tune chunk size and worker counts with large-file and small-file workloads. Apply global and per-user limits so one batch cannot exhaust memory, disk handles, or bandwidth. Prioritize small-file throughput: benchmark bounded metadata batching and request reuse before increasing workers. If object packing is needed, preserve individual file retrieval, independent ownership and private-file boundaries. Include buffers, metadata, cryptographic KDFs, caches and frontend state in peak-memory measurements.
 
