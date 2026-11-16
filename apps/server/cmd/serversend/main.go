@@ -69,6 +69,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		return fmt.Errorf("listen TCP: %w", err)
 	}
 	log.Printf("Server %s listening for HTTPS on %s", s.Identity().ID, listener.Addr())
+	log.Printf("Certificate fingerprint for desktop approval: %s", s.CertificateFingerprint())
 	return s.Serve(ctx, listener)
 }
 
@@ -93,6 +94,6 @@ func issueAdministrator(ctx context.Context, accounts *auth.Service, bootstrap, 
 		return fmt.Errorf("issue administrator credential: %w", err)
 	}
 	_, err = fmt.Fprintf(out, "Administrator: %s\nTemporary password: %s\nExpires: %s\nSign in, replace the password and enroll TOTP before it expires. This password is not shown again.\n",
-		issued.Username, issued.TemporaryPassword, issued.ExpiresAt.Format("2006-01-02 15:04:05 MST"))
+		issued.Username, issued.TemporaryPassword, issued.ExpiresAt.Local().Format("2006-01-02 15:04:05 MST"))
 	return err
 }

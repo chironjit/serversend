@@ -18,6 +18,8 @@ import (
 	"github.com/chironjit/serversend/apps/server/internal/database"
 	"github.com/chironjit/serversend/apps/server/internal/httpapi"
 	"github.com/chironjit/serversend/apps/server/internal/identity"
+	"github.com/chironjit/serversend/apps/server/internal/storage"
+	"github.com/chironjit/serversend/apps/server/internal/uploads"
 	"github.com/chironjit/serversend/shared/protocol"
 )
 
@@ -28,6 +30,7 @@ type Server struct {
 	tls          *tls.Config
 	identity     identity.Identity
 	accounts     *auth.Service
+	transfers    *uploads.Service
 	draining     atomic.Bool
 	drainTimeout time.Duration
 }
@@ -62,7 +65,17 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Server{db: db, tls: tlsConfig, identity: id, accounts: accounts, drainTimeout: shutdownTimeout}, nil
+	store, err := storage.Open(c.DataDir)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	transfers, err := uploads.New(database.NewRepository(db), store, protocol.ID(id.ID), httpapi.Capabilities().Limits, nil)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &Server{db: db, tls: tlsConfig, identity: id, accounts: accounts, transfers: transfers, drainTimeout: shutdownTimeout}, nil
 }
 
 // newAccounts loads the TOTP protection key before any account request can be
@@ -97,7 +110,7 @@ func (s *Server) Close() error { return s.db.Close() }
 // unready before draining requests. A timeout forcibly closes active requests.
 // The instance is intended for a single Serve call.
 func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
-	return s.serve(ctx, listener, httpapi.New(s.ready, httpapi.WithAuthentication(s.accounts)))
+	return s.serve(ctx, listener, httpapi.New(s.ready, httpapi.WithAuthentication(s.accounts), httpapi.WithTransfers(s.transfers)))
 }
 
 func (s *Server) ready(ctx context.Context) error {

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"embed"
 
 	"log"
 	"time"
 
+	"github.com/chironjit/serversend/apps/desktop/internal/transfer"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -22,6 +24,7 @@ func init() {
 	// This is not required, but the binding generator will pick up registered events
 	// and provide a strongly typed JS/TS API for them.
 	application.RegisterEvent[string]("time")
+	application.RegisterEvent[transfer.Item](TransferEvent)
 }
 
 // main function serves as the application's entry point. It initializes the application, creates a window,
@@ -36,9 +39,10 @@ func main() {
 	// 'Mac' options tailor the application when running an macOS.
 	app := application.New(application.Options{
 		Name:        "desktop",
-		Description: "A demo of using raw HTML & CSS",
+		Description: "ServerSend desktop client",
 		Services: []application.Service{
 			application.NewService(&GreetService{}),
+			application.NewService(NewTransferService(context.Background())),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -54,7 +58,7 @@ func main() {
 	// 'BackgroundColour' is the background colour of the window.
 	// 'URL' is the URL that will be loaded into the webview.
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title: "Window 1",
+		Title: "ServerSend",
 		// Window sized to the golden ratio (1000 / 618 ≈ 1.618).
 		Width:  1000,
 		Height: 618,

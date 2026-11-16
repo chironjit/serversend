@@ -7,10 +7,14 @@ import (
 	"strings"
 
 	"github.com/chironjit/serversend/apps/server/internal/auth"
+	"github.com/chironjit/serversend/apps/server/internal/uploads"
 	"github.com/chironjit/serversend/shared/api"
 )
 
-type options struct{ authentication *auth.Service }
+type options struct {
+	authentication *auth.Service
+	transfers      *uploads.Service
+}
 type Option func(*options)
 
 func WithAuthentication(service *auth.Service) Option {
