@@ -4,6 +4,9 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/serversend-desktop-check-test.XXXXXX")"
 trap 'rm -rf -- "$fixture"' EXIT
+# TMPDIR commonly ends in / on macOS. Match the normalized paths reported by
+# the child shell instead of comparing /tmp//... against /tmp/....
+fixture="$(cd -- "$fixture" && pwd -P)"
 fixture_desktop="$fixture/desktop with spaces"
 mkdir -p "$fixture_desktop/scripts" "$fixture_desktop/frontend/node_modules/.bin" "$fixture/bin"
 cp "$script_dir/check.sh" "$fixture_desktop/scripts/check.sh"
