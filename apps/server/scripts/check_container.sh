@@ -9,7 +9,7 @@ if [[ "$mode" != external && "$mode" != --private-ipv4 ]]; then
   printf 'Usage: %s [image] [--private-ipv4]\n' "$0" >&2
   exit 1
 fi
-for tool in docker openssl curl rg cmp; do
+for tool in docker openssl curl grep cmp; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     printf 'Missing container-check prerequisite: %s\n' "$tool" >&2
     exit 1
@@ -68,7 +68,7 @@ wait_ready() {
   curl --silent --show-error --fail --retry 20 --retry-all-errors \
     --retry-delay 1 --retry-max-time 15 --max-time 2 \
     --cacert "$fixture_dir/cert.pem" "https://$address/readyz" >"$fixture_dir/ready.json"
-  rg -q '"status":"ready"' "$fixture_dir/ready.json"
+  grep -q '"status":"ready"' "$fixture_dir/ready.json"
 }
 
 check_browser_tls() {
@@ -80,7 +80,7 @@ check_browser_tls() {
     openssl s_client -quiet -tls1_3 -sigalgs ecdsa_secp256r1_sha256 \
       -verify_return_error -verify_ip 127.0.0.1 -CAfile "$fixture_dir/cert.pem" \
       -connect "$address" >"$fixture_dir/browser-response.txt" 2>"$fixture_dir/browser-tls.log"
-  rg -q '"status":"ready"' "$fixture_dir/browser-response.txt"
+  grep -q '"status":"ready"' "$fixture_dir/browser-response.txt"
 }
 
 check_admin() {
@@ -88,9 +88,9 @@ check_admin() {
   address="$(docker port "$container_name" 58443/tcp)"
   curl --silent --show-error --fail --max-time 2 \
     --cacert "$fixture_dir/cert.pem" "https://$address/admin/" >"$fixture_dir/admin.html"
-  rg -q 'ServerSend administration' "$fixture_dir/admin.html"
-  script_path="$(rg -o '/admin/assets/[^" ]+\.js' "$fixture_dir/admin.html" | head -n 1)"
-  style_path="$(rg -o '/admin/assets/[^" ]+\.css' "$fixture_dir/admin.html" | head -n 1)"
+  grep -q 'ServerSend administration' "$fixture_dir/admin.html"
+  script_path="$(grep -Eo '/admin/assets/[^" ]+\.js' "$fixture_dir/admin.html" | head -n 1)"
+  style_path="$(grep -Eo '/admin/assets/[^" ]+\.css' "$fixture_dir/admin.html" | head -n 1)"
   [[ -n "$script_path" && -n "$style_path" ]]
   for path in "$script_path" "$style_path" /admin/theme-init.js; do
     curl --silent --show-error --fail --max-time 2 \
@@ -113,7 +113,7 @@ fi
 wait_ready
 check_browser_tls
 check_admin
-first_identity="$(docker logs "$container_name" 2>&1 | rg -o 'Server [0-9a-f]{32} listening' | tail -n 1)"
+first_identity="$(docker logs "$container_name" 2>&1 | grep -Eo 'Server [0-9a-f]{32} listening' | tail -n 1)"
 [[ -n "$first_identity" ]]
 [[ "$(docker exec "$container_name" stat -c '%a' /config/serversend.sqlite)" == 600 ]]
 [[ -z "$(docker diff "$container_name")" ]]
@@ -128,7 +128,7 @@ if [[ "$mode" == --private-ipv4 ]]; then
   docker cp "$container_name:/config/tls/ca.crt" "$fixture_dir/ca-after-restart.crt"
   cmp -s "$fixture_dir/cert.pem" "$fixture_dir/ca-after-restart.crt"
 fi
-second_identity="$(docker logs "$container_name" 2>&1 | rg -o 'Server [0-9a-f]{32} listening' | tail -n 1)"
+second_identity="$(docker logs "$container_name" 2>&1 | grep -Eo 'Server [0-9a-f]{32} listening' | tail -n 1)"
 [[ "$first_identity" == "$second_identity" ]]
 docker stop "$container_name" >/dev/null
 [[ "$(docker inspect --format '{{.State.ExitCode}}' "$container_name")" == 0 ]]
