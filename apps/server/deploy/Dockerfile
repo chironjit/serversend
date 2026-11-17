@@ -30,6 +30,8 @@ WORKDIR /src/apps/server
 RUN go build -mod=readonly -trimpath -ldflags='-s -w' -o /out/serversend ./cmd/serversend
 
 FROM debian:bookworm-slim
+# SQLite spills large temporary tables/sorts here with a read-only root.
+ENV SQLITE_TMPDIR=/staging
 RUN mkdir /config /data /staging \
     && chown 10001:10001 /config /data /staging \
     && chmod 0700 /config /data /staging

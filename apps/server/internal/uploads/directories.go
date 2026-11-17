@@ -2,6 +2,7 @@ package uploads
 
 import (
 	"context"
+	"fmt"
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
 )
@@ -20,7 +21,10 @@ func (s *Service) DeleteEntry(ctx context.Context, account, id protocol.ID) erro
 	if _, err := s.repo.DeleteEntry(ctx, account, id); err != nil {
 		return err
 	}
-	return s.cleanupDeleted(ctx)
+	if err := s.cleanupDeleted(ctx); err != nil {
+		return fmt.Errorf("clean up deleted file objects: %w", err)
+	}
+	return nil
 }
 func (s *Service) cleanupDeleted(ctx context.Context) error {
 	ids, err := s.repo.DeletedObjects(ctx)

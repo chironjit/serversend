@@ -99,6 +99,9 @@ check_admin() {
 }
 
 docker start "$container_name" >/dev/null
+# SQLite must be able to spill large deletion tables with a read-only root.
+[[ "$(docker exec "$container_name" printenv SQLITE_TMPDIR)" == /staging ]]
+docker exec "$container_name" sh -c 'test -w "$SQLITE_TMPDIR"'
 if [[ "$mode" == --private-ipv4 ]]; then
   # Wait only for initial generation, then export the public CA through Docker's
   # authenticated operator channel. No TLS verification is disabled.

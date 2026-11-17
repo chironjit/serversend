@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
 	"strings"
@@ -75,7 +76,10 @@ func (r *Repository) DeleteEntry(ctx context.Context, account, id protocol.ID) (
 		_, err = tx.ExecContext(ctx, `UPDATE accounts SET catalog_revision=catalog_revision+1 WHERE id=?`, account)
 		return err
 	})
-	return objects, err
+	if err != nil {
+		return nil, fmt.Errorf("delete catalog tree metadata: %w", err)
+	}
+	return objects, nil
 }
 func (r *Repository) DeletedObjects(ctx context.Context) ([]protocol.ID, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT id FROM deleted_objects`)

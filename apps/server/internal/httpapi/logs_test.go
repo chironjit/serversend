@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -92,4 +93,19 @@ func TestLogAccessAndRedaction(t *testing.T) {
 
 func logTestToken(role string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat(role[:1], 32)))
+}
+
+func TestRequestLogDoesNotRepeatMethod(t *testing.T) {
+	logs, err := applog.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logs.Close()
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /catalog/{entry}", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
+	requestLogs(mux, logs).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("DELETE", "/catalog/private-id", nil))
+	page := logs.Page("ok", "", 0)
+	if len(page) != 1 || !strings.Contains(page[0].Message, "DELETE /catalog/{entry}") || strings.Contains(page[0].Message, "DELETE DELETE") || strings.Contains(page[0].Message, "private-id") {
+		t.Fatalf("unexpected request log: %+v", page)
+	}
 }

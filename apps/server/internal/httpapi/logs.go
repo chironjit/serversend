@@ -110,6 +110,9 @@ func requestLogs(next http.Handler, store *applog.Store) http.Handler {
 			}
 			// Never log arbitrary URLs, query strings, headers, bodies or file names.
 			route := r.Pattern
+			if _, path, ok := strings.Cut(route, " "); ok {
+				route = path
+			}
 			if route == "" {
 				switch r.URL.Path {
 				case "/healthz", "/readyz", "/admin", "/admin/", passwordPath, passwordReplacePath, totpEnrollPath, totpConfirmPath, sessionsPath, currentSessionPath, api.BasePath + "/admin/users", api.BasePath + "/admin/logs", api.BasePath + "/capabilities":
