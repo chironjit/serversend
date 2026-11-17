@@ -21,7 +21,7 @@ Checked items mean the stated scope is implemented with recorded evidence. Compo
 | 1. Symlink handling | Partial | Skip/report, safe source opening and desktop summaries delivered; native Windows/macOS and picker qualification open |
 | 2. Performance and QUIC | Partial | QUIC-first transport complete; deployment resource/performance validation open; later integrations tracked in features 5, 9, 10, 12 and 14 |
 | 3. Recoverable storage | Partial | Instance locks, offline backup/restore, startup reconciliation, quota reservations and upload retirement delivered; actual filesystem/power-loss qualification open |
-| 4. Persistent sign-in/devices | Partial | Desktop refresh, expiry/TOTP gates, admin device history/revocation delivered; native qualification and self-service controls open |
+| 4. Persistent sign-in/devices | Partial | Refresh, installation deduplication, verified trust/scoped storage, self-service/admin devices and browser protections delivered; complete native qualification open |
 | 5. Resumable uploads | Pending | Existing in-memory queue only; persistence and resume open |
 | 6. Browsing/restores | Pending | Existing folder browsing and whole-file downloads only; pagination and resumable folder restores open |
 | 7. Storage visibility | Pending | Existing local throughput display only; accounting and dashboards open |
@@ -95,17 +95,18 @@ For every feature:
 
 **Outcome:** users remain signed in across restarts and offline periods, while lost or revoked devices lose access promptly.
 
-**Existing:** mandatory second-factor issuance, ten-minute desktop access, rotating refresh credentials, 30-day inactivity and 60-day TOTP gates, optional OS-keychain persistence, seven-day browser cookies, device history/revocation and active-request cancellation. Native keychain qualification, stable installation registration across full logins and self-service controls remain open.
+**Existing:** mandatory second-factor issuance, ten-minute desktop access, rotating refresh credentials, 30-day inactivity and 60-day TOTP gates, optional OS-keychain persistence, seven-day browser cookies, device history/revocation and active-request cancellation. Stable installation registration, verified CA/identity trust, account-scoped credentials, self-service controls and browser CSRF protection are implemented. Complete native credential-store qualification remains open.
 
 - [x] Issue per-login device authorization, short-lived access tokens and rotating refresh credentials stored hashed on the server.
-- [ ] Add stable installation identity/deduplication across new full logins; current refresh/TOTP renewal already preserves the device ID.
+- [x] Add stable installation identity/deduplication across new full logins; current refresh/TOTP renewal already preserves the device ID.
 - [x] Implement bounded current/previous refresh tuples, conflicting-reuse revocation, serialized workers and interrupted rotation recovery, with 30-day refresh inactivity and 60-day second-factor verification. Full password plus TOTP login is required after inactivity expiry. Fake-clock and race tests cover the boundaries and replay handling.
-- [ ] Integrate native secure credential storage on Linux, Windows and macOS; test locked, unavailable and lost stores without plaintext fallback. Obtain dependency approval first if needed.
-- [ ] Persist credentials under server/account scope and verified trust only. Implement stable identity-key proof/CA validation and renewal safety needed before persisting credentials; feature 10 expands this into multiple profiles/routes.
+- [x] Integrate the approved native secure-store library on Linux, Windows and macOS without plaintext fallback; cover locked/unavailable/lost stores with fault tests and provide a native qualification command. Linux real-store process roundtrip, deletion/loss and unavailable-service checks pass.
+- [ ] Finish native qualification on all three platforms: locked stores and OS restarts, plus Windows/macOS real-store roundtrip/unavailable/loss checks. Record results; compile-only checks do not close this gate.
+- [x] Persist credentials under server/account scope and verified trust only. Implement stable identity-key proof/CA validation and renewal safety needed before persisting credentials; feature 10 expands this into multiple profiles/routes.
 - [x] Add admin per-user device history (including offline devices), last-seen/recent-activity indication and individual audited revocation with recent admin reauthentication. Heartbeat activity stays separate from refresh/TOTP deadlines.
-- [ ] Add self-service device listing/revocation and session controls; enforce revocation on every request and cancel active streams within five seconds.
-- [ ] Replace browser bearer-session handling with Secure/HttpOnly/SameSite cookies, CSRF/origin protections, browser expiry and sensitive-action reauthentication.
-- [ ] Migrate or explicitly invalidate legacy sessions safely; retain mandatory onboarding and recovery-code enforcement.
+- [x] Add self-service device listing/revocation and session controls; enforce revocation on every request and cancel active streams within five seconds.
+- [x] Replace browser bearer-session handling with Secure/HttpOnly/SameSite cookies, CSRF/origin protections, browser expiry and sensitive-action reauthentication.
+- [x] Migrate or explicitly invalidate legacy sessions safely; retain mandatory onboarding and recovery-code enforcement.
 
 **Accept when:** app/OS/server restarts, offline periods and a lost refresh response restore silently within policy limits; exact 30-day inactivity/60-day TOTP boundaries are tested; concurrent refresh and replay tests pass; revocation blocks new work and active streams within the bound; forged browser mutations fail. Record native secure-store results on all three platforms.
 

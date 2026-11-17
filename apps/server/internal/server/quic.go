@@ -25,7 +25,7 @@ func (s *Server) ServeTransports(ctx context.Context, tcp net.Listener, udp net.
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	handler := httpapi.New(s.ready, httpapi.WithAuthentication(s.accounts), httpapi.WithTransfers(s.transfers), httpapi.WithHTTP3(), httpapi.WithLogs(s.logs))
+	handler := httpapi.New(s.ready, httpapi.WithIdentity(s.signIdentity), httpapi.WithAuthentication(s.accounts), httpapi.WithTransfers(s.transfers), httpapi.WithHTTP3(), httpapi.WithLogs(s.logs))
 	return s.serveTransports(ctx, cancel, tcp, udp, handler)
 }
 
@@ -46,7 +46,14 @@ func (s *Server) serveTransports(ctx context.Context, cancel context.CancelFunc,
 	tcpDone, quicDone := make(chan error, 1), make(chan error, 1)
 	go func() { tcpDone <- s.serve(ctx, tcp, handler) }()
 	go func() {
-		err := h3.Serve(udp)
+		transport := &quic.Transport{Conn: udp, ConnContext: func(ctx context.Context, _ *quic.ClientInfo) (context.Context, error) {
+			return httpapi.IdentityConnectionContext(ctx), nil
+		}}
+		defer transport.Close()
+		listener, err := transport.ListenEarly(http3.ConfigureTLSConfig(h3.TLSConfig), h3.QUICConfig)
+		if err == nil {
+			err = h3.ServeListener(listener)
+		}
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}

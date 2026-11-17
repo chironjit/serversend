@@ -134,4 +134,22 @@ Linux validation: `make check` passed (29 admin and 22 desktop UI tests, native 
 - `client/refresh_test.go`: lost response/restart recovery, locked stores, failed successor promotion, serialized workers, shared TOTP challenges and no usable access token/TOTP in persisted state.
 - Database/HTTP tests: upgrades from every prior schema through v8, recovery lock across restart/temporary expiry, role/origin/fresh-admin checks, per-device revocation, blocked mixed resets and active-request cancellation within five seconds. The real TLS transfer test restores a saved refresh credential and continues browsing/transfers.
 
-Remaining qualification: native Keychain/Credential Manager/Secret Service and single-instance behavior on all supported platforms. These tests use mocked credential stores; they do not establish native secure-store durability. Full-login installation deduplication, self-service device controls and resumable transfers remain roadmap work.
+This earlier run used mocked credential stores. Installation deduplication, self-service controls and native-store follow-up evidence are recorded below; resumable transfers remain separate roadmap work.
+
+## Persistent sign-in completion follow-up (2026-11-17)
+
+Linux amd64, Go 1.26.3; `GOCACHE=/tmp/serversend-go-cache`, installed dependencies only, loopback permission for integration tests. No new dependency was added.
+
+- `make check`: passed formatting, vet/static/type checks, 29 admin and 23 desktop UI tests, production builds, binding comparison and live bridge smoke.
+- Race suite for shared client, desktop transfer, server auth/database/HTTP/server: passed. New production TLS tests pair over HTTP/3 and HTTP/2, restore after leaf renewal and real server close/reopen, deduplicate a subsequent full login, reject old grants and block credentials before a changed identity. CA import refuses extra material. Existing exact 30/60-day, replay/concurrent refresh and lost-response recovery tests still pass.
+- Device tests cover complete 100-entry pagination, account isolation, current-device labels, individual/other-device revocation and self-service-triggered active cancellation within five seconds. UI tests exercise private CA import, confirmed revocation and failures. Browser tests reject missing/wrong/session-mismatched CSRF tokens and forged origins; login and restored-cookie UI paths send the CSRF header. Schema upgrades through v9 invalidate bearer-only history/challenges once, preserve rotating grants/accounts/onboarding and do not rerun invalidation on restart.
+- Profile fault tests cover scoped keys, locked/unavailable/lost items, no plaintext fallback, and disabling restoration before a failed offline credential deletion. A lost item retains the persistence callback for the next full login.
+- Transfer tests cross-compiled for Windows/amd64 and macOS/arm64 with CGO disabled. These are compile-only results.
+
+| Native credential-store check | Linux Secret Service | Windows Credential Manager | macOS Keychain |
+| --- | --- | --- | --- |
+| Write/read in separate process/delete/missing item | Passed via `credentialcheck -mode=roundtrip` | Not run | Not run |
+| Unavailable service, no fallback | Passed using an absent D-Bus address with `-mode=expect-unavailable` | Not run | Not run |
+| Real locked store / cancelled unlock / OS restart | Not run; application fault tests pass | Not run | Not run |
+
+Run the [qualification command](desktop-development.md#native-credential-store-qualification) as the native desktop user. Remaining acceptance gates are those native checks and native single-instance/UI lifecycle qualification; real OS restart behavior is not inferred from a child-process test. Feature 4 remains partially accepted for that reason.

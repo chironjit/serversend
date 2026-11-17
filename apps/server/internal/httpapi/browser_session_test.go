@@ -42,6 +42,7 @@ func TestBrowserCookieRestorationLogoutAndCSRF(t *testing.T) {
 		r.AddCookie(&http.Cookie{Name: "__Host-serversend-admin", Value: token})
 		if origin != "" {
 			r.Header.Set("Origin", origin)
+			r.Header.Set("X-CSRF-Token", csrfToken(token))
 		}
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
@@ -55,6 +56,19 @@ func TestBrowserCookieRestorationLogoutAndCSRF(t *testing.T) {
 	}
 	if w := call("DELETE", currentSessionPath, "https://evil.test"); w.Code != 403 {
 		t.Fatal("cross-origin logout accepted")
+	}
+	for _, test := range []struct{ origin, csrf string }{
+		{"", ""}, {"https://server.test", ""}, {"https://server.test", "forged"}, {"https://server.test", csrfToken("another-session")}, {"", csrfToken(token)},
+	} {
+		request := httptest.NewRequest("DELETE", "https://server.test"+currentSessionPath, nil)
+		request.AddCookie(&http.Cookie{Name: adminCookie, Value: token})
+		request.Header.Set("Origin", test.origin)
+		request.Header.Set("X-CSRF-Token", test.csrf)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != 403 {
+			t.Fatal("forged browser mutation accepted", test.origin, response.Code)
+		}
 	}
 	w := call("DELETE", currentSessionPath, "https://server.test")
 	if w.Code != 204 {

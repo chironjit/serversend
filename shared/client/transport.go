@@ -27,6 +27,7 @@ type TransportOptions struct {
 const quicProbeTimeout = 500 * time.Millisecond
 
 type adaptiveTransport struct {
+	authenticate  func(context.Context, string, http.RoundTripper, tls.ConnectionState) error
 	origin        string
 	h2            *http.Transport
 	h3            *http3.Transport
@@ -136,6 +137,12 @@ func (t *adaptiveTransport) connect(ctx context.Context, fallback bool) (http.Ro
 				closeConnection(conn)
 			}
 		}
+		if err == nil && t.authenticate != nil {
+			err = t.authenticate(probeCtx, t.origin, conn, q.ConnectionState().TLS)
+			if err != nil {
+				closeConnection(conn)
+			}
+		}
 		cancel()
 		if err == nil {
 			return conn, nil
@@ -160,6 +167,9 @@ func (t *adaptiveTransport) connect(ctx context.Context, fallback bool) (http.Ro
 	}
 	transport := &http2.Transport{IdleConnTimeout: t.h2.IdleConnTimeout, MaxHeaderListSize: 16 << 10, StrictMaxConcurrentStreams: true}
 	client, err := transport.NewClientConn(conn)
+	if err == nil && t.authenticate != nil {
+		err = t.authenticate(ctx, t.origin, client, conn.(*tls.Conn).ConnectionState())
+	}
 	if err != nil {
 		conn.Close()
 	}

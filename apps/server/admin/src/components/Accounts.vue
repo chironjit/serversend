@@ -153,6 +153,7 @@ onUnmounted(() => {
 });
 let challenge = '';
 let token = '';
+let csrf = '';
 onMounted(async () => {
   if (!props.restore) return;
   const current = generation;
@@ -166,6 +167,7 @@ onMounted(async () => {
     if (!response.ok) return;
     const session = await response.json();
     if (current !== generation || session.role !== 'admin') return;
+    csrf = session.csrf_token ?? '';
     step.value = 'users';
     await loadUsers();
     if (current === generation) startRefresh();
@@ -181,6 +183,7 @@ async function request(path: string, body: unknown, credential = ''): Promise<Re
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
       ...(credential ? { Authorization: 'Bearer ' + credential } : {}),
     },
     body: JSON.stringify(body),
@@ -238,7 +241,8 @@ async function submit() {
         step.value = 'password';
         throw new Error('Use the desktop app with your user account.');
       }
-      token = result.access_token;
+      token = '';
+      csrf = result.csrf_token ?? '';
       password.value = '';
       codes.value = [];
       step.value = 'users';
@@ -271,7 +275,10 @@ async function signOut() {
   step.value = 'password';
   await fetch('/api/v1/sessions/current', {
     method: 'DELETE',
-    headers: old ? { Authorization: 'Bearer ' + old } : {},
+    headers: {
+      ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+      ...(old ? { Authorization: 'Bearer ' + old } : {}),
+    },
   }).catch(() => {});
 }
 </script>

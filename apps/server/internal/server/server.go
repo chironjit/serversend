@@ -115,7 +115,7 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 			}
 		}
 	}()
-	return &Server{maintenanceCancel: maintenanceCancel, maintenanceDone: maintenanceDone, logs: logs, db: db, locks: locks, tls: tlsConfig, identity: id, accounts: accounts, transfers: transfers, drainTimeout: shutdownTimeout}, nil
+	return &Server{maintenanceCancel: maintenanceCancel, maintenanceDone: maintenanceDone, logs: logs, db: db, locks: locks, tls: httpapi.BindIdentityCertificate(tlsConfig), identity: id, accounts: accounts, transfers: transfers, drainTimeout: shutdownTimeout}, nil
 }
 
 // newAccounts loads the TOTP protection key before any account request can be
@@ -156,7 +156,7 @@ func (s *Server) Close() error {
 // unready before draining requests. A timeout forcibly closes active requests.
 // The instance is intended for a single Serve call.
 func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
-	return s.serve(ctx, listener, httpapi.New(s.ready, httpapi.WithAuthentication(s.accounts), httpapi.WithTransfers(s.transfers), httpapi.WithLogs(s.logs)))
+	return s.serve(ctx, listener, httpapi.New(s.ready, httpapi.WithIdentity(s.signIdentity), httpapi.WithAuthentication(s.accounts), httpapi.WithTransfers(s.transfers), httpapi.WithLogs(s.logs)))
 }
 
 func (s *Server) ready(ctx context.Context) error {
@@ -168,7 +168,8 @@ func (s *Server) ready(ctx context.Context) error {
 
 func (s *Server) serve(ctx context.Context, listener net.Listener, handler http.Handler) error {
 	httpServer := &http.Server{
-		Handler: handler, TLSConfig: s.tls.Clone(),
+		ConnContext: func(ctx context.Context, _ net.Conn) context.Context { return httpapi.IdentityConnectionContext(ctx) },
+		Handler:     handler, TLSConfig: s.tls.Clone(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
 		MaxHeaderBytes: 16 << 10,
@@ -202,4 +203,8 @@ func (s *Server) serve(ctx context.Context, listener net.Listener, handler http.
 		return fmt.Errorf("drain HTTPS requests: %w", shutdownErr)
 	}
 	return nil
+}
+
+func (s *Server) signIdentity(ctx context.Context, p *protocol.IdentityProof) error {
+	return identity.Sign(ctx, s.db, p)
 }

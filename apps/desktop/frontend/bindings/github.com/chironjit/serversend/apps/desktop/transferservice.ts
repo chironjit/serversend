@@ -16,6 +16,9 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as transfer$0 from "./internal/transfer/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as api$0 from "../../shared/api/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as client$0 from "../../shared/client/models.js";
 
 export function Approve(fingerprint: string): $CancellablePromise<void> {
@@ -54,6 +57,10 @@ export function ChooseAndUploadFolder(parent: string): $CancellablePromise<void>
     return $Call.ByID(1602388781, parent);
 }
 
+export function ChooseServerCA(address: string): $CancellablePromise<client$0.ServerProbe> {
+    return $Call.ByID(308712104, address);
+}
+
 export function CompleteReauthentication(code: string): $CancellablePromise<transfer$0.Account> {
     return $Call.ByID(701885792, code);
 }
@@ -72,6 +79,10 @@ export function CreateDirectory(parent: string, name: string): $CancellablePromi
 
 export function DeleteEntry(id: string): $CancellablePromise<void> {
     return $Call.ByID(2574672075, id);
+}
+
+export function Devices(before: string): $CancellablePromise<api$0.DeviceInfo[] | null> {
+    return $Call.ByID(103921701, before);
 }
 
 export function Files(parent: string): $CancellablePromise<transfer$0.File[] | null> {
@@ -96,6 +107,10 @@ export function RemoveProfile(origin: string): $CancellablePromise<void> {
 
 export function ReplacePassword(password: string): $CancellablePromise<transfer$0.Step> {
     return $Call.ByID(699289139, password);
+}
+
+export function RevokeDevice(id: string): $CancellablePromise<void> {
+    return $Call.ByID(446332298, id);
 }
 
 export function SessionStatus(): $CancellablePromise<transfer$0.Step> {

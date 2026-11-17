@@ -62,3 +62,31 @@ func (s *Service) userTarget(ctx context.Context, target protocol.ID) error {
 	}
 	return nil
 }
+
+func (s *Service) OwnDevices(ctx context.Context, token string, before ...protocol.ID) ([]database.DeviceInfo, error) {
+	if len(before) > 0 && before[0] != "" && before[0].Validate() != nil {
+		return nil, ErrInput
+	}
+	caller, err := s.Authorize(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	devices, err := s.repo.Devices(ctx, caller.AccountID, s.now(), before...)
+	for i := range devices {
+		devices[i].Current = devices[i].ID == caller.DeviceID
+	}
+	return devices, err
+}
+func (s *Service) RevokeOwnDevice(ctx context.Context, token string, device protocol.ID, others bool) error {
+	if !others && device.Validate() != nil {
+		return ErrInput
+	}
+	if !validToken(token) {
+		return ErrCredentials
+	}
+	source, err := s.repo.SessionByToken(ctx, accessHash(token), s.now())
+	if err != nil {
+		return refreshError(err)
+	}
+	return refreshError(s.repo.RevokeOwnDevices(ctx, source, accessHash(token), device, others, s.now().UTC()))
+}

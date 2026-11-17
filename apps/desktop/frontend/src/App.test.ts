@@ -6,6 +6,9 @@ type Listener = (event: { data: unknown }) => void;
 const bridge = vi.hoisted(() => ({
   listener: undefined as Listener | undefined,
   service: {
+    Devices: vi.fn<(before: string) => Promise<unknown[]>>(),
+    RevokeDevice: vi.fn<(id: string) => Promise<void>>(),
+    ChooseServerCA: vi.fn<(address: string) => Promise<unknown>>(),
     SessionStatus: vi.fn<() => Promise<{ next: string }>>(),
     CompleteReauthentication: vi.fn<(code: string) => Promise<unknown>>(),
     Profiles: vi.fn<() => Promise<unknown[]>>(),
@@ -72,6 +75,66 @@ describe('desktop transfer slice', () => {
     expect(wrapper.text()).toContain('Switch server');
     wrapper.unmount();
   });
+  it('lists this device and offline devices and confirms individual or other-device revocation', async () => {
+    bridge.service.Profiles.mockResolvedValue([
+      { origin: 'https://saved.test:58443', username: 'alice', remember: true },
+    ]);
+    bridge.service.OpenProfile.mockResolvedValue({
+      username: 'alice',
+      origin: 'https://saved.test:58443',
+      serverId: 's1',
+    });
+    bridge.service.Devices.mockResolvedValue([
+      {
+        id: 'current',
+        name: 'Current laptop',
+        current: true,
+        status: 'authorized',
+        last_seen_at: '2026-01-01',
+      },
+      {
+        id: 'lost',
+        name: 'Lost laptop',
+        current: false,
+        status: 'authorized',
+        recently_active: false,
+        last_seen_at: '2025-12-01',
+      },
+    ]);
+    bridge.service.RevokeDevice.mockResolvedValue();
+    const wrapper = mount(App);
+    await flushPromises();
+    const button = (text: string) => wrapper.findAll('button').find((b) => b.text() === text)!;
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('saved.test'))!
+      .trigger('click');
+    await flushPromises();
+    await button('Devices').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).toContain('Lost laptop');
+    expect(wrapper.text()).toContain('This device');
+    await button('Revoke access').trigger('click');
+    await flushPromises();
+    expect(bridge.service.RevokeDevice).not.toHaveBeenCalled();
+    await button('Confirm revocation').trigger('click');
+    await flushPromises();
+    expect(bridge.service.RevokeDevice).toHaveBeenCalledWith('lost');
+    await button('Sign out other devices').trigger('click');
+    await flushPromises();
+    await button('Confirm revocation').trigger('click');
+    await flushPromises();
+    expect(bridge.service.RevokeDevice).toHaveBeenCalledWith('others');
+    bridge.service.RevokeDevice.mockRejectedValueOnce(
+      new Error('Device access could not be revoked'),
+    );
+    await button('Revoke access').trigger('click');
+    await flushPromises();
+    await button('Confirm revocation').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).toContain('Device access could not be revoked');
+    wrapper.unmount();
+  });
   it('renews a remembered device with TOTP without asking for a password', async () => {
     bridge.service.Profiles.mockResolvedValue([
       { origin: 'https://saved.test:58443', username: 'alice', fingerprint, remember: true },
@@ -114,7 +177,7 @@ describe('desktop transfer slice', () => {
       origin: 'https://server.test:58443',
       fingerprint,
       subject: 'CN=server',
-      publicly_trusted: false,
+      publicly_trusted: true,
     });
     bridge.service.Approve.mockResolvedValue();
     bridge.service.Batches.mockResolvedValue([]);
@@ -125,6 +188,17 @@ describe('desktop transfer slice', () => {
   });
 
   it('onboards a new account through every mandatory step before showing files', async () => {
+    const privateProbe = {
+      origin: 'https://server.test:58443',
+      fingerprint,
+      subject: 'CN=server',
+      publicly_trusted: false,
+    };
+    bridge.service.Probe.mockResolvedValue(privateProbe);
+    bridge.service.ChooseServerCA.mockResolvedValue({
+      ...privateProbe,
+      authority_fingerprint: 'ca-fingerprint',
+    });
     bridge.service.SignIn.mockResolvedValue({ next: 'replace_password' });
     bridge.service.ReplacePassword.mockResolvedValue({ next: 'enroll_totp' });
     bridge.service.BeginEnrollment.mockResolvedValue({
@@ -145,9 +219,19 @@ describe('desktop transfer slice', () => {
       fingerprint.match(/.{4}/g)?.join(' '),
     );
     expect(wrapper.text()).toContain('private certificate');
+    const approval = () =>
+      wrapper.findAll('button').find((button) => button.text().includes('They match'))!;
+    expect(approval().attributes('disabled')).toBeDefined();
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('Choose server CA'))!
+      .trigger('click');
+    await flushPromises();
+    expect(bridge.service.ChooseServerCA).toHaveBeenCalledWith('https://server.test:58443');
+    expect(wrapper.text()).toContain('ca-fingerprint');
     expect(bridge.service.Approve).not.toHaveBeenCalled();
 
-    await wrapper.find('button').trigger('click');
+    await approval().trigger('click');
     await flushPromises();
     expect(bridge.service.Approve).toHaveBeenCalledWith(fingerprint);
 

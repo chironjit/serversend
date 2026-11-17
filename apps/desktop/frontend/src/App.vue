@@ -30,6 +30,7 @@ import type {
   Item,
   Profile,
 } from '../bindings/github.com/chironjit/serversend/apps/desktop/internal/transfer/models';
+import type { DeviceInfo } from '../bindings/github.com/chironjit/serversend/shared/api/models';
 import type { ServerProbe } from '../bindings/github.com/chironjit/serversend/shared/client/models';
 import BrandMark from './components/ui/BrandMark.vue';
 import ThemeSwitch from './components/ui/ThemeSwitch.vue';
@@ -73,6 +74,9 @@ const openProfile = (origin: string) =>
     remember.value = saved?.remember ?? false;
     username.value = saved?.username ?? '';
     account.value = undefined;
+    devices.value = [];
+    showDevices.value = false;
+    revokeDeviceID.value = '';
     files.value = [];
     folders.value = [];
     view.value = 'password';
@@ -98,6 +102,41 @@ const code = ref('');
 const enrollment = ref<{ secret: string; qr: string }>();
 const recoveryCodes = ref<string[]>([]);
 const account = ref<Account>();
+const deviceCursor = ref('');
+const previousDevicePages = ref<string[]>([]);
+const showDevices = ref(false);
+const devices = ref<DeviceInfo[]>([]);
+const revokeDeviceID = ref('');
+const loadDevices = () =>
+  attempt(async () => {
+    devices.value = (await TransferService.Devices('')) ?? [];
+    showDevices.value = true;
+    deviceCursor.value = '';
+    previousDevicePages.value = [];
+    revokeDeviceID.value = '';
+  });
+const changeDevicePage = (back = false) =>
+  attempt(async () => {
+    const cursor = back
+      ? (previousDevicePages.value.at(-1) ?? '')
+      : (devices.value.at(-1)?.id ?? '');
+    const result = (await TransferService.Devices(cursor)) ?? [];
+    if (back) previousDevicePages.value.pop();
+    else previousDevicePages.value.push(deviceCursor.value);
+    deviceCursor.value = cursor;
+    devices.value = result;
+    revokeDeviceID.value = '';
+  });
+const revokeDevice = () =>
+  attempt(async () => {
+    await TransferService.RevokeDevice(revokeDeviceID.value);
+    revokeDeviceID.value = '';
+    devices.value = (await TransferService.Devices(deviceCursor.value)) ?? [];
+  });
+function deviceDate(value?: string) {
+  return value ? new Date(value).toLocaleString() : 'Unknown';
+}
+
 const files = ref<File[]>([]);
 const folders = ref<{ id: string; name: string }[]>([]);
 const parent = computed(() => folders.value.at(-1)?.id ?? '');
@@ -271,6 +310,11 @@ const check = () =>
     view.value = 'approve';
   });
 
+const chooseCA = () =>
+  attempt(async () => {
+    probe.value = await TransferService.ChooseServerCA(probe.value?.origin ?? address.value);
+  });
+
 const approve = () =>
   attempt(async () => {
     await TransferService.Approve(probe.value?.fingerprint ?? '');
@@ -318,6 +362,9 @@ async function checkSession() {
       view.value = 'reauth';
     } else if (status.next === 'password') {
       account.value = undefined;
+      devices.value = [];
+      showDevices.value = false;
+      revokeDeviceID.value = '';
       files.value = [];
       folders.value = [];
       view.value = 'password';
@@ -368,6 +415,9 @@ const signOut = () =>
       await TransferService.SignOut();
     } finally {
       account.value = undefined;
+      devices.value = [];
+      showDevices.value = false;
+      revokeDeviceID.value = '';
       folders.value = [];
       files.value = [];
       batches.value = [];
@@ -531,13 +581,27 @@ onUnmounted(() => {
         </p>
         <p v-else class="text-muted-foreground m-0 text-sm leading-6">
           <strong class="text-foreground font-medium">{{ probe.origin }}</strong> uses a private
-          certificate. Compare this fingerprint with the one your server operator gives you. Only
-          continue if they match exactly.
+          certificate. Choose the public CA certificate supplied by your administrator, then compare
+          its fingerprint through a trusted channel before continuing.
         </p>
         <UiCode block data-test="fingerprint">{{ fingerprintGroups }}</UiCode>
+        <template v-if="probe.authority_fingerprint">
+          <p class="m-0 text-sm">Imported CA fingerprint</p>
+          <UiCode block>{{ probe.authority_fingerprint }}</UiCode>
+        </template>
+        <UiButton
+          v-if="!probe.publicly_trusted"
+          variant="outline"
+          :disabled="busy"
+          @click="chooseCA"
+          >Choose server CA certificate</UiButton
+        >
         <p class="text-muted-foreground m-0 text-xs">Certificate: {{ probe.subject }}</p>
         <div class="flex flex-wrap gap-2">
-          <UiButton :disabled="busy" @click="approve">
+          <UiButton
+            :disabled="busy || (!probe.publicly_trusted && !probe.authority_fingerprint)"
+            @click="approve"
+          >
             <Loader2 v-if="busy" class="animate-spin" aria-hidden="true" />
             <ShieldCheck v-else aria-hidden="true" />
             They match — continue
@@ -749,6 +813,7 @@ onUnmounted(() => {
             {{ account.username }} · {{ account.origin }}
           </span>
           <ThemeSwitch :model-value="theme" @update:model-value="applyTheme" />
+          <UiButton variant="outline" :disabled="busy" @click="loadDevices">Devices</UiButton>
           <UiButton
             variant="outline"
             :disabled="busy"
@@ -776,6 +841,81 @@ onUnmounted(() => {
 
       <main class="grid flex-1 items-start gap-5 p-4 sm:p-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <UiAlert v-if="error" class="xl:col-span-2">{{ error }}</UiAlert>
+
+        <UiCard v-if="showDevices" as="section" class="p-5 xl:col-span-2">
+          <UiCardHeader
+            title="Signed-in devices"
+            description="Recent activity indicates use in the last 90 seconds. Revoking access also stops active server transfers."
+          />
+          <div class="my-4 flex flex-wrap gap-2">
+            <UiButton variant="outline" :disabled="busy" @click="loadDevices"
+              >Refresh devices</UiButton
+            >
+            <UiButton variant="outline" :disabled="busy" @click="revokeDeviceID = 'others'"
+              >Sign out other devices</UiButton
+            >
+            <UiButton variant="ghost" @click="showDevices = false">Close</UiButton>
+          </div>
+          <div class="my-3 flex gap-2">
+            <UiButton
+              variant="outline"
+              :disabled="busy || previousDevicePages.length === 0"
+              @click="changeDevicePage(true)"
+              >Previous devices</UiButton
+            >
+            <UiButton
+              variant="outline"
+              :disabled="busy || devices.length < 100"
+              @click="changeDevicePage()"
+              >Next devices</UiButton
+            >
+          </div>
+          <UiEmpty v-if="devices.length === 0" title="No devices to show" />
+          <ul class="grid gap-4 p-0 list-none">
+            <li
+              v-for="device in devices"
+              :key="device.id"
+              class="border-border rounded-md border p-3"
+            >
+              <p class="m-0 font-medium">
+                {{ device.name }} <UiBadge v-if="device.current">This device</UiBadge>
+              </p>
+              <p class="text-muted-foreground text-xs">
+                {{ device.platform || 'Unknown platform' }} ·
+                {{ device.app_version || 'Unknown version' }} · {{ device.status
+                }}{{ device.recently_active ? ' · Recently active' : '' }}
+              </p>
+              <p class="text-muted-foreground text-xs">
+                Last seen: {{ deviceDate(device.last_seen_at) }} · Signed in:
+                {{ deviceDate(device.signed_in_at) }}
+              </p>
+              <UiButton
+                v-if="!device.current && device.status !== 'revoked'"
+                variant="outline"
+                :disabled="busy"
+                @click="revokeDeviceID = device.id"
+                >Revoke access</UiButton
+              >
+              <p v-if="device.current" class="text-muted-foreground text-xs">
+                Use Sign out to end this device session.
+              </p>
+            </li>
+          </ul>
+          <div v-if="revokeDeviceID" role="alert" class="mt-4 flex flex-wrap items-center gap-3">
+            <p>
+              {{
+                revokeDeviceID === 'others'
+                  ? 'Sign out all other devices?'
+                  : 'Revoke access for this device?'
+              }}
+              The device will need a full sign-in to reconnect.
+            </p>
+            <UiButton :disabled="busy" @click="revokeDevice">Confirm revocation</UiButton>
+            <UiButton variant="ghost" :disabled="busy" @click="revokeDeviceID = ''"
+              >Cancel</UiButton
+            >
+          </div>
+        </UiCard>
 
         <UiCard as="section" id="library" class="min-w-0">
           <div class="p-5 pb-4">

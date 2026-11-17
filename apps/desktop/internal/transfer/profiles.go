@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,19 +13,23 @@ import (
 
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/client"
+	"github.com/chironjit/serversend/shared/protocol"
 	"github.com/zalando/go-keyring"
 )
 
 // Profile contains public connection preferences; credentials live in the OS keychain.
 type Profile struct {
-	Origin      string `json:"origin"`
-	Fingerprint string `json:"fingerprint"`
-	Username    string `json:"username"`
-	Remember    bool   `json:"remember"`
+	Trust          client.Trust `json:"trust"`
+	AccountID      protocol.ID  `json:"account_id,omitempty"`
+	InstallationID protocol.ID  `json:"installation_id,omitempty"`
+	Origin         string       `json:"origin"`
+	Fingerprint    string       `json:"fingerprint"`
+	Username       string       `json:"username"`
+	Remember       bool         `json:"remember"`
 }
 
-func credentialID(origin string) string {
-	sum := sha256.Sum256([]byte(origin))
+func credentialID(scope ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(scope, "\x00")))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -79,17 +84,50 @@ func (m *Manager) writeProfilesLocked() error {
 	}
 	return os.Rename(f.Name(), m.profilePath)
 }
-func (m *Manager) saveTrustLocked(probe client.ServerProbe) error {
-	for _, p := range m.profiles {
-		if p.Origin == probe.Origin {
-			if p.Fingerprint != probe.Fingerprint {
-				return errors.New("remove the saved server before changing its certificate trust")
-			}
-			return nil
-		}
+func (m *Manager) saveTrustLocked(probe client.ServerProbe, trust client.Trust) error {
+	if trust.Identity.Validate() != nil {
+		return errors.New("verify the server identity before saving trust")
 	}
-	m.profiles = append(m.profiles, Profile{Origin: probe.Origin, Fingerprint: probe.Fingerprint})
+	for i, p := range m.profiles {
+		if p.Origin != probe.Origin {
+			continue
+		}
+		if p.Trust.Identity.ServerID != "" && p.Trust.Identity != trust.Identity {
+			return errors.New("saved server identity changed; remove the profile and pair explicitly")
+		}
+		// Legacy certificate-only profiles require explicit repair and a fresh login.
+		if p.Trust.Identity.ServerID == "" {
+			if err := deleteCredential(p.Origin); err != nil {
+				return err
+			}
+			m.profiles[i].AccountID = ""
+		}
+		if m.profiles[i].InstallationID == "" {
+			id := make([]byte, 16)
+			if _, err := rand.Read(id); err != nil {
+				return err
+			}
+			m.profiles[i].InstallationID = protocol.ID(hex.EncodeToString(id))
+		}
+		m.profiles[i].Trust = trust
+		m.profiles[i].Fingerprint = probe.Fingerprint
+		return m.writeProfilesLocked()
+	}
+	id := make([]byte, 16)
+	if _, err := rand.Read(id); err != nil {
+		return err
+	}
+	m.profiles = append(m.profiles, Profile{Origin: probe.Origin, Fingerprint: probe.Fingerprint, Trust: trust, InstallationID: protocol.ID(hex.EncodeToString(id))})
 	return m.writeProfilesLocked()
+}
+func profileCredentialID(p Profile) string {
+	return credentialID("device-v2", p.Origin, string(p.Trust.Identity.ServerID), p.Trust.Identity.PublicKey, string(p.AccountID))
+}
+func deleteProfileCredential(p Profile) error {
+	if p.AccountID == "" {
+		return nil
+	}
+	return deleteCredentialKey(profileCredentialID(p))
 }
 func (m *Manager) SetRemember(remember bool) error {
 	m.connectionMu.Lock()
@@ -102,7 +140,7 @@ func (m *Manager) SetRemember(remember bool) error {
 	for i := range m.profiles {
 		if m.profiles[i].Origin == m.client.Origin() {
 			if !remember && m.profiles[i].Remember {
-				if err := deleteCredential(m.client.Origin()); err != nil {
+				if err := deleteProfileCredential(m.profiles[i]); err != nil {
 					return err
 				}
 			}
@@ -113,7 +151,10 @@ func (m *Manager) SetRemember(remember bool) error {
 	return m.writeProfilesLocked()
 }
 func deleteCredential(origin string) error {
-	err := keyring.Delete("ServerSend", credentialID(origin))
+	return deleteCredentialKey(credentialID(origin))
+}
+func deleteCredentialKey(key string) error {
+	err := keyring.Delete("ServerSend", key)
 	if errors.Is(err, keyring.ErrNotFound) {
 		return nil
 	}
@@ -122,20 +163,32 @@ func deleteCredential(origin string) error {
 func (m *Manager) saveLogin(c *client.Client) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	trust, err := c.VerifiedTrust()
+	if err != nil {
+		return err
+	}
+	state := c.Credentials()
+	if state.Session.ServerID != trust.Identity.ServerID || state.Session.AccountID.Validate() != nil {
+		return errors.New("server/account scope mismatch")
+	}
 	for i := range m.profiles {
 		p := &m.profiles[i]
 		if p.Origin != c.Origin() {
 			continue
 		}
-		session := c.SavedSession()
-		p.Username = session.Username
-		if p.Remember {
-			data, err := json.Marshal(c.Credentials())
-			if err != nil {
+		if p.Trust.Identity != trust.Identity {
+			return errors.New("server trust changed")
+		}
+		if p.AccountID != "" && p.AccountID != state.Session.AccountID {
+			if err = deleteProfileCredential(*p); err != nil {
 				return err
 			}
-			if err = keyring.Set("ServerSend", credentialID(p.Origin), string(data)); err != nil {
-				return errors.New("could not save login in OS credential store; unlock your keychain or turn off Remember sign-in")
+		}
+		p.Username = state.Session.Username
+		p.AccountID = state.Session.AccountID
+		if p.Remember {
+			if err = storeCredentials(p.Origin, trust, state); err != nil {
+				return err
 			}
 		}
 	}
@@ -144,9 +197,17 @@ func (m *Manager) saveLogin(c *client.Client) error {
 func (m *Manager) forgetLogin(origin string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, p := range m.profiles {
-		if p.Origin == origin && p.Remember {
-			return deleteCredential(origin)
+	for i, p := range m.profiles {
+		if p.Origin == origin {
+			// Persist local logout before touching a possibly locked/unavailable keychain.
+			m.profiles[i].Remember = false
+			if err := m.writeProfilesLocked(); err != nil {
+				return err
+			}
+			if m.client != nil && m.client.Origin() == origin {
+				m.client.SetCredentialStore(nil)
+			}
+			return deleteProfileCredential(p)
 		}
 	}
 	return nil
@@ -168,7 +229,10 @@ func (m *Manager) OpenProfile(ctx context.Context, origin string) (Account, erro
 	if profile.Origin == "" {
 		return Account{}, errors.New("saved server not found")
 	}
-	c, err := client.New(profile.Origin, profile.Fingerprint)
+	if profile.Trust.Identity.Validate() != nil {
+		return Account{}, errors.New("this saved server needs trust repair; check its address and import its CA certificate again")
+	}
+	c, err := client.NewVerified(profile.Origin, profile.Trust)
 	if err != nil {
 		return Account{}, err
 	}
@@ -178,6 +242,8 @@ func (m *Manager) OpenProfile(ctx context.Context, origin string) (Account, erro
 	}
 	m.client = c
 	c.SetAppVersion(m.version)
+	c.SetInstallationID(profile.InstallationID)
+	m.configureStoreLocked(c)
 	m.password = ""
 	m.challenge = ""
 	m.catalog = map[string]api.CatalogEntry{}
@@ -185,7 +251,7 @@ func (m *Manager) OpenProfile(ctx context.Context, origin string) (Account, erro
 	if !profile.Remember {
 		return Account{}, nil
 	}
-	raw, err := keyring.Get("ServerSend", credentialID(origin))
+	raw, err := keyring.Get("ServerSend", profileCredentialID(profile))
 	if errors.Is(err, keyring.ErrNotFound) {
 		return Account{}, nil
 	}
@@ -196,12 +262,16 @@ func (m *Manager) OpenProfile(ctx context.Context, origin string) (Account, erro
 	if err = json.Unmarshal([]byte(raw), &state); err != nil {
 		return Account{}, errors.New("saved login is invalid; sign in again")
 	}
-	c.SetCredentialStore(func(state client.CredentialState) error { return storeCredentials(origin, state) })
+	if state.Session.AccountID != profile.AccountID || state.Session.ServerID != profile.Trust.Identity.ServerID {
+		return Account{}, errors.New("saved credentials belong to a different server or account")
+	}
+	c.SetCredentialStore(func(state client.CredentialState) error { return storeCredentials(origin, profile.Trust, state) })
 	err = c.RestoreCredentials(ctx, state)
 	if err != nil && !errors.Is(err, client.ErrTOTPRequired) {
 		return Account{}, message(err)
 	}
-	return Account{Username: state.Session.Username, Origin: origin, ServerID: string(state.Session.ServerID), ReauthenticationRequired: errors.Is(err, client.ErrTOTPRequired)}, nil
+	current, _ := c.Account()
+	return Account{Username: current.Username, Origin: origin, ServerID: string(current.ServerID), ReauthenticationRequired: errors.Is(err, client.ErrTOTPRequired)}, nil
 }
 func (m *Manager) RemoveProfile(origin string) error {
 	m.connectionMu.Lock()
@@ -228,22 +298,35 @@ func (m *Manager) RemoveProfile(origin string) error {
 	return m.writeProfilesLocked()
 }
 
-func storeCredentials(origin string, state client.CredentialState) error {
+func storeCredentials(origin string, trust client.Trust, state client.CredentialState) error {
+	if trust.Identity.Validate() != nil || state.Session.ServerID != trust.Identity.ServerID || state.Session.AccountID.Validate() != nil || state.Session.RefreshCredential == "" {
+		return errors.New("cannot save unverified or incorrectly scoped credentials")
+	}
+	state.Session.AccessToken = ""
+	state.Session.CSRFToken = ""
+	if state.Pending != nil {
+		copy := *state.Pending
+		copy.Challenge = ""
+		copy.Code = ""
+		state.Pending = &copy
+	}
 	data, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
-	if err = keyring.Set("ServerSend", credentialID(origin), string(data)); err != nil {
-		return errors.New("unlock your OS credential store to save the device session")
+	key := profileCredentialID(Profile{Origin: origin, Trust: trust, AccountID: state.Session.AccountID})
+	if err = keyring.Set("ServerSend", key, string(data)); err != nil {
+		return errors.New("unlock your OS credential store to save the device session, or turn off Remember sign-in")
 	}
 	return nil
 }
 func (m *Manager) configureStoreLocked(c *client.Client) {
 	for _, p := range m.profiles {
 		if p.Origin == c.Origin() {
+			c.SetInstallationID(p.InstallationID)
 			if p.Remember {
-				origin := p.Origin
-				c.SetCredentialStore(func(state client.CredentialState) error { return storeCredentials(origin, state) })
+				origin, trust := p.Origin, p.Trust
+				c.SetCredentialStore(func(state client.CredentialState) error { return storeCredentials(origin, trust, state) })
 			} else {
 				c.SetCredentialStore(nil)
 			}
@@ -282,4 +365,22 @@ func (m *Manager) CompleteReauthentication(ctx context.Context, code string) (Ac
 	}
 	session, _ := c.Account()
 	return Account{Username: session.Username, Origin: c.Origin(), ServerID: string(session.ServerID)}, nil
+}
+
+// ProbeAuthority accepts only a public CA, supplied locally by the operator.
+func (m *Manager) ProbeAuthority(ctx context.Context, origin, authority string) (client.ServerProbe, error) {
+	fingerprint, err := client.AuthorityFingerprint(authority)
+	if err != nil {
+		return client.ServerProbe{}, err
+	}
+	probe, err := m.Probe(ctx, origin)
+	if err != nil {
+		return probe, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.authority = authority
+	probe.AuthorityFingerprint = fingerprint
+	m.probe = probe
+	return probe, nil
 }

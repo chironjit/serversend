@@ -70,6 +70,7 @@ type Manager struct {
 	emit         func(Item)
 
 	mu          sync.Mutex
+	authority   string
 	probe       client.ServerProbe
 	client      *client.Client
 	username    string
@@ -104,8 +105,8 @@ func message(err error) error {
 	return err
 }
 
-// Probe contacts a server without trusting it. The user compares the returned
-// fingerprint with the operator's value before calling Approve.
+// Probe inspects the leaf without sending credentials. Private deployments
+// must additionally import and compare the operator-supplied public CA.
 func (m *Manager) Probe(ctx context.Context, origin string) (client.ServerProbe, error) {
 	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
 	if !strings.Contains(origin, "://") {
@@ -127,12 +128,13 @@ func (m *Manager) Probe(ctx context.Context, origin string) (client.ServerProbe,
 	}
 	m.mu.Lock()
 	m.probe = probe
+	m.authority = ""
 	m.mu.Unlock()
 	return probe, nil
 }
 
-// Approve pins exactly the certificate the last Probe displayed. New clients
-// try HTTP/3 first on every connection, with HTTP/2 only as fallback.
+// Approve verifies CA trust and the signed identity, then persists that pin.
+// New connections try HTTP/3 first, with verified HTTP/2 fallback.
 func (m *Manager) Approve(fingerprint string) error {
 	m.connectionMu.Lock()
 	defer m.connectionMu.Unlock()
@@ -144,11 +146,25 @@ func (m *Manager) Approve(fingerprint string) error {
 	if m.probe.Fingerprint == "" || fingerprint != m.probe.Fingerprint {
 		return errors.New("check the server again before approving it")
 	}
-	c, err := client.New(m.probe.Origin, fingerprint)
+	if !m.probe.PubliclyTrusted && m.authority == "" {
+		return errors.New("import the server CA certificate supplied by your administrator before signing in")
+	}
+	c, err := client.NewVerified(m.probe.Origin, client.Trust{AuthorityPEM: m.authority})
 	if err != nil {
 		return err
 	}
-	if err := m.saveTrustLocked(m.probe); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err = c.VerifyIdentity(ctx); err != nil {
+		c.Close()
+		return err
+	}
+	trust, err := c.VerifiedTrust()
+	if err != nil {
+		c.Close()
+		return err
+	}
+	if err := m.saveTrustLocked(m.probe, trust); err != nil {
 		c.Close()
 		return err
 	}

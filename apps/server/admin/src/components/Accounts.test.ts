@@ -9,7 +9,7 @@ it('signs in an administrator, keeps multiple pending users, and clears password
   vi.stubGlobal('fetch', request);
   request
     .mockResolvedValueOnce(reply({ challenge: 'challenge', next_step: 'second_factor' }))
-    .mockResolvedValueOnce(reply({ role: 'admin', access_token: 'session' }))
+    .mockResolvedValueOnce(reply({ role: 'admin', csrf_token: 'session-csrf' }))
     .mockResolvedValueOnce(reply([]))
     .mockResolvedValueOnce(
       reply({ username: 'alice', temporary_password: 'ONE-TIME', expires_at: 'tomorrow' }),
@@ -59,7 +59,8 @@ it('signs in an administrator, keeps multiple pending users, and clears password
   await wrapper.get('form').trigger('submit');
   await flushPromises();
   expect(request.mock.calls[2][0]).toBe('/api/v1/admin/users');
-  expect(request.mock.calls[2][1]?.headers).toMatchObject({ Authorization: 'Bearer session' });
+  expect(request.mock.calls[2][1]?.headers).toEqual({});
+  expect(request.mock.calls[3][1]?.headers).toMatchObject({ 'X-CSRF-Token': 'session-csrf' });
   expect(wrapper.text()).toContain('ONE-TIME');
   await wrapper.get('input').setValue('bob');
   await wrapper.get('form').trigger('submit');
@@ -96,7 +97,7 @@ it('restores the browser cookie session after refresh and shows per-user storage
   const request = vi.fn<typeof fetch>();
   vi.stubGlobal('fetch', request);
   request
-    .mockResolvedValueOnce(reply({ role: 'admin' }))
+    .mockResolvedValueOnce(reply({ role: 'admin', csrf_token: 'restored-csrf' }))
     .mockResolvedValueOnce(
       reply([{ id: 'a', username: 'alice', state: 'active', disabled: false, storage_bytes: 128 }]),
     )
@@ -110,6 +111,7 @@ it('restores the browser cookie session after refresh and shows per-user storage
   await flushPromises();
   expect(request.mock.calls[2][0]).toBe('/api/v1/sessions/current');
   expect(request.mock.calls[2][1]?.method).toBe('DELETE');
+  expect(request.mock.calls[2][1]?.headers).toMatchObject({ 'X-CSRF-Token': 'restored-csrf' });
   expect(wrapper.text()).toContain('Administrator sign-in');
   wrapper.unmount();
 });

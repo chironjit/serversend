@@ -11,6 +11,7 @@ import (
 // DeviceSession is one signed-in device. The access token itself is never
 // stored; authorization is rechecked against live account state on every use.
 type DeviceSession struct {
+	InstallationID       protocol.ID
 	ID                   protocol.ID
 	AccountID            protocol.ID
 	Username             string
@@ -25,11 +26,30 @@ type DeviceSession struct {
 
 // CreateSession succeeds only while the account is still exactly as it was
 // when the second factor was verified.
-func (r *Repository) CreateSession(ctx context.Context, s DeviceSession, tokenHash string, now time.Time) error {
+func (r *Repository) CreateSession(ctx context.Context, s *DeviceSession, tokenHash string, now time.Time) error {
 	return r.write(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `INSERT INTO device_sessions(id,account_id,name,token_hash,auth_epoch,created_at,expires_at)
-			SELECT ?,id,?,?,auth_epoch,?,? FROM accounts WHERE id=? AND auth_epoch=? AND state='active' AND totp_enrolled=1 AND disabled=0`,
-			s.ID, s.Name, tokenHash, now.UnixMilli(), s.ExpiresAt.UnixMilli(), s.AccountID, s.Epoch)
+		if s.InstallationID != "" {
+			var existing protocol.ID
+			err := tx.QueryRowContext(ctx, `SELECT id FROM device_sessions WHERE account_id=? AND installation_id=?`, s.AccountID, s.InstallationID).Scan(&existing)
+			if err != nil && err != sql.ErrNoRows {
+				return err
+			}
+			if err == nil {
+				// A full password + second factor login explicitly authorizes this
+				// installation again, replacing every old access/refresh grant.
+				s.ID = existing
+				if _, err = tx.ExecContext(ctx, `DELETE FROM device_access WHERE device_id=?`, s.ID); err != nil {
+					return err
+				}
+				if _, err = tx.ExecContext(ctx, `DELETE FROM auth_challenges WHERE device_id=?`, s.ID); err != nil {
+					return err
+				}
+			}
+		}
+		result, err := tx.ExecContext(ctx, `INSERT INTO device_sessions(id,account_id,name,token_hash,auth_epoch,created_at,expires_at,installation_id)
+			SELECT ?,id,?,?,auth_epoch,?,?,? FROM accounts WHERE id=? AND auth_epoch=? AND state='active' AND totp_enrolled=1 AND disabled=0
+            ON CONFLICT(id) DO UPDATE SET name=excluded.name,token_hash=excluded.token_hash,auth_epoch=excluded.auth_epoch,expires_at=excluded.expires_at,previous_hash=NULL,rotation_id=NULL,revoked_at=NULL`,
+			s.ID, s.Name, tokenHash, now.UnixMilli(), s.ExpiresAt.UnixMilli(), nullableHash(string(s.InstallationID)), s.AccountID, s.Epoch)
 		if err != nil {
 			return err
 		}

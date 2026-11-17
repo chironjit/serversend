@@ -127,8 +127,13 @@ func TestActiveRequestCancelledAfterDeviceRevocation(t *testing.T) {
 	r := httptest.NewRequest("GET", "https://server.test/api/v1/catalog", nil)
 	stop := monitorSession(httptest.NewRecorder(), r, service, token)
 	defer stop()
-	if _, err = db.Exec(`UPDATE device_sessions SET revoked_at=? WHERE id=?`, now.UnixMilli(), id); err != nil {
-		t.Fatal(err)
+	request := httptest.NewRequest("POST", "https://server.test/api/v1/sessions/devices/"+id+"/revoke", strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	New(nil, WithAuthentication(service)).ServeHTTP(response, request)
+	if response.Code != 204 {
+		t.Fatal("self-service revocation failed", response.Code, response.Body.String())
 	}
 	select {
 	case <-r.Context().Done():

@@ -35,7 +35,7 @@ func (s *Service) ServerID() protocol.ID { return s.serverID }
 // CreateSession registers a new authorization after password and second-factor sign-in.
 // Refresh challenges cannot register another device.
 func (s *Service) CreateSession(ctx context.Context, challenge, code, deviceName string, metadata ...api.SessionRequest) (api.Session, error) {
-	if api.ValidateDeviceName(deviceName) != nil {
+	if api.ValidateDeviceName(deviceName) != nil || (len(metadata) > 0 && metadata[0].InstallationID != "" && metadata[0].InstallationID.Validate() != nil) {
 		return api.Session{}, ErrInput
 	}
 	_, ch, err := s.repo.Challenge(ctx, tokenHash(challenge), s.now())
@@ -59,10 +59,13 @@ func (s *Service) CreateSession(ctx context.Context, challenge, code, deviceName
 	}
 	session := database.DeviceSession{ID: newID(), AccountID: verified.AccountID, Name: deviceName, Epoch: verified.Epoch, ExpiresAt: now.Add(lifetime), RefreshHash: refreshHash(refresh)}
 	if len(metadata) > 0 {
+		if account.Role == "user" {
+			session.InstallationID = metadata[0].InstallationID
+		}
 		session.Platform = metadata[0].Platform
 		session.AppVersion = metadata[0].AppVersion
 	}
-	if err := s.repo.CreateSession(ctx, session, accessHash(token), now); err != nil {
+	if err := s.repo.CreateSession(ctx, &session, accessHash(token), now); err != nil {
 		return api.Session{}, conflictAsCredentials(err)
 	}
 	return api.Session{RefreshCredential: refresh, IdleExpiresAt: now.Add(database.RefreshIdleLifetime), ReauthenticateAt: now.Add(database.FactorLifetime), Role: account.Role, DeviceID: session.ID, ServerID: s.serverID, AccountID: account.ID, Username: account.Username, AccessToken: token, ExpiresAt: session.ExpiresAt}, nil

@@ -75,7 +75,11 @@ func serveSessions(w http.ResponseWriter, r *http.Request, accounts *auth.Servic
 		if err != nil {
 			writeAuthenticationError(w, r, err)
 		} else {
-			writeJSON(w, r, 200, api.Session{AccountID: session.AccountID, ServerID: accounts.ServerID(), Role: session.Role, Username: session.Username, DeviceID: session.DeviceID})
+			csrf := ""
+			if cookie, err := r.Cookie(adminCookie); err == nil && r.Header.Get("Authorization") == "" {
+				csrf = csrfToken(cookie.Value)
+			}
+			writeJSON(w, r, 200, api.Session{CSRFToken: csrf, AccountID: session.AccountID, ServerID: accounts.ServerID(), Role: session.Role, Username: session.Username, DeviceID: session.DeviceID})
 		}
 	case r.URL.Path == sessionsPath && r.Method == http.MethodPost:
 		contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -100,6 +104,7 @@ func serveSessions(w http.ResponseWriter, r *http.Request, accounts *auth.Servic
 		}
 		if session.Role == "admin" && r.Header.Get("Origin") == "https://"+r.Host {
 			http.SetCookie(w, &http.Cookie{Name: "__Host-serversend-admin", Value: session.AccessToken, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, Expires: session.ExpiresAt, MaxAge: int(time.Until(session.ExpiresAt).Seconds())})
+			session.CSRFToken = csrfToken(session.AccessToken)
 			session.AccessToken = ""
 		}
 		writeJSON(w, r, 201, session)

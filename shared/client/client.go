@@ -30,20 +30,21 @@ import (
 
 const maxJSONResponse = 1 << 20
 
-// ErrIdentityChanged means the server presented a different certificate from
-// the one the user approved. No request, and so no credential, was sent.
-var ErrIdentityChanged = errors.New("the server's certificate does not match the one approved for this connection")
+// ErrIdentityChanged means certificate pinning or the signed identity proof
+// failed. No application credential was released to that connection.
+var ErrIdentityChanged = errors.New("the server identity does not match the approved trust; repair the connection before signing in")
 
 // ServerProbe describes what a server presented before anything is trusted.
 // PubliclyTrusted reports that the operating system already trusts the
 // certificate; otherwise the user must compare Fingerprint with the server
 // operator's value before approving it.
 type ServerProbe struct {
-	Origin          string    `json:"origin"`
-	Fingerprint     string    `json:"fingerprint"`
-	Subject         string    `json:"subject"`
-	ExpiresAt       time.Time `json:"expires_at"`
-	PubliclyTrusted bool      `json:"publicly_trusted"`
+	AuthorityFingerprint string    `json:"authority_fingerprint,omitempty"`
+	Origin               string    `json:"origin"`
+	Fingerprint          string    `json:"fingerprint"`
+	Subject              string    `json:"subject"`
+	ExpiresAt            time.Time `json:"expires_at"`
+	PubliclyTrusted      bool      `json:"publicly_trusted"`
 }
 
 func fingerprint(certificate *x509.Certificate) string {
@@ -99,9 +100,11 @@ func Probe(ctx context.Context, origin string) (ServerProbe, error) {
 }
 
 type Client struct {
-	appVersion string
-	origin     string
-	http       *http.Client
+	identity       *identityVerifier
+	installationID protocol.ID
+	appVersion     string
+	origin         string
+	http           *http.Client
 
 	mu                      sync.Mutex
 	session                 api.Session
@@ -113,8 +116,9 @@ type Client struct {
 	limits                  protocol.TransferLimits
 }
 
-// New returns a client that accepts exactly the approved certificate. Every
-// connection is checked against the pin before any request bytes are written.
+// New is the legacy leaf-pin client used by transport fixtures and benchmarks.
+// Production desktop connections must use NewVerified; this client cannot
+// supply verified trust for credential persistence.
 func New(origin, approvedFingerprint string) (*Client, error) {
 	return NewWithOptions(origin, approvedFingerprint, TransportOptions{PreferHTTP3: true})
 }
@@ -270,7 +274,7 @@ func (c *Client) ConfirmTOTP(ctx context.Context, challenge, code string) ([]str
 // memory only; it is gone when the process exits.
 func (c *Client) SignIn(ctx context.Context, challenge, code, deviceName string) (api.Session, error) {
 	var session api.Session
-	if err := c.exchange(ctx, call{method: "POST", path: "/sessions", token: challenge}, api.SessionRequest{Code: code, DeviceName: deviceName, Platform: runtime.GOOS, AppVersion: c.appVersion}, &session); err != nil {
+	if err := c.exchange(ctx, call{method: "POST", path: "/sessions", token: challenge}, api.SessionRequest{InstallationID: c.installationID, Code: code, DeviceName: deviceName, Platform: runtime.GOOS, AppVersion: c.appVersion}, &session); err != nil {
 		return api.Session{}, err
 	}
 	if session.AccessToken == "" || (protocol.Scope{ServerID: session.ServerID, AccountID: session.AccountID}).Validate() != nil {

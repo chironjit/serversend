@@ -126,3 +126,43 @@ func serveDeviceAdmin(w http.ResponseWriter, r *http.Request, service *auth.Serv
 	}
 	return true
 }
+
+func serveOwnDevices(w http.ResponseWriter, r *http.Request, service *auth.Service) bool {
+	prefix := api.BasePath + "/sessions/devices"
+	if r.URL.Path != prefix && !strings.HasPrefix(r.URL.Path, prefix+"/") {
+		return false
+	}
+	if r.URL.Path == prefix && r.Method == "GET" {
+		devices, err := service.OwnDevices(r.Context(), bearer(r), protocol.ID(r.URL.Query().Get("before")))
+		if err != nil {
+			writeAuthenticationError(w, r, err)
+		} else {
+			writeJSON(w, r, 200, devices)
+		}
+		return true
+	}
+	if r.Method != "POST" {
+		writeError(w, r, 405, api.InvalidRequest, "Use GET to list devices or POST to revoke")
+		return true
+	}
+	if !sameOrigin(w, r) {
+		return true
+	}
+	var empty struct{}
+	if err := decodeSessionBody(w, r, &empty); err != nil {
+		writeAuthenticationDecodeError(w, r, err)
+		return true
+	}
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, prefix+"/"), "/")
+	if len(parts) != 2 || parts[1] != "revoke" {
+		writeError(w, r, 404, api.NotFound, "Device action not found")
+		return true
+	}
+	err := service.RevokeOwnDevice(r.Context(), bearer(r), protocol.ID(parts[0]), parts[0] == "others")
+	if err != nil {
+		writeAuthenticationError(w, r, err)
+	} else {
+		w.WriteHeader(204)
+	}
+	return true
+}

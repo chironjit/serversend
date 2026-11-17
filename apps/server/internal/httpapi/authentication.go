@@ -7,13 +7,16 @@ import (
 	"net/http"
 	"strings"
 
+	"context"
 	"github.com/chironjit/serversend/apps/server/internal/auth"
 	"github.com/chironjit/serversend/apps/server/internal/database"
 	"github.com/chironjit/serversend/apps/server/internal/uploads"
 	"github.com/chironjit/serversend/shared/api"
+	"github.com/chironjit/serversend/shared/protocol"
 )
 
 type options struct {
+	signIdentity   func(context.Context, *protocol.IdentityProof) error
 	authentication *auth.Service
 	transfers      *uploads.Service
 	http3          bool

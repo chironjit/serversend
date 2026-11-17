@@ -6,6 +6,10 @@
 
 ### Usability iteration
 
+- Stable desktop installation registration, account-scoped keychain credentials and self-service device revocation/sign-out controls. Local logout disables restoration before keychain deletion, including unavailable stores.
+- Private CA import, normal TLS validation and channel-bound signed server-identity verification on each HTTP/3 or HTTP/2 connection; leaf renewal preserves trust. Certificate-only profiles require explicit trust repair and a fresh login.
+- Session-bound browser CSRF protection alongside secure cookies and exact-origin checks. Schema 10 invalidates legacy bearer-only sessions/challenges once and retains device history.
+
 - Rotating desktop refresh credentials with ten-minute access tokens, 30-day refresh inactivity expiry and second-factor-only verification every 60 days. Pending keychain rotations survive interrupted requests and failed successor saves; conflicting reuse revokes the affected device.
 - Admin per-user device history/revocation and separate password/TOTP reset controls, with fresh administrator authentication, confirmations, auditing, account-wide reset revocation and a transactional lock against mixed recovery.
 

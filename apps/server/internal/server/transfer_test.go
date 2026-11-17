@@ -33,6 +33,15 @@ func onboardedTransportClient(t testing.TB, origin, pin, username, temporary str
 		t.Fatal(err)
 	}
 	t.Cleanup(c.Close)
+	return onboardWithClient(t, c, username, temporary)
+}
+func onboardWithClient(t testing.TB, c *client.Client, username, temporary string) (*client.Client, string) {
+	t.Helper()
+	c, password, _ := onboardWithRecovery(t, c, username, temporary)
+	return c, password
+}
+func onboardWithRecovery(t testing.TB, c *client.Client, username, temporary string) (*client.Client, string, []string) {
+	t.Helper()
 	ctx := t.Context()
 	attempt, err := c.Password(ctx, username, temporary)
 	if err != nil || attempt.NextStep != "replace_password" {
@@ -62,7 +71,7 @@ func onboardedTransportClient(t testing.TB, origin, pin, username, temporary str
 	if err != nil || session.Username != username || session.AccessToken != "" {
 		t.Fatalf("session: %+v %v", session, err)
 	}
-	return c, password
+	return c, password, codes
 }
 
 func writeFixture(t *testing.T, dir, name string, size int) (string, []byte) {

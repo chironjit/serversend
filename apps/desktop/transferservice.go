@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/chironjit/serversend/shared/api"
+	"io"
+	"os"
 
 	"github.com/chironjit/serversend/apps/desktop/internal/transfer"
 	"github.com/chironjit/serversend/shared/client"
@@ -117,4 +120,30 @@ func (s *TransferService) SessionStatus(ctx context.Context) (transfer.Step, err
 }
 func (s *TransferService) CompleteReauthentication(ctx context.Context, code string) (transfer.Account, error) {
 	return s.manager.CompleteReauthentication(ctx, code)
+}
+
+func (s *TransferService) Devices(ctx context.Context, before string) ([]api.DeviceInfo, error) {
+	return s.manager.Devices(ctx, before)
+}
+func (s *TransferService) RevokeDevice(ctx context.Context, id string) error {
+	return s.manager.RevokeDevice(ctx, id)
+}
+func (s *TransferService) ChooseServerCA(ctx context.Context, address string) (client.ServerProbe, error) {
+	path, err := application.Get().Dialog.OpenFile().SetTitle("Choose the public CA certificate from your administrator").CanChooseFiles(true).PromptForSingleSelection()
+	if err != nil {
+		return client.ServerProbe{}, err
+	}
+	if path == "" {
+		return client.ServerProbe{}, errors.New("certificate selection cancelled")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return client.ServerProbe{}, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 64<<10+1))
+	if err != nil {
+		return client.ServerProbe{}, err
+	}
+	return s.manager.ProbeAuthority(ctx, address, string(data))
 }

@@ -1,5 +1,5 @@
 // Package identity manages the server identity independently of its TLS
-// certificate. Pairing and proof of possession are separate protocol work.
+// certificate, and signs TLS-channel-bound pairing proofs.
 package identity
 
 import (
@@ -7,13 +7,15 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/chironjit/serversend/shared/protocol"
 )
 
 // Identity deliberately exposes only public material. The seed remains in the
-// configuration database until the pairing protocol needs a signing operation.
+// configuration database and is only read by the signing operation.
 type Identity struct {
 	ID        string
 	PublicKey [ed25519.PublicKeySize]byte
@@ -57,4 +59,24 @@ func LoadOrCreate(ctx context.Context, db *sql.DB) (Identity, error) {
 		return Identity{}, fmt.Errorf("commit server identity: %w", err)
 	}
 	return result, nil
+}
+
+// Sign proves possession without exporting the persisted seed to callers.
+func Sign(ctx context.Context, db *sql.DB, proof *protocol.IdentityProof) error {
+	var seed []byte
+	var id string
+	if err := db.QueryRowContext(ctx, `SELECT server_id,key_seed FROM server_identity WHERE singleton=1`).Scan(&id, &seed); err != nil {
+		return err
+	}
+	if len(seed) != ed25519.SeedSize {
+		return errors.New("invalid persisted identity")
+	}
+	key := ed25519.NewKeyFromSeed(seed)
+	proof.TrustedIdentity = protocol.TrustedIdentity{ServerID: protocol.ID(id), PublicKey: base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))}
+	message, err := proof.SigningBytes()
+	if err != nil {
+		return err
+	}
+	proof.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, message))
+	return nil
 }
