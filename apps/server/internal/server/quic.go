@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"time"
@@ -26,7 +25,7 @@ func (s *Server) ServeTransports(ctx context.Context, tcp net.Listener, udp net.
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	handler := httpapi.New(s.ready, httpapi.WithAuthentication(s.accounts), httpapi.WithTransfers(s.transfers), httpapi.WithHTTP3())
+	handler := httpapi.New(s.ready, httpapi.WithAuthentication(s.accounts), httpapi.WithTransfers(s.transfers), httpapi.WithHTTP3(), httpapi.WithLogs(s.logs))
 	return s.serveTransports(ctx, cancel, tcp, udp, handler)
 }
 
@@ -66,7 +65,7 @@ func (s *Server) serveTransports(ctx context.Context, cancel context.CancelFunc,
 			quicDone = nil
 			_ = udp.Close()
 			if err != nil {
-				log.Printf("HTTP/3 unavailable; continuing with HTTP/2 fallback: %v", err)
+				s.logs.Add("warn", fmt.Sprintf("HTTP/3 unavailable; continuing with HTTP/2 fallback: %v", err))
 			}
 		}
 	}

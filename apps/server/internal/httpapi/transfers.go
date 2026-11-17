@@ -3,7 +3,6 @@ package httpapi
 import (
 	"errors"
 	"io"
-	"log"
 	"mime"
 	"net/http"
 	"strconv"
@@ -42,13 +41,14 @@ func writeFailure(w http.ResponseWriter, r *http.Request, err error) {
 	var tooLarge *http.MaxBytesError
 	switch {
 	case errors.As(err, &typed):
+		logResponseError(r, typed.Code.HTTPStatus(), typed.Message)
 		writeJSON(w, r, typed.Code.HTTPStatus(), api.ErrorResponse{Error: typed})
 	case errors.As(err, &tooLarge):
 		writeError(w, r, 413, api.RequestTooLarge, "Request body exceeds the server's advertised limit")
 	case r.Context().Err() != nil:
 		writeError(w, r, 503, api.Unavailable, "Request was interrupted; try again")
 	default:
-		log.Printf("request %s %s failed: %v", r.Method, r.URL.Path, err)
+		logFailure(r, err)
 		writeError(w, r, 500, api.InternalError, "The server could not complete this request; try again or contact the server operator")
 	}
 }

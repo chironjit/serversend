@@ -93,6 +93,14 @@ The shell uses a same-origin Content Security Policy without inline scripts/styl
 
 The executable now opens TCP and UDP listeners for the same API, advertising HTTP/3 only through the dual-transport entry point. TCP supports HTTP/2 and HTTP/1.1, with TLS 1.3 required. Desktop certificate inspection and authenticated connections try HTTP/3 first, then verified HTTP/2 if QUIC fails. Each replacement connection repeats that order, with no timed upgrades and no mutation 0-RTT; see [performance measurements and operation](performance-baseline.md). The provisional ceilings remain 1–8 MiB chunks, 8 MiB requests, 1 MiB manifests and 1,048,576 chunks. Local measurements do not qualify target-hardware resource ceilings.
 
+## Application logs
+
+After administrator sign-in, **Application logs** shows server startup/shutdown, transport warnings, HTTP outcomes/durations, safe rejection reasons and internal failure diagnostics. Search messages (case-insensitive), filter Info/OK/Warning/Error, refresh, or load older results. Access is checked against the live administrator session on every request; signing out removes the viewer. `GET /api/v1/admin/logs` accepts `q`, `level` and an exclusive numeric `before` cursor, returning up to 100 newest matching entries.
+
+Logs persist in `SERVER_SEND_CONFIG_DIR/logs/app.jsonl`, rotating at 2 MiB with one retained file (`app.jsonl.1`). The viewer keeps at most 5,000 recent entries in memory; restart loads retained files. Directories/files use 0700/0600 permissions. Logging write failures are reported to stderr and recent events remain visible in memory. These are bounded operational diagnostics, not permanent audit history. Failures before server initialization remain in process/container output. Credentials, authentication bodies, file contents and URL query strings are excluded; request routes use templates rather than submitted names. Internal errors can contain storage paths, so logs are administrator-only.
+
+Folder deletion refuses active uploads. Expired open uploads no longer block deletion indefinitely; finalizing uploads and legacy uploads with no expiry remain protected. Deletion is still permanent and removes the selected tree and its expired upload objects.
+
 ## Environment settings
 
 `config.Load` reads process environment settings. `config.FromEnvironment` accepts a lookup function for isolated testing or composition. An unset variable keeps its default; an explicitly empty value is rejected except when both TLS paths are empty. Unknown variables are ignored.

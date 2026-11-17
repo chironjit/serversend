@@ -45,7 +45,7 @@ it('signs in an administrator, keeps multiple pending users, and clears password
       ]),
     )
     .mockResolvedValueOnce(new Response(null, { status: 204 }));
-  const wrapper = mount(Accounts);
+  const wrapper = mount(Accounts, { global: { stubs: { Logs: true } } });
   const inputs = wrapper.findAll('input');
   await inputs[0].setValue('admin');
   await inputs[1].setValue('password');
@@ -80,7 +80,7 @@ it('rejects user accounts in the admin interface and ends the issued session', a
     .mockResolvedValueOnce(reply({ challenge: 'challenge', next_step: 'second_factor' }))
     .mockResolvedValueOnce(reply({ role: 'user', access_token: 'user-session' }))
     .mockResolvedValueOnce(new Response(null, { status: 204 }));
-  const wrapper = mount(Accounts);
+  const wrapper = mount(Accounts, { global: { stubs: { Logs: true } } });
   await wrapper.get('form').trigger('submit');
   await flushPromises();
   await wrapper.get('input').setValue('123456');

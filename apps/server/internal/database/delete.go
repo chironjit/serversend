@@ -6,6 +6,7 @@ import (
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
 	"strings"
+	"time"
 )
 
 // DeleteEntry removes a complete tree atomically. Active uploads must finish first.
@@ -28,7 +29,7 @@ func (r *Repository) DeleteEntry(ctx context.Context, account, id protocol.ID) (
 			return err
 		}
 		var active int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM uploads WHERE account_id=? AND (file_id IN deletion_ids OR parent_id IN deletion_ids) AND state IN ('open','finalizing')`, account).Scan(&active); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM uploads WHERE account_id=? AND (file_id IN deletion_ids OR parent_id IN deletion_ids) AND (state='finalizing' OR (state='open' AND (expires_at IS NULL OR expires_at>?)))`, account, time.Now().UnixMilli()).Scan(&active); err != nil {
 			return err
 		}
 		if active > 0 {

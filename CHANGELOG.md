@@ -4,6 +4,9 @@
 
 ### Usability iteration
 
+- Persistent application logs in the admin panel, with search, level filters, coloured Info/OK/Warning/Error indicators and older-entry navigation.
+- Fixed expired open uploads blocking recursive folder deletion indefinitely; active uploads remain protected.
+
 - Persistent admin user list with encrypted pending passwords until replacement or one-hour expiry; refreshes every five seconds. Passwords issued before this upgrade cannot be recovered from their hashes.
 - Clickable desktop folder names and breadcrumb navigation; one Upload menu for native file and folder pickers.
 - Confirmed permanent file and recursive folder deletion, scoped to the signed-in user. Active uploads block deletion; stored-object cleanup survives restarts.

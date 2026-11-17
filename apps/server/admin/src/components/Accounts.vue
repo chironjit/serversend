@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onUnmounted, ref } from 'vue';
 import { Loader2, LogOut } from 'lucide-vue-next';
+import Logs from './Logs.vue';
 import UiAlert from './ui/UiAlert.vue';
 import UiBadge from './ui/UiBadge.vue';
 import UiButton from './ui/UiButton.vue';
@@ -308,6 +309,7 @@ async function signOut() {
       Sign out
     </UiButton>
   </UiCard>
+  <Logs v-if="step === 'users'" :token="token" />
 </template>
 <style scoped>
 .create-form {

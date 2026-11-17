@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/chironjit/serversend/apps/server/internal/applog"
 	"github.com/chironjit/serversend/apps/server/internal/auth"
 	"github.com/chironjit/serversend/apps/server/internal/auth/twofactor"
 	"github.com/chironjit/serversend/apps/server/internal/config"
@@ -27,6 +28,7 @@ import (
 const shutdownTimeout = 10 * time.Second
 
 type Server struct {
+	logs         *applog.Store
 	db           *sql.DB
 	locks        *instancelock.Locks
 	tls          *tls.Config
@@ -87,8 +89,14 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 		db.Close()
 		return nil, err
 	}
+	logs, err := applog.Open(c.ConfigDir)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open application logs: %w", err)
+	}
+	logs.Add("info", "Server initialized; metadata and storage ready")
 	keepLocks = true
-	return &Server{db: db, locks: locks, tls: tlsConfig, identity: id, accounts: accounts, transfers: transfers, drainTimeout: shutdownTimeout}, nil
+	return &Server{logs: logs, db: db, locks: locks, tls: tlsConfig, identity: id, accounts: accounts, transfers: transfers, drainTimeout: shutdownTimeout}, nil
 }
 
 // newAccounts loads the TOTP protection key before any account request can be
@@ -117,13 +125,17 @@ func (s *Server) Accounts() *auth.Service { return s.accounts }
 // Identity returns public material only; it is not itself proof of trust.
 func (s *Server) Identity() identity.Identity { return s.identity }
 
-func (s *Server) Close() error { return errors.Join(s.db.Close(), s.locks.Close()) }
+func (s *Server) Logs() *applog.Store { return s.logs }
+func (s *Server) Close() error {
+	s.logs.Add("info", "Server stopped")
+	return errors.Join(s.logs.Close(), s.db.Close(), s.locks.Close())
+}
 
 // Serve owns listener and serves TLS only. Cancellation marks the process
 // unready before draining requests. A timeout forcibly closes active requests.
 // The instance is intended for a single Serve call.
 func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
-	return s.serve(ctx, listener, httpapi.New(s.ready, httpapi.WithAuthentication(s.accounts), httpapi.WithTransfers(s.transfers)))
+	return s.serve(ctx, listener, httpapi.New(s.ready, httpapi.WithAuthentication(s.accounts), httpapi.WithTransfers(s.transfers), httpapi.WithLogs(s.logs)))
 }
 
 func (s *Server) ready(ctx context.Context) error {

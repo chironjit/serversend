@@ -39,13 +39,13 @@ func New(ready func(context.Context) error, settings ...Option) http.Handler {
 	if opts.authentication != nil && opts.transfers != nil {
 		transfers = newTransferRoutes(opts.authentication, opts.transfers)
 	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return requestLogs(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		if opts.authentication != nil && (serveAuthentication(w, r, opts.authentication) || serveUsers(w, r, opts.authentication)) {
+		if opts.authentication != nil && (serveLogs(w, r, opts.authentication, opts.logs) || serveAuthentication(w, r, opts.authentication) || serveUsers(w, r, opts.authentication)) {
 			return
 		}
 		if transfers != nil && (serveSessions(w, r, opts.authentication) || transfers.serve(w, r)) {
@@ -84,10 +84,11 @@ func New(ready func(context.Context) error, settings ...Option) http.Handler {
 		default:
 			writeError(w, r, http.StatusNotFound, api.NotFound, "Endpoint not found")
 		}
-	})
+	}), opts.logs)
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, status int, code api.ErrorCode, message string) {
+	logResponseError(r, status, message)
 	writeJSON(w, r, status, api.ErrorResponse{Error: api.Error{Code: code, Message: message}})
 }
 

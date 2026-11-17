@@ -29,7 +29,7 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, args []string, out io.Writer) error {
+func run(ctx context.Context, args []string, out io.Writer) (resultErr error) {
 	flags := flag.NewFlagSet("serversend", flag.ContinueOnError)
 	check := flags.Bool("check", false, "validate TLS, storage, and metadata without serving")
 	backupDirectory := flags.String("backup", "", "back up a stopped server into a new absolute `directory`, without serving")
@@ -69,6 +69,14 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	defer s.Close()
+	previousLogOutput := log.Writer()
+	log.SetOutput(io.MultiWriter(previousLogOutput, s.Logs()))
+	defer log.SetOutput(previousLogOutput)
+	defer func() {
+		if resultErr != nil {
+			s.Logs().Add("error", resultErr.Error())
+		}
+	}()
 	if c.TLSIPs != "" {
 		log.Printf("Private IPv4 HTTPS enabled; export the public trust certificate from %s through a trusted operator channel", filepath.Join(c.ConfigDir, "tls", "ca.crt"))
 	}
@@ -87,7 +95,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	log.Printf("Certificate fingerprint for desktop approval: %s", s.CertificateFingerprint())
 	udp, err := net.ListenPacket("udp", c.UDPAddress)
 	if err != nil {
-		log.Printf("HTTP/3 unavailable; serving HTTP/2 fallback: listen UDP: %v", err)
+		s.Logs().Add("warn", fmt.Sprintf("HTTP/3 unavailable; serving HTTP/2 fallback: listen UDP: %v", err))
 		return s.Serve(ctx, listener)
 	}
 	log.Printf("HTTP/3 listening on UDP %s", udp.LocalAddr())

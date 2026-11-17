@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"github.com/chironjit/serversend/apps/server/internal/applog"
 	"mime"
 	"net/http"
 	"strings"
@@ -16,6 +17,7 @@ type options struct {
 	authentication *auth.Service
 	transfers      *uploads.Service
 	http3          bool
+	logs           *applog.Store
 }
 type Option func(*options)
 
@@ -148,6 +150,7 @@ func writeAuthenticationError(w http.ResponseWriter, r *http.Request, err error)
 	case errors.Is(err, auth.ErrTwoFactorUnavailable):
 		writeError(w, r, 503, api.Unavailable, "Two-factor authentication is not available; contact the server operator")
 	default:
+		logFailure(r, err)
 		writeError(w, r, 503, api.Unavailable, "Authentication is temporarily unavailable; try again shortly")
 	}
 }
