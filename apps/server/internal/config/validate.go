@@ -13,6 +13,9 @@ import (
 // Validate checks syntax and lexical storage separation. Startup must separately
 // check mount identity, symlinks, permissions, free space and TLS file contents.
 func (c Config) Validate() error {
+	if c.GlobalBytes < 0 || c.UserBytes < 0 || c.MinFreeBytes < 0 {
+		return errors.New("storage limits must be non-negative")
+	}
 	for _, address := range []struct{ name, value string }{
 		{"SERVER_SEND_TCP_ADDRESS", c.TCPAddress},
 		{"SERVER_SEND_UDP_ADDRESS", c.UDPAddress},

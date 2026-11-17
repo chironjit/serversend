@@ -56,7 +56,7 @@ func scanTransfer(row interface{ Scan(...any) error }) (Transfer, error) {
 
 // CreateTransfer is idempotent by (account, key). A replay returns the
 // recorded upload so the caller can compare intent; created reports a new row.
-func (r *Repository) CreateTransfer(ctx context.Context, t Transfer) (Transfer, bool, error) {
+func (r *Repository) CreateTransfer(ctx context.Context, t Transfer, capacity ...Capacity) (Transfer, bool, error) {
 	var recorded Transfer
 	created := false
 	err := r.write(ctx, func(tx *sql.Tx) error {
@@ -76,6 +76,11 @@ func (r *Repository) CreateTransfer(ctx context.Context, t Transfer) (Transfer, 
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
+		}
+		if len(capacity) > 0 {
+			if err := checkCapacity(ctx, tx, t, capacity[0]); err != nil {
+				return err
+			}
 		}
 		var directory int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM directories WHERE account_id=? AND id=?`, t.AccountID, t.FileID).Scan(&directory); err != nil {
@@ -144,6 +149,13 @@ func (r *Repository) RecordChunk(ctx context.Context, account, upload protocol.I
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
+		}
+		var remaining int64
+		if err := tx.QueryRowContext(ctx, `SELECT expected_bytes-coalesce((SELECT sum(byte_count) FROM chunks WHERE account_id=? AND upload_id=?),0) FROM uploads WHERE account_id=? AND id=?`, account, upload, account, upload).Scan(&remaining); err != nil {
+			return err
+		}
+		if chunk.Bytes > remaining {
+			return api.Error{Code: api.InvalidRequest, Message: "Chunk exceeds the remaining upload reservation"}
 		}
 		recorded, created = chunk, true
 		_, err = tx.ExecContext(ctx, `INSERT INTO chunks(account_id,upload_id,chunk_index,byte_count,digest,object_id) VALUES(?,?,?,?,?,?)`, account, upload, chunk.Index, chunk.Bytes, chunk.Digest, chunk.ObjectID)

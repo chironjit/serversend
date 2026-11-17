@@ -15,6 +15,8 @@ func (s *Service) CreateDirectory(ctx context.Context, account protocol.ID, requ
 }
 
 func (s *Service) DeleteEntry(ctx context.Context, account, id protocol.ID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if id.Validate() != nil {
 		return api.Error{Code: api.InvalidRequest, Message: "Invalid file or folder ID"}
 	}
@@ -27,17 +29,28 @@ func (s *Service) DeleteEntry(ctx context.Context, account, id protocol.ID) erro
 	return nil
 }
 func (s *Service) cleanupDeleted(ctx context.Context) error {
-	ids, err := s.repo.DeletedObjects(ctx)
-	if err != nil {
-		return err
-	}
-	for _, id := range ids {
-		if err := s.store.Delete(id); err != nil {
+	for {
+		ids, err := s.repo.DeletedObjects(ctx)
+		if err != nil {
 			return err
 		}
-		if err := s.repo.ForgetDeletedObject(ctx, id); err != nil {
-			return err
+		if len(ids) == 0 {
+			return nil
+		}
+		for _, id := range ids {
+			referenced, err := s.repo.ObjectReferenced(ctx, id)
+			if err != nil {
+				return err
+			}
+			if referenced {
+				return fmt.Errorf("refuse to delete referenced object %s", id)
+			}
+			if err = s.store.Delete(id); err != nil {
+				return err
+			}
+			if err = s.repo.ForgetDeletedObject(ctx, id); err != nil {
+				return err
+			}
 		}
 	}
-	return nil
 }

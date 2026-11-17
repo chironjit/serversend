@@ -17,7 +17,16 @@ import (
 
 var ErrMismatch = errors.New("object bytes do not match the declared length and digest")
 
-type Store struct{ objects, temporary string }
+type objectFile interface {
+	io.Writer
+	Sync() error
+	Close() error
+	Name() string
+}
+type Store struct {
+	objects, temporary string
+	createTemporary    func(string, string) (objectFile, error)
+}
 
 // Open prepares private directories inside an existing data directory and
 // discards temporary files left by an interrupted process. Temporary files
@@ -31,6 +40,9 @@ func Open(dataDir string) (*Store, error) {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, fmt.Errorf("prepare object storage: %w", err)
 		}
+	}
+	if err := syncDirectory(dataDir); err != nil {
+		return nil, err
 	}
 	return s, nil
 }
@@ -50,7 +62,11 @@ func (s *Store) Put(id protocol.ID, body io.Reader, length int64, digest protoco
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(s.temporary, "object-*")
+	create := s.createTemporary
+	if create == nil {
+		create = func(dir, pattern string) (objectFile, error) { return os.CreateTemp(dir, pattern) }
+	}
+	file, err := create(s.temporary, "object-*")
 	if err != nil {
 		return err
 	}
@@ -80,7 +96,15 @@ func (s *Store) Put(id protocol.ID, body io.Reader, length int64, digest protoco
 	if err = os.Rename(file.Name(), final); err != nil {
 		return err
 	}
-	return syncDirectory(filepath.Dir(final))
+	// Persist the shard entry in objects as well as its new file entry. Both
+	// sides of the rename must be durable before SQLite acknowledges the object.
+	if err = syncDirectory(filepath.Dir(final)); err != nil {
+		return err
+	}
+	if err = syncDirectory(s.objects); err != nil {
+		return err
+	}
+	return syncDirectory(s.temporary)
 }
 
 func (s *Store) Open(id protocol.ID) (*os.File, error) {
@@ -113,7 +137,12 @@ func (s *Store) Delete(id protocol.ID) error {
 	}
 	err = os.Remove(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		// A previous unlink may have succeeded before directory flush failed.
+		// Persist it before forgetting the durable deletion intent.
+		if _, statErr := os.Stat(filepath.Dir(path)); errors.Is(statErr, os.ErrNotExist) {
+			return nil
+		}
+		return syncDirectory(filepath.Dir(path))
 	}
 	if err != nil {
 		return err

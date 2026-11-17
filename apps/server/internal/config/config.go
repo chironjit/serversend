@@ -1,30 +1,36 @@
 // Package config parses server settings without accessing storage or opening listeners.
 package config
 
-import "os"
+import (
+	"fmt"
+	"os"
+	"strconv"
+)
 
 // Config contains the server's deployment settings. Empty TLS paths mean that
 // TLS provisioning is incomplete unless TLSIPs selects private IP certificates.
 // Plaintext serving is never permitted.
 type Config struct {
-	TCPAddress  string
-	UDPAddress  string
-	ConfigDir   string
-	DataDir     string
-	StagingDir  string
-	TLSCertFile string
-	TLSKeyFile  string
-	TLSIPs      string
+	GlobalBytes, UserBytes, MinFreeBytes int64
+	TCPAddress                           string
+	UDPAddress                           string
+	ConfigDir                            string
+	DataDir                              string
+	StagingDir                           string
+	TLSCertFile                          string
+	TLSKeyFile                           string
+	TLSIPs                               string
 }
 
 // Defaults returns the initial Unraid container settings.
 func Defaults() Config {
 	return Config{
-		TCPAddress: ":58443",
-		UDPAddress: ":58443",
-		ConfigDir:  "/config",
-		DataDir:    "/data",
-		StagingDir: "/staging",
+		MinFreeBytes: 64 << 20,
+		TCPAddress:   ":58443",
+		UDPAddress:   ":58443",
+		ConfigDir:    "/config",
+		DataDir:      "/data",
+		StagingDir:   "/staging",
 	}
 }
 
@@ -53,6 +59,22 @@ func FromEnvironment(lookup func(string) (string, bool)) (Config, error) {
 	}
 	for _, setting := range settings {
 		if value, ok := lookup(setting.name); ok {
+			*setting.value = value
+		}
+	}
+	for _, setting := range []struct {
+		name  string
+		value *int64
+	}{
+		{"SERVER_SEND_STORAGE_GLOBAL_BYTES", &c.GlobalBytes},
+		{"SERVER_SEND_STORAGE_USER_BYTES", &c.UserBytes},
+		{"SERVER_SEND_STORAGE_MIN_FREE_BYTES", &c.MinFreeBytes},
+	} {
+		if raw, ok := lookup(setting.name); ok {
+			value, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || value < 0 {
+				return Config{}, fmt.Errorf("%s must be a non-negative byte count", setting.name)
+			}
 			*setting.value = value
 		}
 	}

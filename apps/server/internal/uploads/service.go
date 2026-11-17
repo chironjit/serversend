@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/chironjit/serversend/apps/server/internal/database"
@@ -23,7 +24,7 @@ import (
 )
 
 // Lifetime bounds how long an unfinished upload keeps accepting chunks.
-// Expired uploads are refused; reclaiming their objects belongs to Chunk 23.
+// Expired uploads are retired at startup, during maintenance and before creation.
 const Lifetime = 24 * time.Hour
 
 // Errors are already safe, typed API errors; callers return them unchanged.
@@ -32,7 +33,13 @@ var (
 	errGone     = api.Error{Code: api.UploadGone, Message: "This upload has expired or was already finished; start a new upload"}
 )
 
+// StoragePolicy uses byte counts; zero quota means unlimited. MinFree is always
+// preserved when accepting reservations and writing chunks.
+type StoragePolicy struct{ GlobalBytes, UserBytes, MinFreeBytes int64 }
+
 type Service struct {
+	mu       sync.Mutex
+	policy   StoragePolicy
 	repo     *database.Repository
 	store    *storage.Store
 	serverID protocol.ID
@@ -40,7 +47,7 @@ type Service struct {
 	now      func() time.Time
 }
 
-func New(repo *database.Repository, store *storage.Store, serverID protocol.ID, limits protocol.TransferLimits, now func() time.Time) (*Service, error) {
+func New(repo *database.Repository, store *storage.Store, serverID protocol.ID, limits protocol.TransferLimits, now func() time.Time, policy ...StoragePolicy) (*Service, error) {
 	if repo == nil || store == nil || serverID.Validate() != nil || limits.Validate() != nil {
 		return nil, errors.New("uploads require a repository, object store, server ID and valid limits")
 	}
@@ -48,7 +55,20 @@ func New(repo *database.Repository, store *storage.Store, serverID protocol.ID, 
 		now = time.Now
 	}
 	s := &Service{repo: repo, store: store, serverID: serverID, limits: limits, now: now}
-	if err := s.cleanupDeleted(context.Background()); err != nil {
+	s.policy.MinFreeBytes = 64 << 20
+	if len(policy) > 0 {
+		s.policy = policy[0]
+	}
+	if s.policy.GlobalBytes < 0 || s.policy.UserBytes < 0 || s.policy.MinFreeBytes < 0 {
+		return nil, errors.New("negative storage policy")
+	}
+	if err := s.Maintain(context.Background()); err != nil {
+		return nil, err
+	}
+	if err := s.store.Reconcile(context.Background(), s.repo.ObjectReferenced); err != nil {
+		return nil, err
+	}
+	if err := s.repo.CheckObjects(context.Background(), s.store.VerifyExists); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -74,6 +94,8 @@ func toAPI(t database.Transfer) api.Upload {
 // Create records the upload intent. Replaying the same key with the same
 // intent returns the same upload (created false); a different intent conflicts.
 func (s *Service) Create(ctx context.Context, account protocol.ID, key string, request api.CreateUploadRequest) (api.Upload, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if key == "" || len(key) > 128 {
 		return api.Upload{}, false, api.Error{Code: api.InvalidRequest, Message: "Send an Idempotency-Key header of 1 to 128 characters"}
 	}
@@ -90,12 +112,23 @@ func (s *Service) Create(ctx context.Context, account protocol.ID, key string, r
 	if err != nil {
 		return api.Upload{}, false, api.Error{Code: api.InvalidRequest, Message: "Expected head revision is out of range"}
 	}
+	if err := s.maintain(ctx); err != nil {
+		return api.Upload{}, false, err
+	}
+	available, err := s.store.Available()
+	if err != nil {
+		return api.Upload{}, false, err
+	}
+	available -= s.policy.MinFreeBytes
+	if available < 0 {
+		available = 0
+	}
 	now := s.now().UTC()
 	recorded, created, err := s.repo.CreateTransfer(ctx, database.Transfer{
 		ParentID: request.ParentID, AccountID: account, ID: newID(), FileID: request.FileID, VersionID: request.VersionID, Mode: request.Mode, IdempotencyKey: key,
 		ExpectedHead: head, ChunkCount: request.ChunkCount, TransmittedBytes: request.TransmittedBytes, ManifestBytes: request.ManifestBytes,
 		CreatedAt: now, ExpiresAt: now.Add(Lifetime),
-	})
+	}, database.Capacity{Global: s.policy.GlobalBytes, Account: s.policy.UserBytes, Available: available})
 	if err != nil {
 		return api.Upload{}, false, err
 	}
@@ -129,6 +162,9 @@ func (s *Service) Missing(ctx context.Context, account, upload protocol.ID) (api
 	if err != nil {
 		return api.MissingChunks{}, err
 	}
+	if t.State == protocol.UploadCancelled || t.State == protocol.UploadExpired || (t.State == protocol.UploadOpen && !t.ExpiresAt.After(s.now())) {
+		return api.MissingChunks{}, errGone
+	}
 	stored, err := s.repo.StoredChunks(ctx, account, upload)
 	if err != nil {
 		return api.MissingChunks{}, err
@@ -148,11 +184,13 @@ func (s *Service) Missing(ctx context.Context, account, upload protocol.ID) (api
 // and published, and its metadata is committed. An identical retry returns
 // the same acknowledgement (created false); different bytes conflict.
 func (s *Service) PutChunk(ctx context.Context, account, upload protocol.ID, index, length int64, digest protocol.Digest, body io.Reader) (api.ChunkAcknowledgement, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	t, err := s.transfer(ctx, account, upload)
 	if err != nil {
 		return api.ChunkAcknowledgement{}, false, err
 	}
-	if t.State != protocol.UploadOpen || !t.ExpiresAt.After(s.now()) {
+	if t.State == protocol.UploadCancelled || t.State == protocol.UploadExpired || (t.State == protocol.UploadOpen && !t.ExpiresAt.After(s.now())) {
 		return api.ChunkAcknowledgement{}, false, errGone
 	}
 	if index < 0 || index >= t.ChunkCount || digest.Validate() != nil || s.limits.ValidateChunkSize(length, index == t.ChunkCount-1) != nil {
@@ -162,6 +200,23 @@ func (s *Service) PutChunk(ctx context.Context, account, upload protocol.ID, ind
 	existing, err := s.repo.StoredChunk(ctx, account, upload, index)
 	created := false
 	if errors.Is(err, sql.ErrNoRows) {
+		if t.State != protocol.UploadOpen {
+			return api.ChunkAcknowledgement{}, false, errGone
+		}
+		remaining, remainingErr := s.repo.UnwrittenBytes(ctx, account, upload)
+		if remainingErr != nil {
+			return api.ChunkAcknowledgement{}, false, remainingErr
+		}
+		if length > remaining {
+			return api.ChunkAcknowledgement{}, false, api.Error{Code: api.InvalidRequest, Message: "Chunk exceeds the remaining upload reservation"}
+		}
+		available, spaceErr := s.store.Available()
+		if spaceErr != nil {
+			return api.ChunkAcknowledgement{}, false, spaceErr
+		}
+		if available < s.policy.MinFreeBytes || length > available-s.policy.MinFreeBytes {
+			return api.ChunkAcknowledgement{}, false, api.Error{Code: api.CapacityExhausted, Message: "Insufficient free space to store this chunk"}
+		}
 		if err := s.store.Put(chunk.ObjectID, body, length, digest); err != nil {
 			if errors.Is(err, storage.ErrMismatch) {
 				return api.ChunkAcknowledgement{}, false, api.Error{Code: api.InvalidRequest, Message: "Chunk bytes do not match the declared length and SHA-256; send the chunk again"}
@@ -169,7 +224,7 @@ func (s *Service) PutChunk(ctx context.Context, account, upload protocol.ID, ind
 			return api.ChunkAcknowledgement{}, false, err
 		}
 		existing, created, err = s.repo.RecordChunk(ctx, account, upload, chunk, s.now())
-		if err != nil || !created {
+		if err == nil && !created {
 			s.store.Remove(chunk.ObjectID)
 		}
 		if errors.Is(err, database.ErrUploadClosed) {
@@ -189,9 +244,14 @@ func (s *Service) PutChunk(ctx context.Context, account, upload protocol.ID, ind
 // upload intent and every listed chunk is the stored object. Replaying the
 // same manifest returns the recorded result.
 func (s *Service) Finalize(ctx context.Context, account, upload protocol.ID, body []byte) (api.FinalizeResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	t, err := s.transfer(ctx, account, upload)
 	if err != nil {
 		return api.FinalizeResult{}, err
+	}
+	if t.State == protocol.UploadCancelled || t.State == protocol.UploadExpired || (t.State == protocol.UploadOpen && !t.ExpiresAt.After(s.now())) {
+		return api.FinalizeResult{}, errGone
 	}
 	invalid := api.Error{Code: api.InvalidRequest, Message: "Manifest does not match this upload and its stored chunks"}
 	intent := toAPI(t)

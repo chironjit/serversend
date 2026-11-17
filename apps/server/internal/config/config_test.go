@@ -6,7 +6,7 @@ import (
 )
 
 func TestDefaults(t *testing.T) {
-	want := Config{TCPAddress: ":58443", UDPAddress: ":58443", ConfigDir: "/config", DataDir: "/data", StagingDir: "/staging"}
+	want := Config{MinFreeBytes: 64 << 20, TCPAddress: ":58443", UDPAddress: ":58443", ConfigDir: "/config", DataDir: "/data", StagingDir: "/staging"}
 	got, err := FromEnvironment(environment(nil))
 	if err != nil || got != want {
 		t.Fatalf("FromEnvironment() = %#v, %v; want %#v", got, err, want)
@@ -24,7 +24,7 @@ func TestEnvironmentOverrides(t *testing.T) {
 		"SERVER_SEND_TLS_KEY_FILE":  "/certificates/server.key",
 		"UNRELATED":                 "ignored",
 	}
-	want := Config{
+	want := Config{MinFreeBytes: 64 << 20,
 		TCPAddress: "127.0.0.1:443", UDPAddress: "[::1]:9443",
 		ConfigDir: "/mnt/appdata/config", DataDir: "/mnt/storage/data", StagingDir: "/mnt/cache/staging",
 		TLSCertFile: "/certificates/server.crt", TLSKeyFile: "/certificates/server.key",
@@ -71,4 +71,18 @@ func TestLoadUsesProcessEnvironment(t *testing.T) {
 
 func environment(values map[string]string) func(string) (string, bool) {
 	return func(name string) (string, bool) { value, ok := values[name]; return value, ok }
+}
+
+func TestStoragePolicyEnvironment(t *testing.T) {
+	for _, name := range []string{"SERVER_SEND_STORAGE_GLOBAL_BYTES", "SERVER_SEND_STORAGE_USER_BYTES", "SERVER_SEND_STORAGE_MIN_FREE_BYTES"} {
+		for _, bad := range []string{"", "-1", "garbage", "9223372036854775808"} {
+			if _, err := FromEnvironment(environment(map[string]string{name: bad})); err == nil {
+				t.Fatalf("accepted %s=%s", name, bad)
+			}
+		}
+	}
+	got, err := FromEnvironment(environment(map[string]string{"SERVER_SEND_STORAGE_GLOBAL_BYTES": "1000", "SERVER_SEND_STORAGE_USER_BYTES": "100", "SERVER_SEND_STORAGE_MIN_FREE_BYTES": "10"}))
+	if err != nil || got.GlobalBytes != 1000 || got.UserBytes != 100 || got.MinFreeBytes != 10 {
+		t.Fatalf("%+v %v", got, err)
+	}
 }

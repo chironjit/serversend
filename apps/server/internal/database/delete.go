@@ -82,7 +82,7 @@ func (r *Repository) DeleteEntry(ctx context.Context, account, id protocol.ID) (
 	return objects, nil
 }
 func (r *Repository) DeletedObjects(ctx context.Context) ([]protocol.ID, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id FROM deleted_objects`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id FROM deleted_objects LIMIT 128`)
 	if err != nil {
 		return nil, err
 	}

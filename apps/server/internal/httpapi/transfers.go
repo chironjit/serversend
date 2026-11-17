@@ -106,6 +106,7 @@ func newTransferRoutes(accounts *auth.Service, service *uploads.Service) *transf
 	t := &transferRoutes{accounts: accounts, service: service, mux: http.NewServeMux()}
 	for pattern, handler := range map[string]accountHandler{
 		"POST " + api.BasePath + "/uploads":                                       t.create,
+		"DELETE " + api.BasePath + "/uploads/{upload}":                            t.cancel,
 		"GET " + api.BasePath + "/uploads/{upload}":                               t.get,
 		"GET " + api.BasePath + "/uploads/{upload}/missing":                       t.missing,
 		"PUT " + api.BasePath + "/uploads/{upload}/chunks/{index}":                t.putChunk,
@@ -294,5 +295,18 @@ func (t *transferRoutes) deleteEntry(w http.ResponseWriter, r *http.Request, acc
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (t *transferRoutes) cancel(w http.ResponseWriter, r *http.Request, account protocol.ID) error {
+	id := protocol.ID(r.PathValue("upload"))
+	if err := t.service.Cancel(r.Context(), account, id); err != nil {
+		return err
+	}
+	upload, err := t.service.Get(r.Context(), account, id)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, r, http.StatusOK, upload)
 	return nil
 }

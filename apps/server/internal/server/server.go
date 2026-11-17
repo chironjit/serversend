@@ -28,15 +28,17 @@ import (
 const shutdownTimeout = 10 * time.Second
 
 type Server struct {
-	logs         *applog.Store
-	db           *sql.DB
-	locks        *instancelock.Locks
-	tls          *tls.Config
-	identity     identity.Identity
-	accounts     *auth.Service
-	transfers    *uploads.Service
-	draining     atomic.Bool
-	drainTimeout time.Duration
+	maintenanceCancel context.CancelFunc
+	maintenanceDone   chan struct{}
+	logs              *applog.Store
+	db                *sql.DB
+	locks             *instancelock.Locks
+	tls               *tls.Config
+	identity          identity.Identity
+	accounts          *auth.Service
+	transfers         *uploads.Service
+	draining          atomic.Bool
+	drainTimeout      time.Duration
 }
 
 // New validates TLS and writable deployment paths before creating metadata. It
@@ -84,7 +86,7 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 		db.Close()
 		return nil, err
 	}
-	transfers, err := uploads.New(database.NewRepository(db), store, protocol.ID(id.ID), httpapi.Capabilities().Limits, nil)
+	transfers, err := uploads.New(database.NewRepository(db), store, protocol.ID(id.ID), httpapi.Capabilities().Limits, nil, uploads.StoragePolicy{GlobalBytes: c.GlobalBytes, UserBytes: c.UserBytes, MinFreeBytes: c.MinFreeBytes})
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -96,7 +98,24 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 	}
 	logs.Add("info", "Server initialized; metadata and storage ready")
 	keepLocks = true
-	return &Server{logs: logs, db: db, locks: locks, tls: tlsConfig, identity: id, accounts: accounts, transfers: transfers, drainTimeout: shutdownTimeout}, nil
+	maintenanceCtx, maintenanceCancel := context.WithCancel(context.Background())
+	maintenanceDone := make(chan struct{})
+	go func() {
+		defer close(maintenanceDone)
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-maintenanceCtx.Done():
+				return
+			case <-ticker.C:
+				if err := transfers.Maintain(maintenanceCtx); err != nil && maintenanceCtx.Err() == nil {
+					logs.Add("error", "Upload maintenance failed; retrying next minute")
+				}
+			}
+		}
+	}()
+	return &Server{maintenanceCancel: maintenanceCancel, maintenanceDone: maintenanceDone, logs: logs, db: db, locks: locks, tls: tlsConfig, identity: id, accounts: accounts, transfers: transfers, drainTimeout: shutdownTimeout}, nil
 }
 
 // newAccounts loads the TOTP protection key before any account request can be
@@ -127,6 +146,8 @@ func (s *Server) Identity() identity.Identity { return s.identity }
 
 func (s *Server) Logs() *applog.Store { return s.logs }
 func (s *Server) Close() error {
+	s.maintenanceCancel()
+	<-s.maintenanceDone
 	s.logs.Add("info", "Server stopped")
 	return errors.Join(s.logs.Close(), s.db.Close(), s.locks.Close())
 }

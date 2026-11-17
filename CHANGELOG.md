@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added storage quotas and free-space reservations, expired-upload cleanup and account-scoped cancellation. Startup reconciles orphan objects and rejects missing/truncated acknowledged data. Strengthened directory flush ordering; schema 8 adds recovery indexes. See [storage settings](docs/server-development.md#storage-capacity-and-recovery).
+
 ### Usability iteration
 
 - Persistent application logs in the admin panel, with search, level filters, coloured Info/OK/Warning/Error indicators and older-entry navigation.

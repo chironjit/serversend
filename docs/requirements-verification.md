@@ -110,3 +110,18 @@ Local Linux amd64 work used three implementation agents, Go 1.26.3, writable `/t
 | Root `git diff --check` | Passed |
 
 Outstanding: native Windows/macOS links/junctions/ACLs/cloud-placeholder and picker behavior; actual Unraid locking, backup/restore and TCP/UDP reachability; LAN/direct-tailnet/relayed-tailnet/private/resume/fairness/peak-memory measurements. The remaining roadmap features and release gates are open. No complete feature acceptance is inferred from this partial parallel delivery.
+
+### Storage recovery follow-up, 2026-11-17
+
+Implemented schema 8 recovery indexes, configurable global/per-user content quotas, transactional upload reservations, data-volume free-space headroom, reservation-bounded chunk writes, idempotent account-scoped cancellation, minute expiry maintenance and restart-safe deletion. Startup streams orphan-object reconciliation under the instance lock and refuses missing/truncated acknowledged objects. Publication flushes object shard, object root and incoming directory entries; an uncertain metadata error retains its object for startup reconciliation rather than risking deletion of committed bytes.
+
+Executed on Linux amd64 / Go 1.26.3, using `GOCACHE=/tmp/serversend-go-cache`, `GOWORK=off`, `GOPROXY=off`, `GOSUMDB=off`, `-mod=readonly`:
+
+- Server `go test -race ./...`: passed, including real HTTP/3/TLS transfer/restore tests. Local listeners required sandbox escalation.
+- Server `go vet ./...` and `bash apps/server/scripts/check.sh`: passed; 27 admin tests, production assets and server build passed.
+- New recovery suites: concurrent quota admission, separate global/account scopes, idempotent replays, duplicate/conflicting chunks, low-space refusal, reservation bounds, repeated cancellation/expiry, foreign cancellation rejection, cancellation/finalization races, active publication/cancellation, metadata rollback, and subprocess exit after publication before metadata recording. Referenced bytes survive reconciliation; missing acknowledged objects stop startup.
+- Storage fault tests inject short writes, ENOSPC, EROFS and flush failure and exercise truncated/digest-mismatched bodies. These are deterministic error tests, not actual full/read-only mounts or power cuts.
+- Shared `go test -race ./source ./client`: passed on Linux. Storage tests cross-compiled for Windows and macOS; this is not native execution.
+- Re-ran `BenchmarkStandardUpload -benchtime=20x`; results/limits are recorded in the performance baseline.
+
+Still required for the selected features: native Windows/macOS picker/link/junction/cloud/ACL/race workflows; intended-deployment useful throughput and separate client/server peak RSS to qualify worker/buffer/concurrency limits; actual full/read-only filesystem and power-loss durability tests. Unraid/tailnet/scale and later-feature integrations remain in their existing roadmap gates. No full feature acceptance is inferred from these local checks.

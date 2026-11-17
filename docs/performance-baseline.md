@@ -117,3 +117,7 @@ On 2026-11-17 the source-free transport race checks passed, followed by the full
 ## Open acceptance gates
 
 Encryption/KDF stages, private transfers, resume/reconnect, useful versus retry wire rates, per-user fairness, configurable global resource ceilings, aggregate peak RSS, 100,000-file scale, actual disk flushing, LAN, direct tailnet and relayed tailnet remain unmeasured. Native Windows/macOS transport execution and Unraid TCP/UDP operation remain unqualified. Extend the same rigs as those features arrive; do not mark feature 2 complete from these local samples.
+
+## Storage safety follow-up (2026-11-17)
+
+Re-ran the same 20-upload loopback benchmark after quota admission, expiry maintenance, serialized object mutation and additional directory flushes. Same machine and tmpfs limitations apply; checks/builds also ran on the host. Four-MiB chunk cases measured 438.07 MB/s over HTTP/2 and 314.52 MB/s over HTTP/3 for 8-MiB files (19.149/26.671 ms per file, 4,901,351/5,914,228 B/op). One-KiB files measured 1.168/1.277 ms per file (109,437/158,694 B/op). These are short local samples, not target-device throughput or peak RSS measurements. The preferred chunk size and single desktop worker remain unchanged. The server now serializes chunk publication and lifecycle mutations; fairness and aggregate resource ceilings still need target-deployment measurements before increasing concurrency.
