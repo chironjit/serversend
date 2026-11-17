@@ -6,6 +6,7 @@ export type {
     Batch,
     Enrollment,
     File,
+    FilePage,
     Item,
     Profile,
     SkippedItem,

@@ -16,7 +16,10 @@ const Filename = "desktop.sqlite"
 //go:embed schema.sql
 var initialSchema string
 
-var migrations = []sqlite.Migration{{Version: 1, SQL: initialSchema}}
+//go:embed queue.sql
+var queueSchema string
+
+var migrations = []sqlite.Migration{{Version: 1, SQL: initialSchema}, {Version: 2, SQL: queueSchema}}
 
 // Open requires an existing private application directory. Windows callers must
 // provision a user-only ACL. Startup does not create directories or repair access.

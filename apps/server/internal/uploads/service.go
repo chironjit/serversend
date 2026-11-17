@@ -39,15 +39,17 @@ var (
 type StoragePolicy struct{ GlobalBytes, UserBytes, MinFreeBytes int64 }
 
 type Service struct {
-	mu        sync.Mutex
-	writersMu sync.Mutex
-	writers   map[string]bool // chunk writers in progress
-	policy    StoragePolicy
-	repo      *database.Repository
-	store     *storage.Store
-	serverID  protocol.ID
-	limits    protocol.TransferLimits
-	now       func() time.Time
+	catalogKey      [32]byte
+	catalogInstance protocol.ID
+	mu              sync.Mutex
+	writersMu       sync.Mutex
+	writers         map[string]bool // chunk writers in progress
+	policy          StoragePolicy
+	repo            *database.Repository
+	store           *storage.Store
+	serverID        protocol.ID
+	limits          protocol.TransferLimits
+	now             func() time.Time
 }
 
 func New(repo *database.Repository, store *storage.Store, serverID protocol.ID, limits protocol.TransferLimits, now func() time.Time, policy ...StoragePolicy) (*Service, error) {
@@ -58,6 +60,10 @@ func New(repo *database.Repository, store *storage.Store, serverID protocol.ID, 
 		now = time.Now
 	}
 	s := &Service{repo: repo, store: store, serverID: serverID, limits: limits, now: now}
+	if _, err := rand.Read(s.catalogKey[:]); err != nil {
+		return nil, err
+	}
+	s.catalogInstance = newID()
 	s.policy.MinFreeBytes = 64 << 20
 	if len(policy) > 0 {
 		s.policy = policy[0]
@@ -421,23 +427,6 @@ func (s *Service) Finalize(ctx context.Context, account, upload protocol.ID, bod
 		return api.FinalizeResult{}, err
 	}
 	return api.FinalizeResult{UploadID: upload, FileID: result.FileID, VersionID: result.VersionID, State: result.State, CatalogRevision: revision(result.CatalogRevision), HeadRevision: revision(result.HeadRevision)}, nil
-}
-
-func (s *Service) Catalog(ctx context.Context, account, parent protocol.ID) (api.CatalogPage, error) {
-	current, files, err := s.repo.Catalog(ctx, account, parent, api.MaxPageSize)
-	if err != nil {
-		return api.CatalogPage{}, err
-	}
-	page := api.CatalogPage{Page: api.Page{Snapshot: newID()}, CatalogRevision: revision(current), Entries: []api.CatalogEntry{}}
-	for _, file := range files {
-		kind := api.File
-		if file.Directory {
-			kind = api.Directory
-		}
-		page.Entries = append(page.Entries, api.CatalogEntry{ID: file.ID, ParentID: file.ParentID, Kind: kind, Mode: protocol.Standard, HeadVersionID: file.HeadVersionID,
-			HeadRevision: revision(file.HeadRevision), Standard: &protocol.StandardMetadata{Name: file.Name}})
-	}
-	return page, nil
 }
 
 // Manifest returns the exact bytes accepted at finalization.

@@ -22,6 +22,12 @@ func (m *Manager) CreateDirectory(ctx context.Context, parent, name string) erro
 // Links and unsupported special files are skipped visibly; genuine failures
 // remain failures. Neither scanning nor the later worker follows source links.
 func (m *Manager) UploadFolder(ctx context.Context, root, parent string) (err error) {
+	if m.durableErr != nil {
+		return m.durableErr
+	}
+	if m.durable != nil {
+		return m.queueUploads([]string{root}, parent, true)
+	}
 	c, err := m.current()
 	if err != nil {
 		return err
@@ -35,6 +41,12 @@ func (m *Manager) UploadFolder(ctx context.Context, root, parent string) (err er
 // on the bounded queue, so it continues in the background; its outcome is
 // reported in Batches.
 func (m *Manager) StartFolderUpload(root, parent string) error {
+	if m.durableErr != nil {
+		return m.durableErr
+	}
+	if m.durable != nil {
+		return m.queueUploads([]string{root}, parent, true)
+	}
 	c, err := m.current()
 	if err != nil {
 		return err

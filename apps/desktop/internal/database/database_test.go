@@ -225,7 +225,7 @@ func TestDesktopSchemaUpgradeAndFutureGuard(t *testing.T) {
 	if db, err := Open(ctx, dir); db != nil || !errors.Is(err, sqlite.ErrFutureSchema) {
 		t.Fatalf("future guard: %v", err)
 	}
-	// v0 is the only supported prior desktop fixture. It has no product tables.
+	// Upgrade an empty desktop database through every current migration.
 	fresh := t.TempDir()
 	if err := os.Chmod(fresh, 0700); err != nil {
 		t.Fatal(err)
@@ -241,7 +241,7 @@ func TestDesktopSchemaUpgradeAndFutureGuard(t *testing.T) {
 	}
 	defer db.Close()
 	var version int
-	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
 		t.Fatalf("version=%d error=%v", version, err)
 	}
 	if _, err := Open(ctx, filepath.Join(fresh, "missing")); err == nil {
@@ -305,5 +305,37 @@ func TestDesktopMigrationFailureAndOwnedTaskReferences(t *testing.T) {
 		if _, err := db.Exec(`UPDATE profiles SET catalog_revision=?`, rev); err == nil {
 			t.Fatalf("invalid revision=%s", rev)
 		}
+	}
+}
+
+func TestDesktopV1QueueUpgradePreservesFoundation(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sqlite.Open(ctx, filepath.Join(dir, Filename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlite.Migrate(ctx, db, []sqlite.Migration{{Version: 1, SQL: initialSchema}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO profiles(server_id,account_id,display_name,identity_key) VALUES('11111111111111111111111111111111','22222222222222222222222222222222','preserved',zeroblob(32))`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	db, err = Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var name string
+	if err := db.QueryRow(`SELECT display_name FROM profiles`).Scan(&name); err != nil || name != "preserved" {
+		t.Fatalf("v1 row lost: %q %v", name, err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM transfer_tasks`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("queue migration: %d %v", count, err)
 	}
 }

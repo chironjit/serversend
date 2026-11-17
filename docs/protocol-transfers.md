@@ -1,6 +1,6 @@
 # Transfer, catalog and queue contract
 
-This is the v1 specification for the later storage/client implementations. Shared wire types, structural validation and fixtures are implemented; the running server does not yet expose these routes. General encoding, errors, ownership and pagination follow [protocol foundation](protocol-foundation.md); credentials and trust follow [identity](protocol-identity.md).
+This is the v1 specification for the later storage/client implementations. Shared wire types, structural validation and the standard transfer/catalog runtime are implemented. Private storage, version/trash controls and event streaming remain later features. General encoding, errors, ownership and pagination follow [protocol foundation](protocol-foundation.md); credentials and trust follow [identity](protocol-identity.md).
 
 ## Route and authorization table
 
@@ -80,6 +80,9 @@ Chunk 17 must specify authenticated encrypted names/paths/original lengths and h
 
 ## Catalog snapshots, history and events
 
+Current runtime uses five-minute HMAC cursors bound to account, folder, limit, revision, snapshot and server instance. Revision changes, expiry and server restart require a fresh listing; pages are never silently combined across revisions. There is no retained delta history yet: `changes?after` returns an empty interval if unchanged, otherwise `snapshot_expired` and a full paginated refresh. The event stream below remains planned.
+
+
 `CatalogPage` contains `snapshot`, `catalog_revision`, `entries` and optional continuation. The revision is the account's high-water mark at snapshot creation, unchanged across pages. Root is virtual; parent IDs are opaque and account-owned. Entries can be files or directories, standard/private, active/trashed. A file requires a head version ID; directories have no file version and can be empty. Entries carry positive per-entry `head_revision` and mode-appropriate metadata only. A private directory also has opaque encrypted metadata. In a default non-trash listing, tombstones never masquerade as live entries.
 
 `VersionPage` is bound to one file, includes immutable manifest digests and exposes retained conflict versions for download/selection. Validate digests and account/file ownership on every manifest and chunk read, not just the first list request. Compare a fetched manifest's exact transmitted bytes with `manifest_sha256` before trusting it. The version's mode is immutable; later defaults or head changes cannot rewrite it.
@@ -91,6 +94,8 @@ The event stream sends frames with `id: <sequence>`, `event: message` and one `d
 Send `Last-Event-ID` on reconnect. Invalid IDs fail with `invalid_request`; IDs older than retained history fail with `snapshot_expired` **before** opening the stream. Replay may duplicate messages; discard sequences already handled. On sequence gaps, expired history, disconnect or suspected staleness, reconcile catalog revisions/full snapshot and current authorization. A new stream without a replay cursor is followed by catalog reconciliation. Slow consumers are disconnected rather than blocking transfers; a bounded queue drop triggers the same reconciliation. Never treat event delivery as proof of storage durability or the revocation enforcement mechanism.
 
 ## Durable desktop queue
+
+The current SQLite v2 runtime stores operational tasks as `queued`, `active`, wait/retry states, `paused`, `done`, `skipped`, `failed`, `cancel_pending`, `cancelling` or `cancelled`. Batch summaries are computed from these rows. Retry requeues only failed/cancelled tasks in that selection, preserving completed work and stable task IDs; it does not clone the selection. The shared `QueueState`/v1 foundation transition table below remains the logical job contract, distinct from those operational task states.
 
 `QueueState` is local, not a synchronized server job. Scope every job/file task and acknowledgement by server/account, persist before networking, and checkpoint reasons/counters/cursors/source fingerprints. One unavailable profile must not block another. The scanner persists incremental work with bounded memory; file tasks can transfer while the batch scanner continues. Job-level `scanning` tracks discovery, and completing discovery checkpoints through `queued` before scheduling the final `running` stage. Do not require a whole-batch in-memory list or a scan-complete total before beginning useful work.
 

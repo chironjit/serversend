@@ -25,6 +25,10 @@ export function Approve(fingerprint: string): $CancellablePromise<void> {
     return $Call.ByID(2096377435, fingerprint);
 }
 
+export function Bandwidth(): $CancellablePromise<number> {
+    return $Call.ByID(1331167779);
+}
+
 /**
  * Batches returns bounded summaries of recent upload selections, including skipped paths.
  */
@@ -51,12 +55,20 @@ export function CancelTransfer(id: number): $CancellablePromise<void> {
     return $Call.ByID(469066147, id);
 }
 
+export function CatalogChanged(revision: string): $CancellablePromise<boolean> {
+    return $Call.ByID(649846079, revision);
+}
+
 /**
  * ChooseAndDownload asks where to save a listed file and queues the download.
  * It reports false when the user cancels the dialog.
  */
 export function ChooseAndDownload(fileID: string): $CancellablePromise<boolean> {
     return $Call.ByID(3318539324, fileID);
+}
+
+export function ChooseAndRestore(ids: string[] | null, policy: string): $CancellablePromise<boolean> {
+    return $Call.ByID(1764753598, ids, policy);
 }
 
 /**
@@ -107,6 +119,10 @@ export function Files(parent: string): $CancellablePromise<transfer$0.File[] | n
     return $Call.ByID(3648180037, parent);
 }
 
+export function FilesPage(parent: string, cursor: string): $CancellablePromise<transfer$0.FilePage> {
+    return $Call.ByID(2116377366, parent, cursor);
+}
+
 export function OpenProfile(origin: string): $CancellablePromise<transfer$0.Account> {
     return $Call.ByID(1263544311, origin);
 }
@@ -117,6 +133,14 @@ export function Probe(address: string): $CancellablePromise<client$0.ServerProbe
 
 export function Profiles(): $CancellablePromise<transfer$0.Profile[] | null> {
     return $Call.ByID(3376120596);
+}
+
+export function QueueAction(id: number, batch: boolean, action: string): $CancellablePromise<void> {
+    return $Call.ByID(369337231, id, batch, action);
+}
+
+export function QueueHealth(): $CancellablePromise<string> {
+    return $Call.ByID(2228102431);
 }
 
 export function RemoveProfile(origin: string): $CancellablePromise<void> {
@@ -133,6 +157,10 @@ export function RevokeDevice(id: string): $CancellablePromise<void> {
 
 export function SessionStatus(): $CancellablePromise<transfer$0.Step> {
     return $Call.ByID(2415278904);
+}
+
+export function SetBandwidth(bytesPerSecond: number): $CancellablePromise<void> {
+    return $Call.ByID(1328107891, bytesPerSecond);
 }
 
 export function SetRemember(remember: boolean): $CancellablePromise<void> {

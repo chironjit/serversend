@@ -63,6 +63,10 @@ func (m *Manager) startBatch(parent context.Context, name string) (int, context.
 // CancelBatch stops scanning, skips queued files and interrupts active ones.
 // Files already published stay on the server.
 func (m *Manager) CancelBatch(id int) {
+	if m.durable != nil {
+		_ = m.QueueAction(id, true, "cancel")
+		return
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if b := m.batches[id]; b != nil && (b.scanning || b.pending > 0) {
@@ -159,6 +163,17 @@ func (m *Manager) finishFile(batchID int, bytes int64, err error) {
 }
 
 func (m *Manager) Batches() []Batch {
+	if m.durable != nil {
+		scope, _, err := m.durableScope()
+		if err != nil {
+			return []Batch{}
+		}
+		batches, err := m.durable.store.batches(m.base(), scope)
+		if err != nil {
+			return []Batch{}
+		}
+		return batches
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	result := make([]Batch, 0, len(m.batches))

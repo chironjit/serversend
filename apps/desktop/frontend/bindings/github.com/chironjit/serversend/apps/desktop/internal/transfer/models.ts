@@ -9,6 +9,7 @@ import * as client$0 from "../../../../shared/client/models.js";
 import * as protocol$0 from "../../../../shared/protocol/models.js";
 
 export interface Account {
+    "scope": string;
     "reauthenticationRequired": boolean;
     "username": string;
     "origin": string;
@@ -63,10 +64,18 @@ export interface File {
     "name": string;
 }
 
+export interface FilePage {
+    "files": File[] | null;
+    "nextCursor": string;
+    "revision": string;
+    "snapshot": string;
+}
+
 /**
  * Item is one upload or download as shown in the transfer list.
  */
 export interface Item {
+    "scope": string;
     "batchId": number;
     "speed": number;
     "id": number;

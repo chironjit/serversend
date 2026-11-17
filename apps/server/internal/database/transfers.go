@@ -230,9 +230,18 @@ func (r *Repository) CommitUpload(ctx context.Context, account, upload protocol.
 	return result, err
 }
 
-// Catalog returns the account's files and revision from one snapshot. The
-// slice has a flat namespace; directories and paging arrive with Chunk 10.
-func (r *Repository) Catalog(ctx context.Context, account protocol.ID, parent protocol.ID, limit int) (uint64, []FileEntry, error) {
+// Catalog returns a bounded initial page for compatibility callers.
+func (r *Repository) Catalog(ctx context.Context, account, parent protocol.ID, limit int) (uint64, []FileEntry, error) {
+	return r.CatalogWindow(ctx, account, parent, "", nil, limit)
+}
+
+// CatalogWindow reads revision and entries in one SQLite snapshot. A continuation
+// can only read the captured revision: changes invalidate it rather than silently
+// skipping inserted rows or mixing generations between pages.
+func (r *Repository) CatalogWindow(ctx context.Context, account, parent, after protocol.ID, expected *uint64, limit int) (uint64, []FileEntry, error) {
+	if account.Validate() != nil || parent != "" && parent.Validate() != nil || after != "" && after.Validate() != nil || limit < 1 || limit > api.MaxPageSize+1 {
+		return 0, nil, api.Error{Code: api.InvalidRequest, Message: "Invalid catalog query"}
+	}
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return 0, nil, err
@@ -242,7 +251,19 @@ func (r *Repository) Catalog(ctx context.Context, account protocol.ID, parent pr
 	if err := tx.QueryRowContext(ctx, `SELECT catalog_revision FROM accounts WHERE id=?`, account).Scan(&revision); err != nil {
 		return 0, nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,head_version_id,name,head_revision,parent_id,0 FROM files WHERE account_id=? AND parent_id=? AND hidden=0 UNION ALL SELECT id,'',name,revision,parent_id,1 FROM directories WHERE account_id=? AND parent_id=? ORDER BY id LIMIT ?`, account, parent, account, parent, limit)
+	if expected != nil && *expected != revision {
+		return 0, nil, api.Error{Code: api.SnapshotExpired, Message: "The catalog changed; refresh this folder"}
+	}
+	if parent != "" {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM directories WHERE account_id=? AND id=?`, account, parent).Scan(&exists); err != nil {
+			return 0, nil, err
+		}
+		if exists == 0 {
+			return 0, nil, api.Error{Code: api.NotFound, Message: "Destination folder does not exist for this account"}
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,head_version_id,name,head_revision,parent_id,0 FROM files WHERE account_id=? AND parent_id=? AND hidden=0 AND id>? UNION ALL SELECT id,'',name,revision,parent_id,1 FROM directories WHERE account_id=? AND parent_id=? AND id>? ORDER BY id LIMIT ?`, account, parent, after, account, parent, after, limit)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -256,6 +277,12 @@ func (r *Repository) Catalog(ctx context.Context, account protocol.ID, parent pr
 		entries = append(entries, e)
 	}
 	return revision, entries, rows.Err()
+}
+
+func (r *Repository) CatalogRevision(ctx context.Context, account protocol.ID) (uint64, error) {
+	var revision uint64
+	err := r.db.QueryRowContext(ctx, `SELECT catalog_revision FROM accounts WHERE id=?`, account).Scan(&revision)
+	return revision, err
 }
 
 // Version returns the exact stored manifest and the upload that owns its chunks.

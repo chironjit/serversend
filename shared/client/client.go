@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -344,30 +345,70 @@ func (c *Client) Catalog(ctx context.Context) (api.CatalogPage, error) {
 	return c.CatalogFolder(ctx, "")
 }
 
+// CatalogFolder returns one compatibility page (at most 1000 entries).
+// New browsing/restore callers must follow CatalogFolderPage continuations.
 func (c *Client) CatalogFolder(ctx context.Context, parent protocol.ID) (api.CatalogPage, error) {
+	return c.catalogFolder(ctx, parent, "", api.MaxPageSize)
+}
+
+// CatalogFolderPage returns a bounded page. Cursors are opaque and bound to
+// this account/folder/snapshot. SnapshotExpired requires restarting the listing.
+func (c *Client) CatalogFolderPage(ctx context.Context, parent protocol.ID, cursor api.Cursor) (api.CatalogPage, error) {
+	return c.catalogFolder(ctx, parent, cursor, api.DefaultPageSize)
+}
+
+func (c *Client) catalogFolder(ctx context.Context, parent protocol.ID, cursor api.Cursor, limit int) (api.CatalogPage, error) {
+	if parent != "" && parent.Validate() != nil || cursor.Validate() != nil {
+		return api.CatalogPage{}, errors.New("invalid folder or continuation")
+	}
+	query := url.Values{"parent_id": {string(parent)}, "limit": {strconv.Itoa(limit)}}
+	if cursor != "" {
+		query.Set("cursor", string(cursor))
+	}
 	var page api.CatalogPage
 	err := retryTransfer(ctx, func() error {
-		var e error
-		page, e = c.catalogFolder(ctx, parent)
-		return e
+		response, e := c.do(ctx, call{method: "GET", path: "/catalog?" + query.Encode(), token: c.token()})
+		if e != nil {
+			return e
+		}
+		defer response.Body.Close()
+		page, e = api.DecodeCatalogPage(response.Body, nil)
+		if e != nil {
+			return fmt.Errorf("the server sent an unreadable file list: %w", e)
+		}
+		if len(page.Entries) > limit {
+			return errors.New("the server exceeded the requested catalog page size")
+		}
+		for _, entry := range page.Entries {
+			if entry.ParentID != parent {
+				return errors.New("the server sent a file from another folder")
+			}
+		}
+		return nil
 	})
 	return page, err
 }
 
-func (c *Client) catalogFolder(ctx context.Context, parent protocol.ID) (api.CatalogPage, error) {
-	if parent != "" && parent.Validate() != nil {
-		return api.CatalogPage{}, errors.New("invalid folder ID")
+// CatalogChanges detects revision changes. Servers without retained history
+// return SnapshotExpired for an older revision; reconcile via a full listing.
+func (c *Client) CatalogChanges(ctx context.Context, after protocol.Revision) (api.CatalogChanges, error) {
+	if after.Validate() != nil {
+		return api.CatalogChanges{}, errors.New("invalid catalog revision")
 	}
-	response, err := c.do(ctx, call{method: "GET", path: "/catalog?parent_id=" + string(parent), token: c.token()})
-	if err != nil {
-		return api.CatalogPage{}, err
-	}
-	defer response.Body.Close()
-	page, err := api.DecodeCatalogPage(response.Body, nil)
-	if err != nil {
-		return api.CatalogPage{}, fmt.Errorf("the server sent an unreadable file list: %w", err)
-	}
-	return page, nil
+	var changes api.CatalogChanges
+	err := retryTransfer(ctx, func() error {
+		response, e := c.do(ctx, call{method: "GET", path: "/catalog/changes?after=" + url.QueryEscape(string(after)), token: c.token()})
+		if e != nil {
+			return e
+		}
+		defer response.Body.Close()
+		changes, e = api.DecodeCatalogChanges(response.Body, nil)
+		if e == nil && changes.FromRevision != after {
+			return errors.New("the server sent an unrelated catalog interval")
+		}
+		return e
+	})
+	return changes, err
 }
 
 // SavedSession returns credentials for the native OS credential store only.

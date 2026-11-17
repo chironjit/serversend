@@ -156,3 +156,30 @@ func (s *TransferService) ChooseServerCA(ctx context.Context, address string) (c
 	}
 	return s.manager.ProbeAuthority(ctx, address, string(data))
 }
+
+func (s *TransferService) FilesPage(ctx context.Context, parent, cursor string) (transfer.FilePage, error) {
+	return s.manager.FilesPage(ctx, parent, cursor)
+}
+func (s *TransferService) CatalogChanged(ctx context.Context, revision string) (bool, error) {
+	return s.manager.CatalogChanged(ctx, revision)
+}
+func (s *TransferService) QueueAction(id int, batch bool, action string) error {
+	return s.manager.QueueAction(id, batch, action)
+}
+func (s *TransferService) SetBandwidth(bytesPerSecond int64) error {
+	return s.manager.SetBandwidth(bytesPerSecond)
+}
+func (s *TransferService) ChooseAndRestore(ids []string, policy string) (bool, error) {
+	if len(ids) == 0 {
+		return false, errors.New("select files or folders to restore")
+	}
+	path, err := application.Get().Dialog.OpenFile().SetTitle("Choose restore destination").CanChooseFiles(false).CanChooseDirectories(true).PromptForSingleSelection()
+	if err != nil || path == "" {
+		return false, err
+	}
+	return true, s.manager.Restore(ids, path, policy)
+}
+
+func (s *TransferService) Bandwidth() int64 { return s.manager.Bandwidth() }
+
+func (s *TransferService) QueueHealth() string { return s.manager.QueueHealth() }

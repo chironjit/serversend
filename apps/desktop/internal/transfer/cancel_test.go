@@ -93,7 +93,9 @@ func (f *fakeServer) handler(t *testing.T) http.HandlerFunc {
 		case strings.HasSuffix(path, "/finalize"):
 			var m protocol.Manifest
 			_ = json.NewDecoder(r.Body).Decode(&m)
-			reply(200, committed(m))
+			result := committed(m)
+			result.UploadID = protocol.ID(strings.TrimSuffix(strings.TrimPrefix(path, "/uploads/"), "/finalize"))
+			reply(200, result)
 		case r.Method == "DELETE" && strings.HasPrefix(path, "/uploads/"):
 			f.cancelled = append(f.cancelled, strings.TrimPrefix(path, "/uploads/"))
 			reply(200, struct{}{})

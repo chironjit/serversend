@@ -21,7 +21,6 @@ import {
   TriangleAlert,
   Upload,
   UserRound,
-  X,
 } from 'lucide-vue-next';
 import { TransferService } from '../bindings/github.com/chironjit/serversend/apps/desktop';
 import type {
@@ -75,10 +74,16 @@ const openProfile = (origin: string) =>
     remember.value = saved?.remember ?? false;
     username.value = saved?.username ?? '';
     account.value = undefined;
+    transfers.value = [];
+    batches.value = [];
+    samples.clear();
     devices.value = [];
     showDevices.value = false;
     revokeDeviceID.value = '';
     files.value = [];
+    selectedIDs.value = [];
+    catalogRevision.value = '';
+    libraryRequest++;
     folders.value = [];
     view.value = 'password';
     const restored = await TransferService.OpenProfile(origin);
@@ -86,7 +91,8 @@ const openProfile = (origin: string) =>
       account.value = restored;
       view.value = restored.reauthenticationRequired ? 'reauth' : 'files';
       if (view.value === 'reauth') return;
-      files.value = (await TransferService.Files('')) ?? [];
+      await loadFilePage('');
+      await Promise.all([refreshBatches(), loadBandwidth()]);
     }
   });
 const removeProfile = (origin: string) =>
@@ -139,6 +145,87 @@ function deviceDate(value?: string) {
 }
 
 const files = ref<File[]>([]);
+const fileCursor = ref('');
+const nextFileCursor = ref('');
+const previousFilePages = ref<string[]>([]);
+const filePageNumber = ref(1);
+const catalogRevision = ref('');
+const catalogSnapshot = ref('');
+const catalogNotice = ref('');
+const selectedIDs = ref<string[]>([]);
+const restorePolicy = ref('fail');
+let libraryRequest = 0;
+
+async function loadFilePage(
+  folder: string,
+  cursor = '',
+  direction: 'reset' | 'next' | 'back' = 'reset',
+) {
+  const request = ++libraryRequest;
+  let effectiveCursor = cursor;
+  let page;
+  let resetNotice = '';
+  try {
+    page = await TransferService.FilesPage(folder, cursor);
+  } catch (reason) {
+    if (!cursor) throw reason;
+    // A continuation cannot be trusted after a catalog mutation or reconnect.
+    // Restart once; the fresh request also surfaces authentication/network errors.
+    page = await TransferService.FilesPage(folder, '');
+    effectiveCursor = '';
+    resetNotice = 'The folder changed or its page expired. Showing the first page.';
+  }
+  if (
+    effectiveCursor &&
+    (page.revision !== catalogRevision.value || page.snapshot !== catalogSnapshot.value)
+  ) {
+    page = await TransferService.FilesPage(folder, '');
+    effectiveCursor = '';
+    resetNotice = 'The folder changed. Showing the latest first page.';
+  }
+  if (request !== libraryRequest || view.value !== 'files') return false;
+  if (!effectiveCursor || direction === 'reset') {
+    previousFilePages.value = [];
+    filePageNumber.value = 1;
+  } else if (direction === 'next') {
+    previousFilePages.value = [...previousFilePages.value, fileCursor.value].slice(-100);
+    filePageNumber.value++;
+  } else {
+    previousFilePages.value.pop();
+    filePageNumber.value--;
+  }
+  fileCursor.value = effectiveCursor;
+  nextFileCursor.value = page.nextCursor;
+  catalogRevision.value = page.revision;
+  catalogSnapshot.value = page.snapshot;
+  files.value = page.files ?? [];
+  selectedIDs.value = [];
+  catalogNotice.value = resetNotice;
+  return true;
+}
+const changeFilePage = (back = false) =>
+  attempt(async () => {
+    const cursor = back ? (previousFilePages.value.at(-1) ?? '') : nextFileCursor.value;
+    await loadFilePage(parent.value, cursor, back ? 'back' : 'next');
+  });
+const restoreSelection = (ids = selectedIDs.value) =>
+  attempt(async () => {
+    if (!ids.length) return;
+    await TransferService.ChooseAndRestore(ids, restorePolicy.value);
+    await refreshBatches();
+  });
+const bandwidth = ref('0');
+async function loadBandwidth() {
+  bandwidth.value = String((await TransferService.Bandwidth()) / 1048576);
+}
+const setBandwidth = () =>
+  attempt(async () => {
+    const limit = Number(bandwidth.value);
+    if (!Number.isFinite(limit) || limit < 0 || limit > Number.MAX_SAFE_INTEGER / 1048576) {
+      throw new Error('Enter a nonnegative bandwidth limit. Use 0 for unlimited.');
+    }
+    await TransferService.SetBandwidth(Math.round(limit * 1048576));
+  });
 const folders = ref<{ id: string; name: string }[]>([]);
 const parent = computed(() => folders.value.at(-1)?.id ?? '');
 const folderName = ref('');
@@ -170,15 +257,12 @@ function chart(direction: 'up' | 'down') {
 }
 const openFolder = (file: File) =>
   attempt(async () => {
-    const list = await TransferService.Files(file.id);
-    folders.value.push({ id: file.id, name: file.name });
-    files.value = list ?? [];
+    if (await loadFilePage(file.id)) folders.value.push({ id: file.id, name: file.name });
   });
 const navigate = (depth: number) =>
   attempt(async () => {
-    const list = await TransferService.Files(folders.value[depth - 1]?.id ?? '');
-    folders.value = folders.value.slice(0, depth);
-    files.value = list ?? [];
+    if (await loadFilePage(folders.value[depth - 1]?.id ?? ''))
+      folders.value = folders.value.slice(0, depth);
   });
 const pendingDelete = ref<File>();
 const deleteEntry = () =>
@@ -186,13 +270,13 @@ const deleteEntry = () =>
     if (!pendingDelete.value) return;
     await TransferService.DeleteEntry(pendingDelete.value.id);
     pendingDelete.value = undefined;
-    files.value = (await TransferService.Files(parent.value)) ?? [];
+    await loadFilePage(parent.value);
   });
 const createFolder = () =>
   attempt(async () => {
     await TransferService.CreateDirectory(parent.value, folderName.value);
     folderName.value = '';
-    files.value = (await TransferService.Files(parent.value)) ?? [];
+    await loadFilePage(parent.value);
   });
 const uploadMenu = ref(false);
 const uploadFolder = () =>
@@ -203,7 +287,7 @@ const uploadFolder = () =>
     } finally {
       await refreshBatches();
     }
-    files.value = (await TransferService.Files(parent.value)) ?? [];
+    await loadFilePage(parent.value);
   });
 // Replaced wholesale on each event batch; deep reactivity over thousands of
 // queued files is what made large folder uploads freeze the window.
@@ -217,7 +301,17 @@ let pendingBatchRefresh = false;
 const recentBatches = computed(() => batches.value.toReversed());
 const batchStateLabel: Record<string, string> = {
   scanning: 'Scanning',
-  running: 'Uploading',
+  running: 'Transferring',
+  queued: 'Queued',
+  paused: 'Paused',
+  waiting_network: 'Waiting for connection',
+  waiting_authentication: 'Sign-in required',
+  waiting_capacity: 'Waiting for space',
+  retry_scheduled: 'Retry scheduled',
+  cancel_pending: 'Cancelling',
+  cancelling: 'Cancelling',
+  partial: 'Completed with issues',
+  complete: 'Completed',
   done: 'Completed',
   done_with_skips: 'Completed with skipped items',
   all_skipped: 'Nothing uploaded',
@@ -233,18 +327,33 @@ const batchStateTone: Record<string, 'primary' | 'neutral' | 'success' | 'warnin
   cancelled: 'neutral',
   failed: 'danger',
 };
-// Cancellation is reported through transfer events and batch summaries.
-function cancelTransfer(id: number) {
-  void TransferService.CancelTransfer(id).catch((reason) => {
-    error.value = failure(reason);
+const terminalStates = new Set([
+  'done',
+  'complete',
+  'done_with_skips',
+  'all_skipped',
+  'skipped',
+  'cancelled',
+  'failed',
+  'partial',
+]);
+const canPause = (state: string) =>
+  !terminalStates.has(state) &&
+  state !== 'paused' &&
+  state !== 'cancel_pending' &&
+  state !== 'cancelling';
+const canCancel = (state: string) =>
+  !terminalStates.has(state) && state !== 'cancel_pending' && state !== 'cancelling';
+const queueAction = (id: number, batch: boolean, action: string) =>
+  attempt(async () => {
+    await TransferService.QueueAction(id, batch, action);
+    await refreshBatches();
   });
+function cancelTransfer(id: number) {
+  void queueAction(id, false, 'cancel');
 }
 function cancelBatch(id: number) {
-  void TransferService.CancelBatch(id)
-    .then(() => refreshBatches())
-    .catch((reason) => {
-      error.value = failure(reason);
-    });
+  void queueAction(id, true, 'cancel');
 }
 
 async function refreshBatches() {
@@ -254,14 +363,20 @@ async function refreshBatches() {
     return;
   }
   fetchingBatches = true;
+  const scope = account.value;
   try {
-    const list = await TransferService.Batches();
-    if (view.value === 'files') {
+    const [list, items, health] = await Promise.all([
+      TransferService.Batches(),
+      TransferService.Transfers(),
+      TransferService.QueueHealth(),
+    ]);
+    if (view.value === 'files' && account.value === scope) {
       batches.value = (list ?? []).slice(-100);
-      batchError.value = '';
+      transfers.value = boundTransfers(items ?? []);
+      batchError.value = health ?? '';
     }
   } catch (reason) {
-    batchError.value = failure(reason);
+    if (account.value === scope) batchError.value = failure(reason);
   } finally {
     fetchingBatches = false;
     if (pendingBatchRefresh) {
@@ -289,6 +404,13 @@ const activeCount = computed(
 );
 const stateTone: Record<string, 'primary' | 'neutral' | 'success' | 'warning' | 'danger'> = {
   active: 'primary',
+  running: 'primary',
+  paused: 'neutral',
+  waiting_network: 'warning',
+  waiting_authentication: 'warning',
+  waiting_capacity: 'warning',
+  retry_scheduled: 'warning',
+  cancel_pending: 'neutral',
   queued: 'neutral',
   done: 'success',
   failed: 'danger',
@@ -297,6 +419,14 @@ const stateTone: Record<string, 'primary' | 'neutral' | 'success' | 'warning' | 
 };
 const stateLabel: Record<string, string> = {
   active: 'Active',
+  running: 'Active',
+  paused: 'Paused',
+  waiting_network: 'Waiting for connection',
+  waiting_authentication: 'Sign-in required',
+  waiting_capacity: 'Waiting for space',
+  retry_scheduled: 'Retry scheduled',
+  cancel_pending: 'Cancelling',
+  cancelling: 'Cancelling',
   queued: 'Queued',
   done: 'Done',
   failed: 'Failed',
@@ -379,7 +509,8 @@ const completeReauthentication = () =>
     account.value = await TransferService.CompleteReauthentication(code.value);
     code.value = '';
     view.value = 'files';
-    files.value = (await TransferService.Files(parent.value)) ?? [];
+    await Promise.all([refreshBatches(), loadBandwidth()]);
+    await loadFilePage(parent.value);
   });
 let sessionTimer: ReturnType<typeof setInterval> | undefined;
 let sessionChecking = false;
@@ -388,6 +519,14 @@ async function checkSession() {
   sessionChecking = true;
   try {
     const status = await TransferService.SessionStatus();
+    if (
+      status.next === 'files' &&
+      catalogRevision.value &&
+      (await TransferService.CatalogChanged(catalogRevision.value))
+    ) {
+      await loadFilePage(parent.value);
+      catalogNotice.value = 'The folder changed. Showing the latest first page.';
+    }
     if (status.next === 'reauth') {
       code.value = '';
       view.value = 'reauth';
@@ -397,6 +536,9 @@ async function checkSession() {
       showDevices.value = false;
       revokeDeviceID.value = '';
       files.value = [];
+      selectedIDs.value = [];
+      catalogRevision.value = '';
+      libraryRequest++;
       folders.value = [];
       view.value = 'password';
       error.value = 'Device authorization expired or was revoked. Sign in again.';
@@ -415,13 +557,13 @@ const completeSignIn = () =>
     code.value = '';
     recoveryCodes.value = [];
     view.value = 'files';
-    await refreshBatches();
-    files.value = (await TransferService.Files(parent.value)) ?? [];
+    await Promise.all([refreshBatches(), loadBandwidth()]);
+    await loadFilePage(parent.value);
   });
 
 const refresh = () =>
   attempt(async () => {
-    files.value = (await TransferService.Files(parent.value)) ?? [];
+    await loadFilePage(parent.value);
   });
 
 const upload = () =>
@@ -432,7 +574,7 @@ const upload = () =>
     } finally {
       await refreshBatches();
     }
-    files.value = (await TransferService.Files(parent.value)) ?? [];
+    await loadFilePage(parent.value);
   });
 
 const download = (file: File) =>
@@ -451,6 +593,11 @@ const signOut = () =>
       revokeDeviceID.value = '';
       folders.value = [];
       files.value = [];
+      selectedIDs.value = [];
+      catalogRevision.value = '';
+      libraryRequest++;
+      transfers.value = [];
+      samples.clear();
       batches.value = [];
       batchError.value = '';
       view.value = 'password';
@@ -494,16 +641,42 @@ function timing(batch: Batch): string {
 function status(item: Item): string {
   if (item.state === 'failed' || item.state === 'skipped') return item.error;
   if (item.state === 'queued') return 'Waiting';
+  if (
+    item.state === 'paused' ||
+    item.state.startsWith('waiting_') ||
+    item.state === 'retry_scheduled' ||
+    item.state === 'cancel_pending'
+  )
+    return item.error || stateLabel[item.state] || item.state;
   if (item.state === 'done') return `Done · ${size(item.total)}`;
   return `${size(item.done)} of ${size(item.total)} · ${size(item.speed ?? 0)}/s`;
 }
 
+function boundTransfers(list: Item[]) {
+  const active = list.filter((item) => item.state === 'active' || item.state === 'running');
+  const pending = list
+    .filter(
+      (item) =>
+        !terminalStates.has(item.state) && item.state !== 'active' && item.state !== 'running',
+    )
+    .slice(0, 20);
+  const finished = list
+    .filter((item) => terminalStates.has(item.state))
+    .sort((a, b) => b.id - a.id);
+  const bounded = [...active, ...pending, ...finished].slice(0, maxTransferRows);
+  const kept = new Set(bounded.map((item) => item.id));
+  for (const id of samples.keys()) if (!kept.has(id)) samples.delete(id);
+  return bounded;
+}
+
 // Events arrive as batches of changed transfers, a few times a second.
 function onTransfers(items: Item[]) {
+  if (view.value !== 'files') return;
   const list = [...transfers.value];
   const index = new Map(list.map((entry, position) => [entry.id, position]));
   let uploaded = false;
   for (const item of items) {
+    if (item.scope && item.scope !== account.value?.scope) continue;
     const position = index.get(item.id);
     if (position === undefined) {
       index.set(item.id, list.length);
@@ -512,21 +685,7 @@ function onTransfers(items: Item[]) {
     } else list[position] = item;
     uploaded ||= item.state === 'done' && item.direction === 'upload';
   }
-  // Keep all current work and only the latest finished rows. Source scans
-  // may contain arbitrarily many files; the window need not retain them all.
-  let finished = list.filter(
-    (entry) => entry.state !== 'active' && entry.state !== 'queued',
-  ).length;
-  transfers.value =
-    finished <= maxTransferRows
-      ? list
-      : list.filter((entry) => {
-          if (finished <= maxTransferRows || entry.state === 'active' || entry.state === 'queued')
-            return true;
-          finished -= 1;
-          samples.delete(entry.id);
-          return false;
-        });
+  transfers.value = boundTransfers(list);
   if (uploaded && view.value === 'files') refreshFilesSoon();
 }
 
@@ -538,13 +697,9 @@ function refreshFilesSoon() {
   const run = () => {
     filesTimer = undefined;
     filesRefreshedAt = Date.now();
-    void TransferService.Files(parent.value)
-      .then((list) => {
-        files.value = list ?? [];
-      })
-      .catch((reason) => {
-        error.value = failure(reason);
-      });
+    void loadFilePage(parent.value).catch((reason) => {
+      error.value = failure(reason);
+    });
   };
   const wait = filesRefreshedAt + 2000 - Date.now();
   if (wait <= 0) run();
@@ -576,10 +731,7 @@ onMounted(() => {
   rateTimer = setInterval(sampleRates, 1000);
   sessionTimer = setInterval(() => void checkSession(), 30000);
   batchTimer = setInterval(() => {
-    if (
-      busy.value ||
-      batches.value.some((batch) => batch.state === 'scanning' || batch.state === 'running')
-    ) {
+    if (view.value === 'files' && !busy.value) {
       void refreshBatches();
     }
   }, 1000);
@@ -1122,9 +1274,46 @@ onUnmounted(() => {
             </UiButton>
           </form>
 
-          <p v-if="files.length === 1000" class="text-muted-foreground m-0 px-5 pt-3 text-xs">
-            Showing the first 1,000 entries. This test build does not yet support catalog
-            pagination.
+          <div
+            class="border-border flex flex-wrap items-center gap-3 border-b px-4 py-3"
+            aria-label="Restore selection"
+          >
+            <label class="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                :disabled="busy || !files.length"
+                :checked="files.length > 0 && selectedIDs.length === files.length"
+                @change="
+                  selectedIDs = ($event.target as HTMLInputElement).checked
+                    ? files.map((file) => file.id)
+                    : []
+                "
+              />
+              Select this page
+            </label>
+            <label class="flex items-center gap-2 text-sm">
+              Existing files
+              <select
+                v-model="restorePolicy"
+                :disabled="busy"
+                aria-label="Existing file policy"
+                class="border-input bg-card h-9 rounded-md border px-2"
+              >
+                <option value="fail">Stop and report</option>
+                <option value="skip">Skip existing</option>
+                <option value="replace">Replace existing</option>
+              </select>
+            </label>
+            <UiButton
+              variant="outline"
+              :disabled="busy || selectedIDs.length === 0"
+              @click="restoreSelection()"
+            >
+              <Download aria-hidden="true" />Restore selected ({{ selectedIDs.length }})…
+            </UiButton>
+          </div>
+          <p v-if="catalogNotice" class="text-muted-foreground m-0 px-5 py-3 text-sm" role="status">
+            {{ catalogNotice }}
           </p>
           <UiEmpty v-if="files.length === 0" title="Nothing uploaded yet">
             <template #icon><FolderOpen /></template>
@@ -1140,6 +1329,13 @@ onUnmounted(() => {
               :key="file.id"
               class="group border-border hover:bg-muted/50 flex items-center gap-2 border-t px-4 py-2 transition-colors first:border-t-0"
             >
+              <input
+                v-model="selectedIDs"
+                type="checkbox"
+                :value="file.id"
+                :disabled="busy"
+                :aria-label="'Select ' + file.name"
+              />
               <button
                 v-if="file.directory"
                 type="button"
@@ -1176,6 +1372,16 @@ onUnmounted(() => {
                 <Download aria-hidden="true" />
               </UiButton>
               <UiButton
+                v-if="file.directory"
+                variant="ghost"
+                size="icon-sm"
+                :disabled="busy"
+                :aria-label="'Restore folder ' + file.name"
+                title="Restore folder…"
+                @click="restoreSelection([file.id])"
+                ><Download aria-hidden="true"
+              /></UiButton>
+              <UiButton
                 variant="ghost"
                 size="icon-sm"
                 class="delete-action hover:text-destructive"
@@ -1188,6 +1394,28 @@ onUnmounted(() => {
               </UiButton>
             </li>
           </ul>
+          <nav
+            aria-label="File pages"
+            class="border-border flex items-center justify-between gap-2 border-t px-4 py-3"
+          >
+            <UiButton
+              variant="outline"
+              size="sm"
+              :disabled="busy || !previousFilePages.length"
+              @click="changeFilePage(true)"
+              >Previous files</UiButton
+            >
+            <span class="text-muted-foreground text-xs"
+              >Page {{ filePageNumber }} · {{ files.length }} entries</span
+            >
+            <UiButton
+              variant="outline"
+              size="sm"
+              :disabled="busy || !nextFileCursor"
+              @click="changeFilePage()"
+              >Next files</UiButton
+            >
+          </nav>
         </UiCard>
 
         <UiCard as="section" id="transfers" class="min-w-0">
@@ -1198,6 +1426,23 @@ onUnmounted(() => {
               </template>
             </UiCardHeader>
           </div>
+          <form class="flex flex-wrap items-end gap-2 px-5 pt-4" @submit.prevent="setBandwidth">
+            <label for="bandwidth" class="grid gap-1 text-xs"
+              >Bandwidth limit (MiB/s; 0 = unlimited)
+              <UiInput
+                id="bandwidth"
+                v-model="bandwidth"
+                type="number"
+                min="0"
+                step="any"
+                class="max-w-44"
+                required
+              />
+            </label>
+            <UiButton type="submit" variant="outline" size="sm" :disabled="busy"
+              >Apply limit</UiButton
+            >
+          </form>
           <div class="grid grid-cols-2 gap-3 p-5 pb-3">
             <div class="bg-muted/60 min-w-0 rounded-lg p-3">
               <p class="text-muted-foreground m-0 flex items-center gap-1.5 text-xs">
@@ -1248,8 +1493,8 @@ onUnmounted(() => {
               Acknowledged/verified bytes per second; includes disk and verification time.
             </p>
           </div>
-          <section class="border-border mt-4 border-t px-5 py-4" aria-label="Upload selections">
-            <h3 class="m-0 text-sm font-semibold">Upload selections</h3>
+          <section class="border-border mt-4 border-t px-5 py-4" aria-label="Transfer selections">
+            <h3 class="m-0 text-sm font-semibold">Transfer selections</h3>
             <p class="text-muted-foreground m-0 mt-1 text-xs leading-5">
               Links and unsupported files are skipped. Select a link's real target to upload its
               contents. The latest 100 selections and up to 100 skipped paths per selection are
@@ -1257,7 +1502,7 @@ onUnmounted(() => {
             </p>
             <div v-if="batchError" class="mt-3" role="alert">
               <p class="text-destructive m-0 text-xs">
-                Upload summaries unavailable: {{ batchError }}
+                Transfer summaries unavailable: {{ batchError }}
               </p>
               <UiButton variant="ghost" size="sm" @click="refreshBatches">Retry summaries</UiButton>
             </div>
@@ -1265,7 +1510,7 @@ onUnmounted(() => {
               v-if="batches.length"
               class="m-0 mt-3 grid max-h-80 list-none gap-3 overflow-y-auto p-0"
               tabindex="0"
-              aria-label="Recent upload selections"
+              aria-label="Recent transfer selections"
             >
               <li
                 v-for="batch in recentBatches"
@@ -1280,7 +1525,34 @@ onUnmounted(() => {
                     batchStateLabel[batch.state] ?? batch.state
                   }}</UiBadge>
                   <UiButton
-                    v-if="batch.state === 'scanning' || batch.state === 'running'"
+                    v-if="canPause(batch.state)"
+                    variant="ghost"
+                    size="sm"
+                    :disabled="busy"
+                    :aria-label="`Pause ${batch.name}`"
+                    @click="queueAction(batch.id, true, 'pause')"
+                    >Pause</UiButton
+                  >
+                  <UiButton
+                    v-if="batch.state === 'paused'"
+                    variant="ghost"
+                    size="sm"
+                    :disabled="busy"
+                    :aria-label="`Resume ${batch.name}`"
+                    @click="queueAction(batch.id, true, 'resume')"
+                    >Resume</UiButton
+                  >
+                  <UiButton
+                    v-if="['failed', 'partial', 'cancelled'].includes(batch.state)"
+                    variant="ghost"
+                    size="sm"
+                    :disabled="busy"
+                    :aria-label="`Retry ${batch.name}`"
+                    @click="queueAction(batch.id, true, 'retry')"
+                    >Retry unresolved</UiButton
+                  >
+                  <UiButton
+                    v-if="canCancel(batch.state)"
                     variant="ghost"
                     size="sm"
                     :aria-label="`Cancel ${batch.name}`"
@@ -1289,7 +1561,7 @@ onUnmounted(() => {
                   >
                 </div>
                 <p class="text-muted-foreground m-0 mt-2 text-xs leading-5" role="status">
-                  {{ batch.completed }} of {{ batch.files }} files uploaded ·
+                  {{ batch.completed }} of {{ batch.files }} files transferred ·
                   {{ batch.directories }} folders created · {{ batch.skipped }} skipped ·
                   {{ batch.failed }} failed<template v-if="batch.cancelled">
                     · {{ batch.cancelled }} cancelled</template
@@ -1305,7 +1577,7 @@ onUnmounted(() => {
                   v-if="batch.state === 'all_skipped'"
                   class="text-warning m-0 mt-1 text-xs leading-5"
                 >
-                  Zero files uploaded. Every selected item was skipped.
+                  Zero files transferred. Every selected item was skipped.
                 </p>
                 <p
                   v-if="batch.error"
@@ -1345,7 +1617,7 @@ onUnmounted(() => {
           </section>
           <UiEmpty v-if="transfers.length === 0" title="No transfers yet">
             <template #icon><ArrowLeftRight /></template>
-            Uploads and downloads from this session appear here.
+            Saved uploads and downloads appear here.
           </UiEmpty>
           <ul
             v-else
@@ -1374,14 +1646,45 @@ onUnmounted(() => {
                   {{ stateLabel[item.state] ?? item.state }}
                 </UiBadge>
                 <UiButton
-                  v-if="item.state === 'active' || item.state === 'queued'"
+                  v-if="canPause(item.state)"
                   variant="ghost"
-                  size="icon-sm"
+                  size="sm"
+                  :disabled="busy"
+                  :aria-label="`Pause ${item.name}`"
+                  @click="queueAction(item.id, false, 'pause')"
+                  >Pause</UiButton
+                >
+                <UiButton
+                  v-if="
+                    item.state === 'paused' ||
+                    item.state.startsWith('waiting_') ||
+                    item.state === 'retry_scheduled'
+                  "
+                  variant="ghost"
+                  size="sm"
+                  :disabled="busy"
+                  :aria-label="`Resume ${item.name}`"
+                  @click="queueAction(item.id, false, 'resume')"
+                  >Resume</UiButton
+                >
+                <UiButton
+                  v-if="item.state === 'failed' || item.state === 'cancelled'"
+                  variant="ghost"
+                  size="sm"
+                  :disabled="busy"
+                  :aria-label="`Retry ${item.name}`"
+                  @click="queueAction(item.id, false, 'retry')"
+                  >Retry</UiButton
+                >
+                <UiButton
+                  v-if="canCancel(item.state)"
+                  variant="ghost"
+                  size="sm"
+                  :disabled="busy"
                   :aria-label="`Cancel ${item.name}`"
                   @click="cancelTransfer(item.id)"
+                  >Cancel</UiButton
                 >
-                  <X aria-hidden="true" />
-                </UiButton>
               </div>
               <p
                 class="text-muted-foreground m-0 truncate pl-6 text-xs tabular-nums"
@@ -1395,11 +1698,10 @@ onUnmounted(() => {
             </li>
           </ul>
           <p
-            v-if="transfers.length > recentTransfers.length"
+            v-if="transfers.length >= maxTransferRows"
             class="text-muted-foreground border-border m-0 border-t px-5 py-3 text-xs"
           >
-            Showing {{ recentTransfers.length }} of {{ transfers.length }} transfers. Waiting files
-            appear here as earlier ones finish.
+            Showing up to 200 recent transfers. Selection summaries include all files.
           </p>
         </UiCard>
       </main>

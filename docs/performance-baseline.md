@@ -2,6 +2,8 @@
 
 Measured on 2026-11-17. This is an initial local baseline for feature 2, not acceptance of transport performance, storage durability, private mode or deployment qualification.
 
+The 2026-11-18 durable desktop queue uses per-file checkpointed requests with eight workers. The batched results below measure the batch API and earlier in-memory queue; they do not establish current durable small-file throughput. Remeasure on the intended deployment before optimizing durable batching.
+
 ## Reproduce
 
 From the repository root with Go 1.26.3 and the module cache restored:

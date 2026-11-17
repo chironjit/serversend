@@ -271,7 +271,8 @@ func (m *Manager) OpenProfile(ctx context.Context, origin string) (Account, erro
 		return Account{}, message(err)
 	}
 	current, _ := c.Account()
-	return Account{Username: current.Username, Origin: origin, ServerID: string(current.ServerID), ReauthenticationRequired: errors.Is(err, client.ErrTOTPRequired)}, nil
+	m.wakeAuthenticated(c)
+	return Account{Scope: string(current.ServerID) + "/" + string(current.AccountID), Username: current.Username, Origin: origin, ServerID: string(current.ServerID), ReauthenticationRequired: errors.Is(err, client.ErrTOTPRequired)}, nil
 }
 func (m *Manager) RemoveProfile(origin string) error {
 	m.connectionMu.Lock()
@@ -364,7 +365,8 @@ func (m *Manager) CompleteReauthentication(ctx context.Context, code string) (Ac
 		return Account{}, message(err)
 	}
 	session, _ := c.Account()
-	return Account{Username: session.Username, Origin: c.Origin(), ServerID: string(session.ServerID)}, nil
+	m.wakeAuthenticated(c)
+	return Account{Scope: string(session.ServerID) + "/" + string(session.AccountID), Username: session.Username, Origin: c.Origin(), ServerID: string(session.ServerID)}, nil
 }
 
 // ProbeAuthority accepts only a public CA, supplied locally by the operator.

@@ -144,6 +144,7 @@ func newTransferRoutes(accounts *auth.Service, service *uploads.Service) *transf
 		"POST " + api.BasePath + "/uploads/{upload}/finalize":                     t.finalize,
 		"DELETE " + api.BasePath + "/catalog/{entry}":                             t.deleteEntry,
 		"POST " + api.BasePath + "/directories":                                   t.directory,
+		"GET " + api.BasePath + "/catalog/changes":                                t.catalogChanges,
 		"GET " + api.BasePath + "/catalog":                                        t.catalog,
 		"GET " + api.BasePath + "/files/{file}/versions/{version}/manifest":       t.manifest,
 		"GET " + api.BasePath + "/files/{file}/versions/{version}/chunks/{index}": t.chunk,
@@ -304,9 +305,34 @@ func (t *transferRoutes) finalize(w http.ResponseWriter, r *http.Request, accoun
 }
 
 func (t *transferRoutes) catalog(w http.ResponseWriter, r *http.Request, account protocol.ID) error {
-	page, err := t.service.Catalog(r.Context(), account, protocol.ID(r.URL.Query().Get("parent_id")))
+	query := r.URL.Query()
+	limit := api.DefaultPageSize
+	if raw := query.Get("limit"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || strconv.Itoa(value) != raw {
+			return api.Error{Code: api.InvalidRequest, Message: "Invalid catalog page limit"}
+		}
+		limit = value
+	}
+	for _, name := range []string{"parent_id", "limit", "cursor"} {
+		if len(query[name]) > 1 {
+			return api.Error{Code: api.InvalidRequest, Message: "Duplicate catalog query parameter"}
+		}
+	}
+	page, err := t.service.CatalogPage(r.Context(), account, protocol.ID(query.Get("parent_id")), api.PageRequest{Limit: limit, Cursor: api.Cursor(query.Get("cursor"))})
 	if err == nil {
 		writeJSON(w, r, 200, page)
+	}
+	return err
+}
+
+func (t *transferRoutes) catalogChanges(w http.ResponseWriter, r *http.Request, account protocol.ID) error {
+	if len(r.URL.Query()["after"]) != 1 {
+		return api.Error{Code: api.InvalidRequest, Message: "Send one catalog revision"}
+	}
+	result, err := t.service.CatalogChanges(r.Context(), account, protocol.Revision(r.URL.Query().Get("after")))
+	if err == nil {
+		writeJSON(w, r, 200, result)
 	}
 	return err
 }

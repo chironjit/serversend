@@ -31,6 +31,7 @@ type Enrollment struct {
 }
 
 type Account struct {
+	Scope                    string `json:"scope"`
 	ReauthenticationRequired bool   `json:"reauthenticationRequired"`
 	Username                 string `json:"username"`
 	Origin                   string `json:"origin"`
@@ -45,6 +46,7 @@ type File struct {
 
 // Item is one upload or download as shown in the transfer list.
 type Item struct {
+	Scope     string  `json:"scope"`
 	BatchID   int     `json:"batchId"`
 	Speed     float64 `json:"speed"`
 	ID        int     `json:"id"`
@@ -87,6 +89,8 @@ type Manager struct {
 	nextBatch   int
 	profilePath string
 	profiles    []Profile
+	durable     *durableQueue
+	durableErr  error
 }
 
 // workers transfer files concurrently. Small files are dominated by request
@@ -101,9 +105,7 @@ func New(ctx context.Context, emit func([]Item)) *Manager {
 		emit = func([]Item) {}
 	}
 	m := &Manager{ctx: ctx, emit: coalesce(ctx, emit), queue: make(chan job, 4096), catalog: map[string]api.CatalogEntry{}}
-	for range workers {
-		go m.work(ctx)
-	}
+	m.durableErr = m.enableDurable("")
 	return m
 }
 
@@ -137,6 +139,21 @@ func coalesce(ctx context.Context, emit func([]Item)) func(Item) {
 	}()
 	return func(item Item) {
 		mu.Lock()
+		// Events are hints; the durable queue is the source of truth. Bound a
+		// stalled window's pending map as well as the rendered transfer list.
+		if _, exists := changed[item.ID]; !exists && len(changed) >= 200 {
+			oldest := item.ID
+			for id := range changed {
+				if id < oldest {
+					oldest = id
+				}
+			}
+			if oldest == item.ID {
+				mu.Unlock()
+				return
+			}
+			delete(changed, oldest)
+		}
 		changed[item.ID] = item
 		mu.Unlock()
 		select {
@@ -316,6 +333,9 @@ func (m *Manager) ConfirmEnrollment(ctx context.Context, code string) ([]string,
 func (m *Manager) CompleteSignIn(ctx context.Context, code string) (Account, error) {
 	m.connectionMu.Lock()
 	defer m.connectionMu.Unlock()
+	if err := m.idle(); err != nil {
+		return Account{}, err
+	}
 	c, _, _, challenge, err := m.pending()
 	if err != nil {
 		return Account{}, err
@@ -334,11 +354,13 @@ func (m *Manager) CompleteSignIn(ctx context.Context, code string) (Account, err
 	}
 	m.mu.Lock()
 	m.password, m.challenge = "", ""
+	m.catalog = map[string]api.CatalogEntry{}
 	m.mu.Unlock()
 	if err := m.saveLogin(c); err != nil {
 		return Account{}, err
 	}
-	return Account{Username: session.Username, Origin: c.Origin(), ServerID: string(session.ServerID)}, nil
+	m.wakeAuthenticated(c)
+	return Account{Scope: string(session.ServerID) + "/" + string(session.AccountID), Username: session.Username, Origin: c.Origin(), ServerID: string(session.ServerID)}, nil
 }
 
 func (m *Manager) SignOut(ctx context.Context) error {
@@ -362,6 +384,8 @@ func (m *Manager) SignOut(ctx context.Context) error {
 
 // Files lists the account's files sorted by name.
 func (m *Manager) Files(ctx context.Context, parent string) ([]File, error) {
+	m.connectionMu.Lock()
+	defer m.connectionMu.Unlock()
 	c, err := m.current()
 	if err != nil {
 		return nil, err
@@ -428,6 +452,10 @@ func (m *Manager) enqueue(parent context.Context, j job) error {
 
 // CancelTransfer stops one queued or active transfer.
 func (m *Manager) CancelTransfer(id int) {
+	if m.durable != nil {
+		_ = m.QueueAction(id, false, "cancel")
+		return
+	}
 	m.mu.Lock()
 	cancel := m.cancels[id]
 	m.mu.Unlock()
@@ -445,6 +473,12 @@ func (m *Manager) base() context.Context {
 
 // Upload queues local files. Each is published as a new file on the server.
 func (m *Manager) Upload(paths []string, parent string) (err error) {
+	if m.durableErr != nil {
+		return m.durableErr
+	}
+	if m.durable != nil {
+		return m.queueUploads(paths, parent, false)
+	}
 	c, err := m.current()
 	if err != nil {
 		return err
@@ -478,11 +512,21 @@ func (m *Manager) Upload(paths []string, parent string) (err error) {
 
 // Download queues a listed file for restoring to destination.
 func (m *Manager) Download(id, destination string) error {
+	if m.durable != nil {
+		m.connectionMu.Lock()
+		defer m.connectionMu.Unlock()
+	}
+	if m.durableErr != nil {
+		return m.durableErr
+	}
 	m.mu.Lock()
 	entry, ok := m.catalog[id]
 	m.mu.Unlock()
 	if !ok {
 		return errors.New("refresh the file list and choose the file again")
+	}
+	if m.durable != nil {
+		return m.queueDownload(entry, destination, "replace")
 	}
 	c, err := m.current()
 	if err != nil {
@@ -493,6 +537,17 @@ func (m *Manager) Download(id, destination string) error {
 
 // Transfers returns every transfer of this run, oldest first.
 func (m *Manager) Transfers() []Item {
+	if m.durable != nil {
+		scope, _, err := m.durableScope()
+		if err != nil {
+			return []Item{}
+		}
+		items, err := m.durable.store.items(m.base(), scope)
+		if err != nil {
+			return []Item{}
+		}
+		return items
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return append([]Item{}, m.items...)
@@ -517,6 +572,9 @@ func sortFiles(files []File) {
 }
 
 func (m *Manager) idle() error {
+	if m.durable != nil {
+		return m.durable.suspend()
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, batch := range m.batches {
