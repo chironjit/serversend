@@ -223,17 +223,12 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 		}
 	}
 
-	// Stored objects are complete on the data volume, and none is in staging.
-	var objects, bytesStored int64
-	_ = filepath.Walk(filepath.Join(config.DataDir, "objects"), func(_ string, info os.FileInfo, err error) error {
-		if err == nil && info.Mode().IsRegular() {
-			objects++
-			bytesStored += info.Size()
+	// Each file is browsable at its real name in the user's folder.
+	for name, data := range fixtures {
+		stored, err := os.ReadFile(filepath.Join(config.DataDir, "first", name))
+		if err != nil || !bytes.Equal(stored, data) {
+			t.Fatalf("data/first/%s differs from its source: %v", name, err)
 		}
-		return nil
-	})
-	if objects != 5 || bytesStored != 1234+(4<<20)+(9<<20)+17 {
-		t.Fatalf("stored %d objects, %d bytes", objects, bytesStored)
 	}
 
 	// A second account sees nothing and cannot read the first account's files.
@@ -265,8 +260,12 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := admin.CreateDirectory(t.Context(), folder.ID, "Empty folder"); !errors.As(err, &failure) || failure.Code != api.Conflict {
-		t.Fatalf("duplicate folder: %v", err)
+	// Creating an existing folder name merges into it, so folders re-upload.
+	if again, err := admin.CreateDirectory(t.Context(), folder.ID, "Empty folder"); err != nil || again.ID != nested.ID {
+		t.Fatalf("duplicate folder: %+v %v", again, err)
+	}
+	if info, err := os.Stat(filepath.Join(config.DataDir, "first", "Backups", "Empty folder")); err != nil || !info.IsDir() {
+		t.Fatalf("empty folder not browsable: %v", err)
 	}
 	if _, err := admin.CreateDirectory(t.Context(), "", "../escape"); err == nil {
 		t.Fatal("unsafe name accepted")
@@ -280,6 +279,21 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 	if _, err := admin.UploadTo(t.Context(), filepath.Join(source, "small.txt"), folder.ID, nil); err != nil {
 		t.Fatal(err)
 	}
+	// Uploading the same name replaces the visible file and retains the old one.
+	if err := os.WriteFile(filepath.Join(source, "small.txt"), []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := admin.UploadTo(t.Context(), filepath.Join(source, "small.txt"), folder.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored, err := os.ReadFile(filepath.Join(config.DataDir, "first", "Backups", "small.txt")); err != nil || string(stored) != "replacement" {
+		t.Fatalf("replacement not visible: %q %v", stored, err)
+	}
+	var retained int
+	if err := s.db.QueryRow(`SELECT count(*) FROM files WHERE hidden=1`).Scan(&retained); err != nil || retained != 1 {
+		t.Fatalf("replaced file not retained: %d %v", retained, err)
+	}
 	contents, err := admin.CatalogFolder(t.Context(), folder.ID)
 	if err != nil || len(contents.Entries) != 2 {
 		t.Fatalf("folder contents %+v: %v", contents, err)
@@ -290,6 +304,9 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 	}
 	for _, entry := range contents.Entries {
 		if entry.Kind == api.File {
+			if entry.ID != replacement.FileID {
+				t.Fatalf("catalog shows the replaced file")
+			}
 			if err := admin.Download(t.Context(), entry, filepath.Join(restored, "nested.txt"), nil); err != nil {
 				t.Fatal(err)
 			}
@@ -320,20 +337,17 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 	if err != nil || len(after.Entries) != len(page.Entries) {
 		t.Fatalf("catalog after deletion: %+v %v", after, err)
 	}
-	var objectsAfter int64
-	if err := filepath.WalkDir(filepath.Join(config.DataDir, "objects"), func(_ string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() {
-			objectsAfter++
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
+	// The folder and every retained version are gone from the data volume.
+	if _, err := os.Stat(filepath.Join(config.DataDir, "first", "Backups")); !os.IsNotExist(err) {
+		t.Fatalf("deleted folder still browsable: %v", err)
 	}
-	if objectsAfter != objects {
-		t.Fatalf("deleted objects not reclaimed: %d != %d", objectsAfter, objects)
+	for _, area := range []string{"versions", "trash", "uploads", "tmp"} {
+		_ = filepath.WalkDir(filepath.Join(config.DataDir, ".serversend", area), func(path string, d fs.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
+				t.Errorf("left after deletion: %s", path)
+			}
+			return nil
+		})
 	}
 	if err := admin.DeleteEntry(t.Context(), page.Entries[0].ID); err != nil {
 		t.Fatal(err)

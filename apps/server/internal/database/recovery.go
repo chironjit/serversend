@@ -3,7 +3,11 @@ package database
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
+
+	"github.com/chironjit/serversend/apps/server/internal/layout"
+	"github.com/chironjit/serversend/apps/server/internal/storage"
 
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
@@ -30,8 +34,9 @@ func checkCapacity(ctx context.Context, tx *sql.Tx, t Transfer, c Capacity) erro
 	return nil
 }
 
-// RetireUploads durably queues objects for deletion before removing their chunk
-// references. Terminal upload rows remain as idempotency tombstones.
+// RetireUploads cancels one upload (if id is set) and expires overdue ones,
+// journaling removal of their files and releasing their reservations.
+// Terminal upload rows remain as idempotency tombstones.
 func (r *Repository) RetireUploads(ctx context.Context, now time.Time, account, id protocol.ID) error {
 	return r.write(ctx, func(tx *sql.Tx) error {
 		if id != "" {
@@ -42,15 +47,42 @@ func (r *Repository) RetireUploads(ctx context.Context, now time.Time, account, 
 			if t.State == protocol.UploadCommitted || t.State == protocol.UploadConflicted {
 				return api.Error{Code: api.Conflict, Message: "A finalized upload cannot be cancelled"}
 			}
-			if _, err = tx.ExecContext(ctx, `UPDATE uploads SET state='cancelled' WHERE account_id=? AND id=? AND state='open'`, account, id); err != nil {
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT id FROM uploads WHERE state='open' AND (expires_at<=? OR (account_id=? AND id=?))`, now.UnixMilli(), account, id)
+		if err != nil {
+			return err
+		}
+		var retired []protocol.ID
+		for rows.Next() {
+			var upload protocol.ID
+			if err := rows.Scan(&upload); err != nil {
+				rows.Close()
+				return err
+			}
+			retired = append(retired, upload)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for _, upload := range retired {
+			if err := journal(ctx, tx, storage.Op{Kind: "remove", Source: "", Target: layout.Upload(upload)}); err != nil {
 				return err
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE uploads SET state='expired' WHERE state='open' AND expires_at<=?`, now.UnixMilli()); err != nil {
-			return err
+		for _, query := range []string{
+			`UPDATE uploads SET state='cancelled' WHERE account_id=? AND id=? AND state='open'`,
+			`UPDATE uploads SET state='expired' WHERE state='open' AND expires_at<=?`,
+		} {
+			args := []any{account, id}
+			if strings.Contains(query, "expired") {
+				args = []any{now.UnixMilli()}
+			}
+			if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+				return err
+			}
 		}
 		for _, query := range []string{
-			`INSERT OR IGNORE INTO deleted_objects SELECT object_id FROM chunks c JOIN uploads u ON u.account_id=c.account_id AND u.id=c.upload_id WHERE u.state IN ('expired','cancelled')`,
 			`DELETE FROM chunks WHERE EXISTS (SELECT 1 FROM uploads u WHERE u.account_id=chunks.account_id AND u.id=chunks.upload_id AND u.state IN ('expired','cancelled'))`,
 			`DELETE FROM reservations WHERE EXISTS (SELECT 1 FROM uploads u WHERE u.account_id=reservations.account_id AND u.id=reservations.upload_id AND u.state IN ('expired','cancelled'))`,
 		} {
@@ -60,31 +92,6 @@ func (r *Repository) RetireUploads(ctx context.Context, now time.Time, account, 
 		}
 		return nil
 	})
-}
-
-func (r *Repository) ObjectReferenced(ctx context.Context, id protocol.ID) (bool, error) {
-	var found bool
-	err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM chunks WHERE object_id=?)`, id).Scan(&found)
-	return found, err
-}
-
-func (r *Repository) CheckObjects(ctx context.Context, check func(protocol.ID, int64) error) error {
-	rows, err := r.db.QueryContext(ctx, `SELECT object_id,byte_count FROM chunks`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id protocol.ID
-		var size int64
-		if err = rows.Scan(&id, &size); err != nil {
-			return err
-		}
-		if err = check(id, size); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
 }
 
 func (r *Repository) UnwrittenBytes(ctx context.Context, account, upload protocol.ID) (int64, error) {

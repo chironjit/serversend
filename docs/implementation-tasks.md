@@ -79,7 +79,7 @@ For every feature:
 
 **Status:** standard-data recovery, capacity reservations and lifecycle cleanup implemented; actual filesystem/power-loss qualification remains open.
 
-- [x] Verify chunk length/digest, flush object bytes and publish by rename before recording the chunk; commit file metadata transactionally. Retain restartable cleanup of explicitly deleted objects. Crash-boundary qualification remains below.
+- [x] Verify chunk length/digest and flush bytes at their offset before recording the chunk; commit file metadata and journaled tree changes transactionally, replaying the journal at startup. Crash-boundary qualification remains below.
 - [x] Lock config/data/staging before initialization so a second process cannot modify the same deployment. Local exclusivity, rollback and crash-release tests pass.
 - [x] Provide `serversend -backup DIR` with a stopped-server barrier and consistent SQLite snapshot. The isolated restore test preserves identity/account/catalog and downloads the original standard-file bytes.
 - [x] Document pre-upgrade backups and matching-backup/image downgrade restoration in [backup/restore](backup-restore.md); reject unsupported schemas.
@@ -87,9 +87,9 @@ For every feature:
 - [ ] Qualify actual full/read-only filesystems and power-loss durability on the intended deployment; injected errors and tmpfs process exits do not establish this.
 - [x] Add configurable per-user/global content quotas, transactional reservations and data-volume free-space checks. Concurrent admission cannot exceed declared capacity; external writers/filesystem overhead still require operator headroom. Existing request/chunk/manifest bounds remain in force.
 - [x] Retire expired uploads at startup/admission and every minute; expose idempotent account-scoped cancellation, retain key tombstones, bound chunks by reservations and serialize cancellation/finalization/publication. Duplicate/conflicting chunks and cancellation races have regression coverage. Durable desktop controls remain feature 5 work.
-- [x] Clean abandoned uploads through durable deletion intents, reject deletion of referenced objects, and remove orphan objects only at startup under the deployment lock. Repeat maintenance safely with bounded enumeration/deletion batches.
+- [x] Clean abandoned uploads and deletions through the storage journal, and remove orphaned upload files only at startup under the deployment lock. Repeat maintenance safely with bounded enumeration/deletion batches.
 
-**Scope:** current object writes use `data/incoming` and publish into `data/objects` on the same filesystem. A separate staging-to-data copy path is unnecessary today. If a later feature uses the staging volume for object publication, add destination-side copy/verification/flush/rename and account for temporary overlap then. Private-format work in feature 9 must precede freezing shared/private contracts; it does not block fixing current standard-data safety. Actual Unraid locking/durability and upgrade qualification belong to feature 12.
+**Scope:** uploads are written under `data/.serversend` and published by rename into the user's tree on the same filesystem. A separate staging-to-data copy path is unnecessary today. If a later feature uses the staging volume for object publication, add destination-side copy/verification/flush/rename and account for temporary overlap then. Private-format work in feature 9 must precede freezing shared/private contracts; it does not block fixing current standard-data safety. Actual Unraid locking/durability and upgrade qualification belong to feature 12.
 
 ## 4. Stay signed in and control device access
 

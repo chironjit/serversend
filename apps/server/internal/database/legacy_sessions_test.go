@@ -40,10 +40,7 @@ func TestUpgradeInvalidatesBearerOnlySessionsAndPreservesRefreshHistory(t *testi
 		}
 	}
 	db.Close()
-	db, err = Open(context.Background(), dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db = openAfterReset(t, dir, true)
 	defer db.Close()
 	var sessions, revoked int
 	if err = db.QueryRow(`SELECT count(*),sum(revoked_at IS NOT NULL) FROM device_sessions WHERE account_id=?`, account).Scan(&sessions, &revoked); err != nil || sessions != 2 || revoked != 1 {

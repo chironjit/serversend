@@ -131,20 +131,29 @@ func benchmarkUpload(b *testing.B, transport string, size int, chunk int64, work
 	if workers < 0 {
 		workers, batch = -workers, client.MaxBatchFileCount
 	}
+	// Distinct names, as in a folder upload; one name would make every file
+	// replace the previous one.
+	paths := make([]string, b.N)
+	for i := range paths {
+		paths[i] = filepath.Join(sourceRoot, fmt.Sprintf("file-%07d.bin", i))
+		if err := os.WriteFile(paths[i], data, 0o600); err != nil {
+			b.Fatal(err)
+		}
+	}
 	var group sync.WaitGroup
-	next := make(chan int)
+	next := make(chan []string)
 	for range workers {
 		group.Go(func() {
-			for n := range next {
+			for group := range next {
 				if batch == 1 {
-					if _, err := c.Upload(b.Context(), path, nil); err != nil {
+					if _, err := c.Upload(b.Context(), group[0], nil); err != nil {
 						b.Error(err)
 					}
 					continue
 				}
-				files := make([]client.BatchFile, n)
+				files := make([]client.BatchFile, len(group))
 				for i := range files {
-					files[i].Path = path
+					files[i].Path = group[i]
 				}
 				outcomes, err := c.UploadBatch(b.Context(), files)
 				if err != nil {
@@ -158,8 +167,9 @@ func benchmarkUpload(b *testing.B, transport string, size int, chunk int64, work
 			}
 		})
 	}
+	b.ResetTimer()
 	for sent := 0; sent < b.N; sent += batch {
-		next <- min(batch, b.N-sent)
+		next <- paths[sent:min(sent+batch, b.N)]
 	}
 	close(next)
 	group.Wait()

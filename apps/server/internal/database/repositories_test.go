@@ -179,10 +179,7 @@ func TestServerUpgradeEveryPriorSchema(t *testing.T) {
 			}
 
 			db.Close()
-			db, err = Open(context.Background(), dir)
-			if err != nil {
-				t.Fatal(err)
-			}
+			db = openAfterReset(t, dir, prior >= 2)
 			defer db.Close()
 			if prior < 2 {
 				mustAccount(t, db, ownerA)
@@ -191,13 +188,9 @@ func TestServerUpgradeEveryPriorSchema(t *testing.T) {
 				if err != nil || account != accountFor(ownerA) {
 					t.Fatalf("prior account lost: %+v %v", account, err)
 				}
-				upload, err := NewRepository(db).GetUpload(context.Background(), ownerA, uploadID)
-				if err != nil || upload != uploadFor(ownerA) {
-					t.Fatalf("prior upload lost: %+v %v", upload, err)
-				}
-				var reserved int64
-				if err := db.QueryRow(`SELECT bytes FROM reservations WHERE account_id=? AND upload_id=?`, ownerA, uploadID).Scan(&reserved); err != nil || reserved != 42 {
-					t.Fatalf("prior reservation lost: %d %v", reserved, err)
+				// Pre-release file data is reset, not migrated.
+				if _, err := NewRepository(db).GetUpload(context.Background(), ownerA, uploadID); !errors.Is(err, sql.ErrNoRows) {
+					t.Fatalf("pre-release upload kept: %v", err)
 				}
 			}
 			if prior >= 3 {
@@ -222,6 +215,26 @@ func TestServerUpgradeEveryPriorSchema(t *testing.T) {
 			}
 		})
 	}
+}
+
+// openAfterReset expects databases holding pre-release files to be refused
+// until -reset-files clears them, keeping everything else.
+func openAfterReset(t *testing.T, dir string, files bool) *sql.DB {
+	t.Helper()
+	db, err := Open(context.Background(), dir)
+	if files {
+		if !errors.Is(err, ErrLegacyFiles) {
+			t.Fatalf("pre-release files not refused: %v", err)
+		}
+		if err := ResetFiles(context.Background(), dir); err != nil {
+			t.Fatal(err)
+		}
+		db, err = Open(context.Background(), dir)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
 }
 
 func TestServerUpgradeFailurePreservesPriorVersion(t *testing.T) {

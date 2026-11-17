@@ -12,7 +12,9 @@ import (
 )
 
 func validUsername(username string) bool {
-	if len(username) < 1 || len(username) > 128 {
+	// Usernames name each user's folder in the data directory: a leading
+	// dot would make them hidden, "." or "..", or the internal area.
+	if len(username) < 1 || len(username) > 128 || username[0] == '.' {
 		return false
 	}
 	// Canonical ASCII names avoid case/Unicode aliases across clients. Names

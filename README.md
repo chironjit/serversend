@@ -42,3 +42,27 @@ make check-persistence
 Each target delegates to the owning component's `scripts/check.sh`, which can also be invoked with Bash when Make is unavailable. Checks do not install dependencies. A missing desktop build prerequisite is a failed check, not a successful validation of the application.
 
 See [server development](docs/server-development.md) to run the process or container, [protocol foundation](docs/protocol-foundation.md) for completed Chunk 02 contracts, [SQLite foundation](docs/sqlite-foundation.md) for schemas, scoped repositories, snapshots, fault fixtures and platform qualification, and [TOTP foundation](docs/twofactor-foundation.md) for enrollment and verification helpers. [Requirement verification](docs/requirements-verification.md) distinguishes existing checks from planned acceptance coverage. To run the server and desktop together and upload a file, run `make local-test-server-setup` and `make local-test-desktop` and follow [local end-to-end testing](docs/local-testing.md); the [vertical slice](docs/vertical-slice.md) page lists what is implemented. It is an early end-to-end path with deliberate limits, not yet a usable file-storage product.
+
+## Deploying on docker
+### Settings
+| Header | Setting |
+| Name | ServerSend |
+| Repository | ghcr.io/chironjit/serversend:latest |
+| WebUI | https://[IP]:[PORT:58443]/admin/ |
+| Extra Params | --read-only --cap-drop=ALL --security-opt=no-new-privileges --stop-timeout=15 |
+
+### Ports
+| Name | Container Port | Host Port |
+| Port 1 | 58443 | 58443 | 
+
+### Paths
+| Name | Container Path | Host Path |
+| Config | /config | /mnt/user/appdata/serversend/config/ |
+| Data | /data | /mnt/user/serversend/data/ |
+| Staging | /staging | /mnt/user/serversend/staging |
+
+### Variables
+| Name | Key | Value
+| SQLITE Temp Dir | SQLITE_TMPDIR | /staging |
+| Server IP Addr | SERVER_SEND_TLS_IPS | <server_addr> |
+

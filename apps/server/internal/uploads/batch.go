@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"time"
 
 	"github.com/chironjit/serversend/apps/server/internal/database"
 	"github.com/chironjit/serversend/apps/server/internal/storage"
@@ -36,15 +37,12 @@ func (s *Service) UploadBatch(ctx context.Context, account protocol.ID, request 
 	invalid := api.Error{Code: api.InvalidRequest, Message: "Manifest does not match this upload"}
 	files := make([]database.BatchFile, 0, len(request.Files))
 	positions := make([]int, 0, len(request.Files))
-	ids := []protocol.ID{}
 	staged := []*storage.Staged{}
 	defer func() {
 		for _, st := range staged {
-			st.Discard()
+			st.Discard(s.store)
 		}
 	}()
-	// One shard per batch means one shard-directory flush.
-	prefix := string(newID()[:2])
 	scope := protocol.Scope{ServerID: s.serverID, AccountID: account}
 	now := s.now().UTC()
 	for i, file := range request.Files {
@@ -62,51 +60,49 @@ func (s *Service) UploadBatch(ctx context.Context, account protocol.ID, request 
 			ID: intent.ID, ParentID: file.ParentID, FileID: file.FileID, VersionID: file.VersionID, Mode: file.Mode, IdempotencyKey: file.IdempotencyKey,
 			ExpectedHead: head, ChunkCount: file.ChunkCount, TransmittedBytes: file.TransmittedBytes, ManifestBytes: file.ManifestBytes,
 		}}
+		digest := protocol.Digest(emptyDigest)
 		if file.ChunkCount == 1 {
 			chunk := manifest.Chunks[0]
-			// Stage consumes exactly this file's bytes, even on a mismatch.
-			st, err := s.store.Stage(io.LimitReader(body, file.TransmittedBytes), file.TransmittedBytes, chunk.SHA256)
-			if errors.Is(err, storage.ErrMismatch) {
-				refuse(i, api.Error{Code: api.InvalidRequest, Message: "File bytes do not match the declared length and SHA-256; send the file again"})
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			id := protocol.ID(prefix + string(newID()[2:]))
-			entry.Chunk = &database.StoredChunk{Bytes: chunk.Bytes, Digest: chunk.SHA256, ObjectID: id}
-			ids, staged = append(ids, id), append(staged, st)
+			digest = chunk.SHA256
+			entry.Chunk = &database.StoredChunk{Bytes: chunk.Bytes, Digest: chunk.SHA256}
 		}
+		// Stage consumes exactly this file's bytes, even on a mismatch.
+		st, err := s.store.Stage(io.LimitReader(body, file.TransmittedBytes), file.TransmittedBytes, digest)
+		if errors.Is(err, storage.ErrMismatch) {
+			refuse(i, api.Error{Code: api.InvalidRequest, Message: "File bytes do not match the declared length and SHA-256; send the file again"})
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		entry.Source, staged = st.Path, append(staged, st)
 		files, positions = append(files, entry), append(positions, i)
 	}
 	if n, _ := body.Read(make([]byte, 1)); n != 0 {
 		return nil, api.Error{Code: api.InvalidRequest, Message: "Batch body is longer than its declared files"}
 	}
-	publish := staged
-	staged = nil
-	if err := s.store.Publish(ids, publish); err != nil {
+	if err := s.store.SyncStaged(staged); err != nil {
 		return nil, err
 	}
-
-	// Unrecorded objects are invisible to cleanup, as in PutChunk.
+	// Published files leave the temporary area through the journal. Only
+	// unpublished ones are discarded: a pending journal still needs the rest.
 	s.mu.Lock()
-	outcomes, err := s.repo.CommitBatch(ctx, account, files, database.Capacity{Global: s.policy.GlobalBytes, Account: s.policy.UserBytes, Available: available}, now)
+	outcomes, err := s.commitBatch(ctx, account, files, available, now)
 	s.mu.Unlock()
-	if err != nil {
-		var refused api.Error
-		if errors.As(err, &refused) { // definitely rolled back
-			for _, id := range ids {
-				s.store.Remove(id)
+	if outcomes != nil {
+		unpublished := staged[:0]
+		for k, outcome := range outcomes {
+			if !outcome.Inserted {
+				unpublished = append(unpublished, staged[k])
 			}
 		}
-		// Otherwise startup reconciliation removes any unreferenced objects.
+		staged = unpublished
+	}
+	if err != nil {
 		return nil, err
 	}
 	for k, outcome := range outcomes {
 		i := positions[k]
-		if !outcome.Inserted && files[k].Chunk != nil {
-			s.store.Remove(files[k].Chunk.ObjectID)
-		}
 		if outcome.Err != nil {
 			var refused api.Error
 			errors.As(outcome.Err, &refused)
@@ -117,4 +113,21 @@ func (s *Service) UploadBatch(ctx context.Context, account protocol.ID, request 
 		results[i].Result = &api.FinalizeResult{UploadID: t.ID, FileID: t.FileID, VersionID: t.VersionID, State: t.State, CatalogRevision: revision(t.CatalogRevision), HeadRevision: revision(t.HeadRevision)}
 	}
 	return results, nil
+}
+
+// emptyDigest is the SHA-256 of no bytes, which empty batch files must match.
+const emptyDigest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+// commitBatch runs under s.mu with earlier pending changes applied first
+// and its own applied after. Outcomes are returned once committed, even if
+// applying them failed.
+func (s *Service) commitBatch(ctx context.Context, account protocol.ID, files []database.BatchFile, available int64, now time.Time) ([]database.BatchOutcome, error) {
+	if err := s.applyJournal(ctx); err != nil {
+		return nil, err
+	}
+	outcomes, err := s.repo.CommitBatch(ctx, account, files, database.Capacity{Global: s.policy.GlobalBytes, Account: s.policy.UserBytes, Available: available}, now)
+	if err != nil {
+		return nil, err
+	}
+	return outcomes, s.applyJournal(ctx)
 }

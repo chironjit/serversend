@@ -10,7 +10,7 @@ Run a server, bootstrap an administrator, onboard the administrator in `/admin/`
 
 Run `make local-test-server-setup` in one terminal and `make local-test-desktop` in another. [Local end-to-end testing](local-testing.md) walks through every step, repeat runs, resetting and troubleshooting.
 
-Uploaded bytes are stored under `data/objects`; metadata is in `config/serversend.sqlite`.
+Uploaded files are browsable under `data/<username>`; metadata is in `config/serversend.sqlite`.
 
 ## Deliberate limits
 
@@ -20,7 +20,7 @@ Uploaded bytes are stored under `data/objects`; metadata is in `config/serversen
 | Server trust | Private CA import or OS roots validate TLS; signed channel-bound proofs pin the stable server identity on every connection. Leaf renewal is silent; CA/identity replacement needs explicit repair. | 08 |
 | Accounts | Browser admin onboarding and user creation are available. Admins cannot use file routes. User creation requires sign-in within five minutes. Device history/revocation and separate password/TOTP resets are exposed; mixed pending resets are blocked. Disablement still has no UI. | 07, 22 |
 | Uploads | One file at a time, each as a new file with a new ID; recursive folders including empty folders, selected destinations, no replacing an existing file, no queue persistence, no resume after an interruption, no cancel. The file is read twice (describe, then send). | 10, 12–14 |
-| Storage | Chunks are verified, flushed and renamed into place before acknowledgement. Capacity checks, cross-filesystem staging, orphan reconciliation after a crash and cleanup of abandoned or expired uploads are not implemented, so interrupted uploads leave objects behind. | 11, 23 |
+| Storage | Chunks are verified and flushed in place before acknowledgement; files are published by journaled rename. Cross-filesystem staging is not implemented. | 11, 23 |
 | Catalog | Folder navigation and creation; at most 1000 entries per folder; no paging, trash, change feed or events. | 10, 21 |
 | Downloads | Whole file to a chosen path via a temporary file and rename; an existing file at that path is replaced after the save dialog's own confirmation. No resume. | 15 |
 | Private mode | Rejected with `unsupported_format`. | 17–20 |

@@ -179,7 +179,7 @@ Choose an initial chunk size through a benchmark; evaluate 8 MiB as a starting p
 
 Each chunk has an upload ID, index, byte count, and checksum of the transmitted bytes. Repeating an identical chunk is safe; a conflicting replacement is rejected. Track checksums incrementally while reading, not by loading whole files. Server acknowledgements require durable chunk data and recoverable metadata. The client reconciles the server's committed chunk list after uncertain acknowledgements.
 
-Use immutable chunk objects plus manifests for the first storage layout, avoiding assembly of a second complete copy. Ordinary objects contain plaintext bytes; private objects contain ciphertext bytes. Keep a storage abstraction so packing small objects can be introduced after measurement without changing the public API. Empty files have explicit valid manifests.
+Store each user's current files as a browsable tree, `data/<username>/<folders>/<name>`, with manifests in metadata (decided 2026-11-17, replacing the pre-release chunk-object store). Chunks are written in place into one upload file and published by rename, so no second copy is assembled. Other retained versions live under `data/.serversend/versions/`. Private files will keep their real names and folders and contain ciphertext (decided 2026-11-17). Empty files have explicit valid manifests.
 
 Finalization checks ownership, expected chunk count/order/length, checksums, capacity, and catalog preconditions. Commit the visible version only after all referenced objects are durable. Database and filesystem writes are not one transaction: record pending transitions, use idempotent reconciliation, and tolerate recoverable orphan objects. Test crashes at every transition.
 
@@ -234,8 +234,8 @@ Build a multi-stage Docker image containing the Go server and compiled admin ass
 | Mount | Contents | Requirement |
 | --- | --- | --- |
 | `/config` | SQLite database, server identity, TOTP protection key, configuration and certificates | Persistent local appdata storage with tested locking and permissions |
-| `/data` | Committed objects, manifests and retained versions | Persistent Unraid storage with capacity monitoring |
-| `/staging` | Incomplete objects and transfer staging | Persistent storage for restart recovery; may use a separate pool |
+| `/data` | Browsable user file trees, retained versions and unfinished uploads | Persistent Unraid storage with capacity monitoring |
+| `/staging` | Reserved for transfer staging | Persistent storage for restart recovery; may use a separate pool |
 
 Document pool/array selection and test the actual Unraid storage paths. Never assume Docker persistence alone provides a backup. Check writability and available capacity at startup; fail clearly on invalid mounts. Display free space separately for each filesystem rather than summing duplicate mounts of the same filesystem.
 

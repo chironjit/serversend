@@ -6,10 +6,13 @@ import (
 )
 
 func (s *Service) maintain(ctx context.Context) error {
+	if err := s.applyJournal(ctx); err != nil {
+		return err
+	}
 	if err := s.repo.RetireUploads(ctx, s.now(), "", ""); err != nil {
 		return err
 	}
-	return s.cleanupDeleted(ctx)
+	return s.applyJournal(ctx)
 }
 
 // Maintain shares the mutation lock with writes, finalization and cancellation:
@@ -33,5 +36,5 @@ func (s *Service) Cancel(ctx context.Context, account, id protocol.ID) error {
 	if err := s.repo.RetireUploads(ctx, s.now(), account, id); err != nil {
 		return err
 	}
-	return s.cleanupDeleted(ctx)
+	return s.applyJournal(ctx)
 }

@@ -17,6 +17,7 @@
 - Seven-day browser admin cookies; separate Dashboard, Accounts, Logs and Settings views. Dashboard adds Linux host CPU/memory, stored bytes and available storage; accounts show committed file bytes per user.
 
 - Persistent application logs in the admin panel, with search, level filters, coloured Info/OK/Warning/Error indicators and older-entry navigation.
+- Server storage is now a browsable tree: each user's files appear at `data/<username>/<folders>/<name>`, with older versions, unfinished uploads and in-progress changes under `data/.serversend`. Uploading a same-named file replaces it and keeps the old version; re-uploading a folder merges into it. Pre-release data is not migrated: run `serversend -reset-files` (keeps accounts). Usernames can no longer start with a dot.
 - Batched small-file uploads: queued files up to 1 MiB are sent up to 256 per request and published in one server transaction, about 75 times faster per file on a flushing disk. Servers advertise `batch_upload`; older servers use individual uploads.
 - Uploads can be cancelled per file or per selection; scanning stops, queued files are skipped and interrupted uploads release their server reservations immediately.
 - Deleting a file or folder now cancels unfinished uploads into it instead of refusing until they expire.

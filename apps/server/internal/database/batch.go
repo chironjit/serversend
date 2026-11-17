@@ -10,16 +10,18 @@ import (
 	"github.com/chironjit/serversend/shared/protocol"
 )
 
-// BatchFile is one single-chunk (or empty) file whose object is already durable.
+// BatchFile is one single-chunk (or empty) file whose bytes are already
+// durable at Source in the temporary area.
 type BatchFile struct {
 	Transfer
 	Name     string
 	Manifest []byte
 	Chunk    *StoredChunk
+	Source   string
 }
 
-// BatchOutcome reports one file. Inserted is false when the object was not
-// referenced (a replay or a refused file), so the caller may remove it.
+// BatchOutcome reports one file. Inserted is false when its staged bytes
+// were not published (a replay or a refused file), so the caller removes them.
 type BatchOutcome struct {
 	Result   Transfer
 	Err      error
@@ -100,28 +102,15 @@ func commitBatchFile(ctx context.Context, tx *sql.Tx, account protocol.ID, file 
 	}
 	t := file.Transfer
 	t.AccountID, t.CreatedAt, t.ExpiresAt = account, now, now
-	if err := tx.QueryRowContext(ctx, `UPDATE accounts SET catalog_revision=catalog_revision+1 WHERE id=? RETURNING catalog_revision`, account).Scan(&t.CatalogRevision); err != nil {
+	if err := publish(ctx, tx, &t, file.Name, file.Source); err != nil {
 		return Transfer{}, false, err
-	}
-	var head uint64
-	err = tx.QueryRowContext(ctx, `SELECT head_revision FROM files WHERE account_id=? AND id=?`, account, t.FileID).Scan(&head)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return Transfer{}, false, err
-	}
-	t.State, t.HeadRevision = protocol.UploadConflicted, head
-	if head == t.ExpectedHead {
-		t.State, t.HeadRevision = protocol.UploadCommitted, t.CatalogRevision
-		if _, err := tx.ExecContext(ctx, `INSERT INTO files(account_id,id,name,head_version_id,head_revision,parent_id) VALUES(?,?,?,?,?,?)
-			ON CONFLICT(account_id,id) DO UPDATE SET name=excluded.name,head_version_id=excluded.head_version_id,head_revision=excluded.head_revision,parent_id=excluded.parent_id`, account, t.FileID, file.Name, t.VersionID, t.HeadRevision, t.ParentID); err != nil {
-			return Transfer{}, false, err
-		}
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO uploads(account_id,id,state,mode,idempotency_key,expected_bytes,created_at,file_id,version_id,chunk_count,manifest_bytes,expected_head,expires_at,parent_id,result_catalog_revision,result_head_revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		account, t.ID, t.State, t.Mode, t.IdempotencyKey, t.TransmittedBytes, now.UnixMilli(), t.FileID, t.VersionID, t.ChunkCount, t.ManifestBytes, int64(t.ExpectedHead), now.UnixMilli(), t.ParentID, int64(t.CatalogRevision), int64(t.HeadRevision)); err != nil {
 		return Transfer{}, false, err
 	}
 	if file.Chunk != nil {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO chunks(account_id,upload_id,chunk_index,byte_count,digest,object_id) VALUES(?,?,0,?,?,?)`, account, t.ID, file.Chunk.Bytes, file.Chunk.Digest, file.Chunk.ObjectID); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO chunks(account_id,upload_id,chunk_index,byte_count,digest,byte_offset) VALUES(?,?,0,?,?,0)`, account, t.ID, file.Chunk.Bytes, file.Chunk.Digest); err != nil {
 			return Transfer{}, false, err
 		}
 	}

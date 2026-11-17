@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/chironjit/serversend/apps/server/internal/layout"
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
 )
@@ -28,13 +29,14 @@ type Transfer struct {
 	State                                      protocol.UploadState
 	CreatedAt, ExpiresAt                       time.Time
 	CatalogRevision, HeadRevision              uint64
+	ChunkBytes                                 int64 // size of every non-final chunk once known
 }
 
 type StoredChunk struct {
-	Index    int64
-	Bytes    int64
-	Digest   protocol.Digest
-	ObjectID protocol.ID
+	Index  int64
+	Bytes  int64
+	Digest protocol.Digest
+	Offset int64
 }
 
 type FileEntry struct {
@@ -44,12 +46,12 @@ type FileEntry struct {
 	HeadRevision                uint64
 }
 
-const transferColumns = `parent_id,account_id,id,file_id,version_id,mode,idempotency_key,expected_head,chunk_count,expected_bytes,manifest_bytes,state,created_at,expires_at,coalesce(result_catalog_revision,0),coalesce(result_head_revision,0)`
+const transferColumns = `parent_id,account_id,id,file_id,version_id,mode,idempotency_key,expected_head,chunk_count,expected_bytes,manifest_bytes,state,created_at,expires_at,coalesce(result_catalog_revision,0),coalesce(result_head_revision,0),coalesce(chunk_bytes,0)`
 
 func scanTransfer(row interface{ Scan(...any) error }) (Transfer, error) {
 	var t Transfer
 	var created, expires int64
-	err := row.Scan(&t.ParentID, &t.AccountID, &t.ID, &t.FileID, &t.VersionID, &t.Mode, &t.IdempotencyKey, &t.ExpectedHead, &t.ChunkCount, &t.TransmittedBytes, &t.ManifestBytes, &t.State, &created, &expires, &t.CatalogRevision, &t.HeadRevision)
+	err := row.Scan(&t.ParentID, &t.AccountID, &t.ID, &t.FileID, &t.VersionID, &t.Mode, &t.IdempotencyKey, &t.ExpectedHead, &t.ChunkCount, &t.TransmittedBytes, &t.ManifestBytes, &t.State, &created, &expires, &t.CatalogRevision, &t.HeadRevision, &t.ChunkBytes)
 	t.CreatedAt, t.ExpiresAt = time.UnixMilli(created).UTC(), time.UnixMilli(expires).UTC()
 	return t, err
 }
@@ -108,7 +110,7 @@ func (r *Repository) Transfer(ctx context.Context, account, id protocol.ID) (Tra
 }
 
 func (r *Repository) StoredChunks(ctx context.Context, account, upload protocol.ID) ([]StoredChunk, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT chunk_index,byte_count,digest,object_id FROM chunks WHERE account_id=? AND upload_id=? ORDER BY chunk_index`, account, upload)
+	rows, err := r.db.QueryContext(ctx, `SELECT chunk_index,byte_count,digest,byte_offset FROM chunks WHERE account_id=? AND upload_id=? ORDER BY chunk_index`, account, upload)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +118,7 @@ func (r *Repository) StoredChunks(ctx context.Context, account, upload protocol.
 	var chunks []StoredChunk
 	for rows.Next() {
 		var c StoredChunk
-		if err := rows.Scan(&c.Index, &c.Bytes, &c.Digest, &c.ObjectID); err != nil {
+		if err := rows.Scan(&c.Index, &c.Bytes, &c.Digest, &c.Offset); err != nil {
 			return nil, err
 		}
 		chunks = append(chunks, c)
@@ -126,11 +128,27 @@ func (r *Repository) StoredChunks(ctx context.Context, account, upload protocol.
 
 func (r *Repository) StoredChunk(ctx context.Context, account, upload protocol.ID, index int64) (StoredChunk, error) {
 	c := StoredChunk{Index: index}
-	err := r.db.QueryRowContext(ctx, `SELECT byte_count,digest,object_id FROM chunks WHERE account_id=? AND upload_id=? AND chunk_index=?`, account, upload, index).Scan(&c.Bytes, &c.Digest, &c.ObjectID)
+	err := r.db.QueryRowContext(ctx, `SELECT byte_count,digest,byte_offset FROM chunks WHERE account_id=? AND upload_id=? AND chunk_index=?`, account, upload, index).Scan(&c.Bytes, &c.Digest, &c.Offset)
 	return c, err
 }
 
-// RecordChunk acknowledges a durable object for an open upload. If the index
+// ClaimChunkSize fixes the size of every non-final chunk before any of them
+// is written, so chunk offsets never overlap. It returns the recorded size;
+// a different size, or one inconsistent with an acknowledged final chunk,
+// is refused by the caller.
+func (r *Repository) ClaimChunkSize(ctx context.Context, account, upload protocol.ID, size int64) (int64, error) {
+	var recorded int64
+	err := r.write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE uploads SET chunk_bytes=? WHERE account_id=? AND id=? AND chunk_bytes IS NULL AND state='open'
+			AND NOT EXISTS (SELECT 1 FROM chunks c WHERE c.account_id=uploads.account_id AND c.upload_id=uploads.id AND c.chunk_index=uploads.chunk_count-1 AND c.byte_offset<>(uploads.chunk_count-1)*?)`, size, account, upload, size); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `SELECT coalesce(chunk_bytes,0) FROM uploads WHERE account_id=? AND id=?`, account, upload).Scan(&recorded)
+	})
+	return recorded, err
+}
+
+// RecordChunk acknowledges durable bytes for an open upload. If the index
 // was already acknowledged, the recorded chunk is returned with created false
 // and the caller decides between an identical retry and a conflict.
 func (r *Repository) RecordChunk(ctx context.Context, account, upload protocol.ID, chunk StoredChunk, now time.Time) (StoredChunk, bool, error) {
@@ -143,7 +161,7 @@ func (r *Repository) RecordChunk(ctx context.Context, account, upload protocol.I
 		if open != 1 {
 			return ErrUploadClosed
 		}
-		err := tx.QueryRowContext(ctx, `SELECT byte_count,digest,object_id FROM chunks WHERE account_id=? AND upload_id=? AND chunk_index=?`, account, upload, chunk.Index).Scan(&recorded.Bytes, &recorded.Digest, &recorded.ObjectID)
+		err := tx.QueryRowContext(ctx, `SELECT byte_count,digest,byte_offset FROM chunks WHERE account_id=? AND upload_id=? AND chunk_index=?`, account, upload, chunk.Index).Scan(&recorded.Bytes, &recorded.Digest, &recorded.Offset)
 		if err == nil {
 			return nil
 		}
@@ -158,7 +176,7 @@ func (r *Repository) RecordChunk(ctx context.Context, account, upload protocol.I
 			return api.Error{Code: api.InvalidRequest, Message: "Chunk exceeds the remaining upload reservation"}
 		}
 		recorded, created = chunk, true
-		_, err = tx.ExecContext(ctx, `INSERT INTO chunks(account_id,upload_id,chunk_index,byte_count,digest,object_id) VALUES(?,?,?,?,?,?)`, account, upload, chunk.Index, chunk.Bytes, chunk.Digest, chunk.ObjectID)
+		_, err = tx.ExecContext(ctx, `INSERT INTO chunks(account_id,upload_id,chunk_index,byte_count,digest,byte_offset) VALUES(?,?,?,?,?,?)`, account, upload, chunk.Index, chunk.Bytes, chunk.Digest, chunk.Offset)
 		return err
 	})
 	return recorded, created, err
@@ -196,21 +214,8 @@ func (r *Repository) CommitUpload(ctx context.Context, account, upload protocol.
 		if stored != t.ChunkCount {
 			return ErrUploadConflict
 		}
-		var revision, head uint64
-		if err := tx.QueryRowContext(ctx, `UPDATE accounts SET catalog_revision=catalog_revision+1 WHERE id=? RETURNING catalog_revision`, account).Scan(&revision); err != nil {
+		if err := publish(ctx, tx, &t, name, layout.Upload(upload)); err != nil {
 			return err
-		}
-		err = tx.QueryRowContext(ctx, `SELECT head_revision FROM files WHERE account_id=? AND id=?`, account, t.FileID).Scan(&head)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		t.State, t.CatalogRevision, t.HeadRevision = protocol.UploadConflicted, revision, head
-		if head == t.ExpectedHead {
-			t.State, t.HeadRevision = protocol.UploadCommitted, revision
-			if _, err := tx.ExecContext(ctx, `INSERT INTO files(account_id,id,name,head_version_id,head_revision,parent_id) VALUES(?,?,?,?,?,?)
-				ON CONFLICT(account_id,id) DO UPDATE SET name=excluded.name,head_version_id=excluded.head_version_id,head_revision=excluded.head_revision,parent_id=excluded.parent_id`, account, t.FileID, name, t.VersionID, revision, t.ParentID); err != nil {
-				return err
-			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO versions(account_id,file_id,id,upload_id,manifest,total_bytes,created_at) VALUES(?,?,?,?,?,?,?)`, account, t.FileID, t.VersionID, upload, manifest, t.TransmittedBytes, now.UnixMilli()); err != nil {
 			return ErrUploadConflict
@@ -237,7 +242,7 @@ func (r *Repository) Catalog(ctx context.Context, account protocol.ID, parent pr
 	if err := tx.QueryRowContext(ctx, `SELECT catalog_revision FROM accounts WHERE id=?`, account).Scan(&revision); err != nil {
 		return 0, nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,head_version_id,name,head_revision,parent_id,0 FROM files WHERE account_id=? AND parent_id=? UNION ALL SELECT id,'',name,revision,parent_id,1 FROM directories WHERE account_id=? AND parent_id=? ORDER BY id LIMIT ?`, account, parent, account, parent, limit)
+	rows, err := tx.QueryContext(ctx, `SELECT id,head_version_id,name,head_revision,parent_id,0 FROM files WHERE account_id=? AND parent_id=? AND hidden=0 UNION ALL SELECT id,'',name,revision,parent_id,1 FROM directories WHERE account_id=? AND parent_id=? ORDER BY id LIMIT ?`, account, parent, account, parent, limit)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -254,6 +259,7 @@ func (r *Repository) Catalog(ctx context.Context, account protocol.ID, parent pr
 }
 
 // Version returns the exact stored manifest and the upload that owns its chunks.
+// Hidden files remain addressable by ID for future version restore.
 func (r *Repository) Version(ctx context.Context, account, file, version protocol.ID) ([]byte, protocol.ID, error) {
 	var manifest []byte
 	var upload protocol.ID

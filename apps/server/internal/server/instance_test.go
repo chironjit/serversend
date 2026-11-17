@@ -18,7 +18,7 @@ func TestStartupRefusesSharedVolumesBeforeClearingIncoming(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer active.Close()
-			marker := filepath.Join(original.DataDir, "incoming", "active-write")
+			marker := filepath.Join(original.DataDir, ".serversend", "tmp", "active-write")
 			if err := os.WriteFile(marker, []byte("in progress"), 0o600); err != nil {
 				t.Fatal(err)
 			}

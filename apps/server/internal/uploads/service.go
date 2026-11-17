@@ -11,13 +11,14 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/chironjit/serversend/apps/server/internal/database"
+	"github.com/chironjit/serversend/apps/server/internal/layout"
 	"github.com/chironjit/serversend/apps/server/internal/storage"
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
@@ -38,13 +39,15 @@ var (
 type StoragePolicy struct{ GlobalBytes, UserBytes, MinFreeBytes int64 }
 
 type Service struct {
-	mu       sync.Mutex
-	policy   StoragePolicy
-	repo     *database.Repository
-	store    *storage.Store
-	serverID protocol.ID
-	limits   protocol.TransferLimits
-	now      func() time.Time
+	mu        sync.Mutex
+	writersMu sync.Mutex
+	writers   map[string]bool // chunk writers in progress
+	policy    StoragePolicy
+	repo      *database.Repository
+	store     *storage.Store
+	serverID  protocol.ID
+	limits    protocol.TransferLimits
+	now       func() time.Time
 }
 
 func New(repo *database.Repository, store *storage.Store, serverID protocol.ID, limits protocol.TransferLimits, now func() time.Time, policy ...StoragePolicy) (*Service, error) {
@@ -62,16 +65,57 @@ func New(repo *database.Repository, store *storage.Store, serverID protocol.ID, 
 	if s.policy.GlobalBytes < 0 || s.policy.UserBytes < 0 || s.policy.MinFreeBytes < 0 {
 		return nil, errors.New("negative storage policy")
 	}
-	if err := s.Maintain(context.Background()); err != nil {
-		return nil, err
-	}
-	if err := s.store.Reconcile(context.Background(), s.repo.ObjectReferenced); err != nil {
-		return nil, err
-	}
-	if err := s.repo.CheckObjects(context.Background(), s.store.VerifyExists); err != nil {
+	if err := s.recover(context.Background()); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+// recover runs before requests are accepted, under the deployment lock: it
+// finishes interrupted filesystem changes, discards unpublished and orphaned
+// upload files, then refuses missing or truncated acknowledged contents.
+func (s *Service) recover(ctx context.Context) error {
+	if err := s.applyJournal(ctx); err != nil {
+		return err
+	}
+	// Forget replayed changes before cleanup makes them unsafe to repeat.
+	if err := s.repo.ClearJournal(ctx); err != nil {
+		return err
+	}
+	if err := s.Maintain(ctx); err != nil {
+		return err
+	}
+	if err := errors.Join(s.store.ClearTmp(), s.store.ClearTrash()); err != nil {
+		return err
+	}
+	err := s.store.CleanUploads(func(id protocol.ID) (bool, error) {
+		open, end, err := s.repo.OpenUploadEnd(ctx, id)
+		if err != nil || !open {
+			return false, err
+		}
+		return true, s.store.Verify(layout.Upload(id), end, false)
+	})
+	if err != nil {
+		return err
+	}
+	return s.repo.EachVersion(ctx, func(location database.VersionLocation) error {
+		return s.store.Verify(location.Path, location.Bytes, true)
+	})
+}
+
+// applyJournal performs and forgets every pending filesystem change. Each
+// mutation calls it under s.mu after committing, so changes apply in order;
+// if it fails, later mutations fail too until it succeeds.
+func (s *Service) applyJournal(ctx context.Context) error {
+	ops, last, err := s.repo.Journal(ctx)
+	if err != nil || len(ops) == 0 {
+		return err
+	}
+	if err := s.store.Apply(ops); err != nil {
+		return fmt.Errorf("apply file storage changes: %w", err)
+	}
+	s.repo.Applied(last)
+	return nil
 }
 
 func (s *Service) Limits() protocol.TransferLimits { return s.limits }
@@ -124,11 +168,18 @@ func (s *Service) Create(ctx context.Context, account protocol.ID, key string, r
 		available = 0
 	}
 	now := s.now().UTC()
+	id := newID()
+	if err := s.store.CreateUpload(id); err != nil {
+		return api.Upload{}, false, err
+	}
 	recorded, created, err := s.repo.CreateTransfer(ctx, database.Transfer{
-		ParentID: request.ParentID, AccountID: account, ID: newID(), FileID: request.FileID, VersionID: request.VersionID, Mode: request.Mode, IdempotencyKey: key,
+		ParentID: request.ParentID, AccountID: account, ID: id, FileID: request.FileID, VersionID: request.VersionID, Mode: request.Mode, IdempotencyKey: key,
 		ExpectedHead: head, ChunkCount: request.ChunkCount, TransmittedBytes: request.TransmittedBytes, ManifestBytes: request.ManifestBytes,
 		CreatedAt: now, ExpiresAt: now.Add(Lifetime),
 	}, database.Capacity{Global: s.policy.GlobalBytes, Account: s.policy.UserBytes, Available: available})
+	if err != nil || !created {
+		s.store.RemoveUpload(id) // a replay keeps its original file
+	}
 	if err != nil {
 		return api.Upload{}, false, err
 	}
@@ -180,16 +231,17 @@ func (s *Service) Missing(ctx context.Context, account, upload protocol.ID) (api
 	return result, nil
 }
 
-// PutChunk acknowledges a chunk only after its bytes are verified, flushed
-// and published, and its metadata is committed. An identical retry returns
-// the same acknowledgement (created false); different bytes conflict.
+// PutChunk acknowledges a chunk only after its bytes are verified and
+// flushed at their offset in the upload's file, and its metadata is
+// committed. An identical retry returns the same acknowledgement (created
+// false); different bytes conflict.
 //
-// Receiving, hashing and flushing run outside the mutation lock so concurrent
-// uploads overlap network and disk time. An unrecorded object is invisible to
-// cleanup, RecordChunk re-checks state and reservation transactionally, and
-// startup reconciliation removes objects orphaned by a crash. Concurrent
-// chunks may pass the free-space pre-check together; upload reservations
-// already cover their bytes.
+// Every non-final chunk has one size, fixed by the first to arrive, so each
+// chunk has exactly one offset and chunks never overlap; the final chunk
+// ends the file. One writer per chunk runs at a time. Receiving, hashing and
+// flushing run outside the mutation lock so concurrent uploads overlap.
+// Concurrent chunks may pass the free-space pre-check together; upload
+// reservations already cover their bytes.
 func (s *Service) PutChunk(ctx context.Context, account, upload protocol.ID, index, length int64, digest protocol.Digest, body io.Reader) (api.ChunkAcknowledgement, bool, error) {
 	t, err := s.transfer(ctx, account, upload)
 	if err != nil {
@@ -198,15 +250,19 @@ func (s *Service) PutChunk(ctx context.Context, account, upload protocol.ID, ind
 	if t.State == protocol.UploadCancelled || t.State == protocol.UploadExpired || (t.State == protocol.UploadOpen && !t.ExpiresAt.After(s.now())) {
 		return api.ChunkAcknowledgement{}, false, errGone
 	}
-	if index < 0 || index >= t.ChunkCount || digest.Validate() != nil || s.limits.ValidateChunkSize(length, index == t.ChunkCount-1) != nil {
+	final := index == t.ChunkCount-1
+	if index < 0 || index >= t.ChunkCount || digest.Validate() != nil || s.limits.ValidateChunkSize(length, final) != nil {
 		return api.ChunkAcknowledgement{}, false, api.Error{Code: api.InvalidRequest, Message: "Chunk index, length or digest is outside this upload's bounds"}
 	}
-	chunk := database.StoredChunk{Index: index, Bytes: length, Digest: digest, ObjectID: newID()}
 	existing, err := s.repo.StoredChunk(ctx, account, upload, index)
 	created := false
 	if errors.Is(err, sql.ErrNoRows) {
 		if t.State != protocol.UploadOpen {
 			return api.ChunkAcknowledgement{}, false, errGone
+		}
+		offset, offsetErr := s.chunkOffset(ctx, t, index, length)
+		if offsetErr != nil {
+			return api.ChunkAcknowledgement{}, false, offsetErr
 		}
 		remaining, remainingErr := s.repo.UnwrittenBytes(ctx, account, upload)
 		if remainingErr != nil {
@@ -222,20 +278,25 @@ func (s *Service) PutChunk(ctx context.Context, account, upload protocol.ID, ind
 		if available < s.policy.MinFreeBytes || length > available-s.policy.MinFreeBytes {
 			return api.ChunkAcknowledgement{}, false, api.Error{Code: api.CapacityExhausted, Message: "Insufficient free space to store this chunk"}
 		}
-		if err := s.store.Put(chunk.ObjectID, body, length, digest); err != nil {
-			if errors.Is(err, storage.ErrMismatch) {
-				return api.ChunkAcknowledgement{}, false, api.Error{Code: api.InvalidRequest, Message: "Chunk bytes do not match the declared length and SHA-256; send the chunk again"}
-			}
-			return api.ChunkAcknowledgement{}, false, err
+		release, busy := s.claimWriter(upload, index)
+		if busy {
+			return api.ChunkAcknowledgement{}, false, api.Error{Code: api.Conflict, Message: "This chunk is already being received; retry shortly"}
 		}
+		defer release()
+		if writeErr := s.store.WriteChunk(upload, offset, length, digest, body); writeErr != nil {
+			switch {
+			case errors.Is(writeErr, storage.ErrMismatch):
+				return api.ChunkAcknowledgement{}, false, api.Error{Code: api.InvalidRequest, Message: "Chunk bytes do not match the declared length and SHA-256; send the chunk again"}
+			case errors.Is(writeErr, storage.ErrGone):
+				return api.ChunkAcknowledgement{}, false, errGone
+			}
+			return api.ChunkAcknowledgement{}, false, writeErr
+		}
+		chunk := database.StoredChunk{Index: index, Bytes: length, Digest: digest, Offset: offset}
 		s.mu.Lock()
 		existing, created, err = s.repo.RecordChunk(ctx, account, upload, chunk, s.now())
 		s.mu.Unlock()
-		if err == nil && !created {
-			s.store.Remove(chunk.ObjectID)
-		}
 		if errors.Is(err, database.ErrUploadClosed) {
-			s.store.Remove(chunk.ObjectID) // never recorded, so nothing references it
 			err = errGone
 		}
 	}
@@ -246,6 +307,52 @@ func (s *Service) PutChunk(ctx context.Context, account, upload protocol.ID, ind
 		return api.ChunkAcknowledgement{}, false, api.Error{Code: api.Conflict, Message: "A different chunk was already stored at this index"}
 	}
 	return api.ChunkAcknowledgement{UploadID: upload, Chunk: protocol.Chunk{Index: index, Bytes: length, SHA256: digest}}, created, nil
+}
+
+// chunkOffset places a chunk: non-final chunks at index times the upload's
+// chunk size, and the final chunk at the end of the file.
+func (s *Service) chunkOffset(ctx context.Context, t database.Transfer, index, length int64) (int64, error) {
+	invalid := api.Error{Code: api.InvalidRequest, Message: "Every chunk except the last must have the same size, and the last must end the file"}
+	size := t.ChunkBytes
+	if index < t.ChunkCount-1 && size == 0 {
+		if length*(t.ChunkCount-1) >= t.TransmittedBytes || t.TransmittedBytes-length*(t.ChunkCount-1) > length {
+			return 0, invalid
+		}
+		claimed, err := s.repo.ClaimChunkSize(ctx, t.AccountID, t.ID, length)
+		if err != nil {
+			return 0, err
+		}
+		size = claimed
+	}
+	if index == t.ChunkCount-1 {
+		offset := t.TransmittedBytes - length
+		if offset < 0 || size != 0 && offset != size*index {
+			return 0, invalid
+		}
+		return offset, nil
+	}
+	if length != size {
+		return 0, invalid
+	}
+	return index * size, nil
+}
+
+func (s *Service) claimWriter(upload protocol.ID, index int64) (func(), bool) {
+	key := string(upload) + "/" + strconv.FormatInt(index, 10)
+	s.writersMu.Lock()
+	defer s.writersMu.Unlock()
+	if s.writers[key] {
+		return nil, true
+	}
+	if s.writers == nil {
+		s.writers = map[string]bool{}
+	}
+	s.writers[key] = true
+	return func() {
+		s.writersMu.Lock()
+		delete(s.writers, key)
+		s.writersMu.Unlock()
+	}, false
 }
 
 // Finalize publishes the version only when the exact manifest matches the
@@ -291,7 +398,20 @@ func (s *Service) Finalize(ctx context.Context, account, upload protocol.ID, bod
 			}
 		}
 	}
+	if err := s.applyJournal(ctx); err != nil {
+		return api.FinalizeResult{}, err
+	}
+	if !finished {
+		if err := s.store.FinishUpload(upload, t.TransmittedBytes); errors.Is(err, storage.ErrGone) {
+			return api.FinalizeResult{}, errGone
+		} else if err != nil {
+			return api.FinalizeResult{}, err
+		}
+	}
 	result, err := s.repo.CommitUpload(ctx, account, upload, manifest.Standard.Name, body, s.now().UTC())
+	if err == nil {
+		err = s.applyJournal(ctx)
+	}
 	switch {
 	case errors.Is(err, database.ErrUploadClosed):
 		return api.FinalizeResult{}, errGone
@@ -337,24 +457,39 @@ func (s *Service) version(ctx context.Context, account, file, version protocol.I
 	return manifest, upload, err
 }
 
-// OpenChunk returns one immutable stored chunk; the caller closes the file.
-func (s *Service) OpenChunk(ctx context.Context, account, file, version protocol.ID, index int64) (*os.File, protocol.Chunk, error) {
-	_, upload, err := s.version(ctx, account, file, version)
-	if err != nil {
-		return nil, protocol.Chunk{}, err
+type chunkReader struct {
+	*io.SectionReader
+	io.Closer
+}
+
+// OpenChunk returns one immutable stored chunk; the caller closes it. The
+// file is opened under the mutation lock, so a concurrent replacement moves
+// it only after it is open and the reader keeps the version it located.
+func (s *Service) OpenChunk(ctx context.Context, account, file, version protocol.ID, index int64) (io.ReadCloser, protocol.Chunk, error) {
+	if file.Validate() != nil || version.Validate() != nil {
+		return nil, protocol.Chunk{}, errNotFound
 	}
-	stored, err := s.repo.StoredChunk(ctx, account, upload, index)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	location, err := s.repo.VersionLocation(ctx, account, file, version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, protocol.Chunk{}, errNotFound
 	}
 	if err != nil {
 		return nil, protocol.Chunk{}, err
 	}
-	object, err := s.store.Open(stored.ObjectID)
+	stored, err := s.repo.StoredChunk(ctx, account, location.Upload, index)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, protocol.Chunk{}, errNotFound
+	}
+	if err != nil {
+		return nil, protocol.Chunk{}, err
+	}
+	f, err := s.store.Open(location.Path)
 	if err != nil {
 		return nil, protocol.Chunk{}, api.Error{Code: api.SourceMissing, Message: "Stored data for this file is missing on the server; contact the server operator"}
 	}
-	return object, protocol.Chunk{Index: index, Bytes: stored.Bytes, SHA256: stored.Digest}, nil
+	return chunkReader{io.NewSectionReader(f, stored.Offset, stored.Bytes), f}, protocol.Chunk{Index: index, Bytes: stored.Bytes, SHA256: stored.Digest}, nil
 }
 
 // Available reports usable free bytes on the object filesystem.

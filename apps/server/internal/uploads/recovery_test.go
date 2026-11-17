@@ -8,9 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -123,7 +121,7 @@ func TestConcurrentReservationsAndIdempotency(t *testing.T) {
 
 func TestCancelExpiryAndReservationRelease(t *testing.T) {
 	ctx := context.Background()
-	s, db, _ := fixture(t, StoragePolicy{UserBytes: 4})
+	s, db, data := fixture(t, StoragePolicy{UserBytes: 4})
 	u := create(t, s, 4)
 	b := []byte("data")
 	ack, created, err := s.PutChunk(ctx, owner, u.ID, 0, 4, digest(b), bytes.NewReader(b))
@@ -150,7 +148,11 @@ func TestCancelExpiryAndReservationRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	for _, table := range []string{"chunks", "reservations", "deleted_objects"} {
+	assertNoObjects(t, data)
+	if pending, _, err := s.repo.Journal(ctx); err != nil || len(pending) != 0 {
+		t.Fatalf("unapplied changes %v %v", pending, err)
+	}
+	for _, table := range []string{"chunks", "reservations"} {
 		if err = db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("%s count=%d err=%v", table, count, err)
 		}
@@ -177,95 +179,99 @@ func TestReservationBoundsAndLowDisk(t *testing.T) {
 	code(t, err, api.CapacityExhausted)
 }
 
-func TestRestartReconcilesPublicationBeforeMetadata(t *testing.T) {
+// Startup finishes interrupted filesystem changes before clearing temporary
+// files, keeps open uploads, removes orphaned upload files and refuses
+// missing acknowledged contents.
+func TestRestartReplaysJournalAndRefusesMissingContents(t *testing.T) {
 	s, db, data := fixture(t, StoragePolicy{})
 	ctx := context.Background()
-	u := create(t, s, 4)
 	b := []byte("data")
-	if _, _, err := s.PutChunk(ctx, owner, u.ID, 0, 4, digest(b), bytes.NewReader(b)); err != nil {
+	open, m := createFile(t, s, "kept.bin", b)
+	if _, _, err := s.PutChunk(ctx, owner, open.ID, 0, 4, digest(b), bytes.NewReader(b)); err != nil {
 		t.Fatal(err)
 	}
-	// A child exits without defers after publication, before acknowledgement.
-	cmd := exec.Command(os.Args[0], "-test.run=^TestCrashObjectHelper$")
-	cmd.Env = append(os.Environ(), "SERVERSEND_CRASH_DATA="+data)
-	if output, err := cmd.CombinedOutput(); err == nil {
-		t.Fatal("helper did not crash")
-	} else {
-		var exit *exec.ExitError
-		if !errors.As(err, &exit) || exit.ExitCode() != 73 {
-			t.Fatalf("%v: %s", err, output)
+	internal := filepath.Join(data, ".serversend")
+	orphan := filepath.Join(internal, "uploads", string(newID()))
+	pending := filepath.Join(internal, "tmp", "pending")
+	for _, path := range []string{orphan, pending} {
+		if err := os.WriteFile(path, b, 0o600); err != nil {
+			t.Fatal(err)
 		}
 	}
-	store, err := storage.Open(data)
-	if err != nil {
+	// A crash after commit leaves a journaled move from the temporary area.
+	if _, err := db.Exec(`INSERT INTO storage_journal(kind,source,target) VALUES('move','.serversend/tmp/pending','test/Recovered/file.bin')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = New(database.NewRepository(db), store, serverID, s.limits, nil); err != nil {
+	restart := func() error {
+		store, err := storage.Open(data)
+		if err != nil {
+			return err
+		}
+		_, err = New(database.NewRepository(db), store, serverID, s.limits, nil)
+		return err
+	}
+	if err := restart(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = os.Stat(filepath.Join(data, "objects", "cc", "cccccccccccccccccccccccccccccccc")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("orphan retained: %v", err)
+	if got, err := os.ReadFile(filepath.Join(data, "test", "Recovered", "file.bin")); err != nil || string(got) != "data" {
+		t.Fatalf("journaled move not replayed: %v", err)
 	}
-	chunks, err := s.repo.StoredChunks(ctx, owner, u.ID)
-	if err != nil || len(chunks) != 1 {
+	if _, err := os.Stat(orphan); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("orphaned upload file retained: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(internal, "uploads", string(open.ID))); err != nil {
+		t.Fatalf("open upload file removed: %v", err)
+	}
+	var journal int
+	if err := db.QueryRow(`SELECT count(*) FROM storage_journal`).Scan(&journal); err != nil || journal != 0 {
+		t.Fatalf("journal not cleared: %d %v", journal, err)
+	}
+	if _, err := s.Finalize(ctx, owner, open.ID, m); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.VerifyExists(chunks[0].ObjectID, 4); err != nil {
+	if err := os.Remove(filepath.Join(data, "test", "kept.bin")); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.Delete(chunks[0].ObjectID); err != nil {
-		t.Fatal(err)
+	if err := restart(); err == nil {
+		t.Fatal("missing acknowledged contents accepted")
 	}
-	if _, err = New(database.NewRepository(db), store, serverID, s.limits, nil); err == nil {
-		t.Fatal("missing acknowledged bytes accepted")
-	}
-}
-func TestCrashObjectHelper(t *testing.T) {
-	data := os.Getenv("SERVERSEND_CRASH_DATA")
-	if data == "" {
-		return
-	}
-	store, err := storage.Open(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b := []byte("orphan")
-	if err = store.Put("cccccccccccccccccccccccccccccccc", bytes.NewReader(b), int64(len(b)), digest(b)); err != nil {
-		t.Fatal(err)
-	}
-	os.Exit(73)
 }
 
-func TestMetadataFailureLeavesRecoverableOrphan(t *testing.T) {
+// Unacknowledged bytes stay invisible and a retry overwrites them.
+func TestMetadataFailureLeavesChunkRetryable(t *testing.T) {
 	s, db, data := fixture(t, StoragePolicy{})
-	u := create(t, s, 4)
+	ctx := context.Background()
+	b := []byte("data")
+	u, m := createFile(t, s, "retried.bin", b)
 	if _, err := db.Exec(`CREATE TRIGGER fail_chunk BEFORE INSERT ON chunks BEGIN SELECT RAISE(ABORT,'injected metadata failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	b := []byte("data")
-	if _, _, err := s.PutChunk(context.Background(), owner, u.ID, 0, 4, digest(b), bytes.NewReader(b)); err == nil {
+	if _, _, err := s.PutChunk(ctx, owner, u.ID, 0, 4, digest([]byte("xxxx")), bytes.NewReader([]byte("xxxx"))); err == nil {
 		t.Fatal("failure ignored")
 	}
 	if _, err := db.Exec(`DROP TRIGGER fail_chunk`); err != nil {
 		t.Fatal(err)
 	}
-	store, err := storage.Open(data)
+	if _, created, err := s.PutChunk(ctx, owner, u.ID, 0, 4, digest(b), bytes.NewReader(b)); err != nil || !created {
+		t.Fatalf("retry: %v", err)
+	}
+	if _, err := s.Finalize(ctx, owner, u.ID, m); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(data, "test", "retried.bin")); err != nil || string(got) != "data" {
+		t.Fatalf("published %q: %v", got, err)
+	}
+}
+
+// createFile opens an upload for data with its exact manifest.
+func createFile(t *testing.T, s *Service, name string, data []byte) (api.Upload, []byte) {
+	t.Helper()
+	file := batchFile(t, name, data)
+	u, _, err := s.Create(context.Background(), owner, file.IdempotencyKey, file.CreateUploadRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = New(database.NewRepository(db), store, serverID, s.limits, nil); err != nil {
-		t.Fatal(err)
-	}
-	entries := 0
-	filepath.WalkDir(filepath.Join(data, "objects"), func(_ string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
-			entries++
-		}
-		return err
-	})
-	if entries != 0 {
-		t.Fatal(fmt.Sprint("orphans: ", entries))
-	}
+	return u, file.Manifest
 }
 
 func TestCancelFinalizeRaceRetainsOnlyWinningState(t *testing.T) {
@@ -379,14 +385,17 @@ func TestStalledChunkDoesNotBlockOtherUploads(t *testing.T) {
 	}
 }
 
+// assertNoObjects checks that no upload or batch bytes remain.
 func assertNoObjects(t *testing.T, data string) {
 	t.Helper()
-	walkObjects(t, data, func() { t.Error("unexpected object") })
+	for _, area := range []string{"uploads", "tmp"} {
+		walkObjects(t, filepath.Join(data, ".serversend", area), func() { t.Error("unexpected file in", area) })
+	}
 }
 
-func walkObjects(t *testing.T, data string, visit func()) {
+func walkObjects(t *testing.T, dir string, visit func()) {
 	t.Helper()
-	err := filepath.WalkDir(filepath.Join(data, "objects"), func(path string, entry os.DirEntry, err error) error {
+	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
 		if err == nil && !entry.IsDir() {
 			visit()
 		}

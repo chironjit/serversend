@@ -32,6 +32,7 @@ type Server struct {
 	maintenanceDone   chan struct{}
 	logs              *applog.Store
 	db                *sql.DB
+	store             *storage.Store
 	locks             *instancelock.Locks
 	tls               *tls.Config
 	identity          identity.Identity
@@ -88,11 +89,13 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 	}
 	transfers, err := uploads.New(database.NewRepository(db), store, protocol.ID(id.ID), httpapi.Capabilities().Limits, nil, uploads.StoragePolicy{GlobalBytes: c.GlobalBytes, UserBytes: c.UserBytes, MinFreeBytes: c.MinFreeBytes})
 	if err != nil {
+		store.Close()
 		db.Close()
 		return nil, err
 	}
 	logs, err := applog.Open(c.ConfigDir)
 	if err != nil {
+		store.Close()
 		db.Close()
 		return nil, fmt.Errorf("open application logs: %w", err)
 	}
@@ -115,7 +118,7 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 			}
 		}
 	}()
-	return &Server{maintenanceCancel: maintenanceCancel, maintenanceDone: maintenanceDone, logs: logs, db: db, locks: locks, tls: httpapi.BindIdentityCertificate(tlsConfig), identity: id, accounts: accounts, transfers: transfers, drainTimeout: shutdownTimeout}, nil
+	return &Server{maintenanceCancel: maintenanceCancel, maintenanceDone: maintenanceDone, logs: logs, db: db, store: store, locks: locks, tls: httpapi.BindIdentityCertificate(tlsConfig), identity: id, accounts: accounts, transfers: transfers, drainTimeout: shutdownTimeout}, nil
 }
 
 // newAccounts loads the TOTP protection key before any account request can be
@@ -149,7 +152,7 @@ func (s *Server) Close() error {
 	s.maintenanceCancel()
 	<-s.maintenanceDone
 	s.logs.Add("info", "Server stopped")
-	return errors.Join(s.logs.Close(), s.db.Close(), s.locks.Close())
+	return errors.Join(s.logs.Close(), s.store.Close(), s.db.Close(), s.locks.Close())
 }
 
 // Serve owns listener and serves TLS only. Cancellation marks the process

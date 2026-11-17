@@ -3,7 +3,7 @@ package storage
 import "golang.org/x/sys/windows"
 
 func (s *Store) Available() (int64, error) {
-	path, err := windows.UTF16PtrFromString(s.objects)
+	path, err := windows.UTF16PtrFromString(s.dir)
 	if err != nil {
 		return 0, err
 	}

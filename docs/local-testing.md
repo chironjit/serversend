@@ -74,7 +74,8 @@ Everything for the test server lives in `~/serversend-demo` (set `SERVER_SEND_LO
 | `config/serversend.sqlite` | Accounts, sessions and file metadata |
 | `config/totp.key` | Key protecting authenticator secrets; without it enrolled accounts cannot sign in |
 | `config/tls/` | The private certificate authority and server certificate |
-| `data/objects/` | Uploaded file contents, stored as verified chunks |
+| `data/<username>/` | Each user's files and folders, browsable (read-only for people) |
+| `data/.serversend/` | Retained versions, unfinished uploads and in-progress changes |
 | `settings.env` | The address and port you chose |
 | `serversend` | The server binary built by the script |
 
