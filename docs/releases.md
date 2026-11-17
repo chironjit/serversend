@@ -1,15 +1,25 @@
 # Releases and GHCR deployment
 
-Component-prefixed Git tags are the version source of truth: `server/vX.Y.Z` for the server and embedded admin, and `desktop/vX.Y.Z` for the desktop. Their version numbers and release schedules are independent. Legacy `vX.Y.Z` tags remain historical and no longer trigger releases. The first planned release is `server/v0.1.0`; it has not been published by adding this workflow. Server images include OCI version, source repository and commit labels. This workflow publishes the server and its embedded browser admin, not desktop installers. Rebuild the desktop separately when client changes are released.
+Server and desktop share one version and Git tag: `vX.Y.Z`. The **Release** workflow checks both components, builds native desktop downloads, publishes the Linux amd64 server image with its embedded admin, and publishes one GitHub Release with desktop archives and SHA-256 checksums. Historical `server/v*` and `desktop/v*` tags remain intact but no longer trigger releases.
 
-## Version policy
+## Create a release
 
-- `server/v0.1.0`: initial versioned network-testing release; still experimental.
-- `server/v0.1.1`: compatible fixes within the same series.
-- `server/v0.2.0`: new feature series or breaking changes while pre-1.0.
-- `server/v1.0.0`: a future stable milestone, not the current maturity level.
+Merge your changes into the remote default branch, update `CHANGELOG.md`, commit, and push. From a clean checkout of that branch:
 
-Record changes under Unreleased in `CHANGELOG.md`, then move them under the version/date when preparing a release. Never move or reuse a published Git tag or overwrite an exact image version. Publish versions in increasing order; backport channels and prerelease tags are not supported by this initial workflow. Patch releases must preserve client compatibility and avoid migrations requiring manual intervention. A database schema version remains separate from the application version.
+```sh
+make release DRY_RUN=1  # fetch tags and preview, without creating/pushing a tag
+make release            # choose and push the next patch version
+# Or choose a new feature series explicitly:
+make release VERSION=0.2.0
+```
+
+The command needs Git, Node.js 26 and permission to push tags to `origin`. It requires HEAD to match the remote default branch, including no uncommitted or untracked changes. It never commits or pushes source changes. It selects one patch above the highest historical unified/server/desktop version; with existing `server/v0.1.4`, that is `v0.1.5`. Explicit versions must also exceed all historical versions. Prerelease tags are unsupported. The command returns once the tag is pushed; follow **GitHub → Actions → Release** for the result. The workflow must already be committed and pushed before invoking the command.
+
+Checks run for shared/server code and native desktop builds on Linux, Windows and macOS. Both must pass before packaging starts. Desktop downloads are a Linux tarball, a Windows executable in a zip, and a macOS app bundle in a zip. Filenames include the native runner architecture; this does not build every architecture. Linux requires GTK4/WebKitGTK 6.0 runtime libraries, and Windows requires WebView2. Downloads use the tag's version in Windows/macOS metadata. Windows builds are unsigned; macOS bundles are ad-hoc signed without notarization. Desktop updates remain manual; installers and auto-updates are not included.
+
+A draft GitHub Release holds downloads until all checks, packaging and container checks pass and the image is pushed. It uses GitHub's built-in `GITHUB_TOKEN`; no PAT or new dependencies are needed. Release notes are generated from GitHub changes and include the image/update channels. Maintain `CHANGELOG.md` for human-curated changes. This product remains experimental. Patch versions should preserve compatibility; use a new minor version for a new feature series or breaking pre-1.0 changes. Database schema versions remain separate.
+
+Never move/reuse a published tag or overwrite an exact image version. Protect release tags in repository rulesets. Failed runs can leave a draft and, if publishing partially succeeds, image tags. Inspect the failed step first: rerun a failed job only before image publication; after any image push, use a fresh version rather than rebuilding an exact published version. A failed local tag push retains the local tag; inspect remote state before retrying. Publishing to GHCR and GitHub Releases is not atomic.
 
 | Image tag | Meaning |
 | --- | --- |
@@ -19,20 +29,9 @@ Record changes under Unreleased in `CHANGELOG.md`, then move them under the vers
 
 The workflow does not enforce registry immutability; use an image digest if you need a cryptographically fixed deployment. Protect release Git tags against deletion/force updates in GitHub repository rulesets. Only maintainers should be able to push release tags.
 
-## First publish from your development computer
+## Registry setup
 
-1. Commit the release workflow and accompanying changes, and push your branch. Merge to the normal release branch before tagging. Check GitHub Actions is enabled for the repository and that package writes are allowed by any organization policy.
-2. Update `CHANGELOG.md` with the release version/date and commit that change. Ensure all intended source changes are committed.
-3. From that committed release revision:
-
-   ```sh
-   git tag -a server/v0.1.0 -m "ServerSend 0.1.0"
-   git push origin HEAD
-   git push origin server/v0.1.0
-   ```
-
-4. Watch **Actions → Release server**. It runs server and shared-code checks on Linux, builds a Linux amd64 server image, checks container TLS/persistence, then pushes the three image tags. It uses GitHub's built-in `GITHUB_TOKEN` with `packages: write`; no personal access token is needed for the workflow.
-5. In your GitHub account's **Packages → serversend → Package settings**, choose visibility deliberately. New packages are private by default. Public permits anonymous pulls on Unraid, but exposes the image contents to everyone. A public source repository does not automatically make the package public.
+Ensure Actions is enabled and organization policy permits package writes. In **Packages → serversend → Package settings**, deliberately choose visibility. Public images allow anonymous Unraid pulls; a public source repository does not automatically make the package public.
 
 For a private package, authenticate on Unraid before pulling. Use a GitHub personal access token (classic) with `read:packages` and access to the package; authorize organizational SSO if required. Enter the token at the password prompt, never in a committed env file:
 
@@ -75,7 +74,7 @@ Do not delete volumes or host directories. Accounts, TLS identity and uploaded d
 
 ## Subsequent releases and version inspection
 
-Update the changelog, commit and push, then tag `server/v0.1.1` (and later patch versions) using the same process. The workflow moves `0.1` and `latest` after checks pass. You do not rebuild on Unraid. Create an optional GitHub Release from the tag and copy its changelog entry for human-readable release notes.
+Use `make release` for each subsequent patch. The workflow moves `0.1` and `latest` after checks pass. You do not rebuild on Unraid. Moving to a new minor version publishes a new series channel; a `0.1` deployment stays on `0.1` until you deliberately change it.
 
 Inspect the image actually used by the running container, even if a newer image has been pulled:
 
@@ -91,21 +90,6 @@ docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revisi
 - [Unraid: container management](https://docs.unraid.net/unraid-os/using-unraid-to/run-docker-containers/managing-and-customizing-containers/)
 - [CA Auto Update Applications source](https://github.com/Squidly271/ca.update.applications)
 
-## Independent desktop builds
+## Build checks without releasing
 
-Use **Actions → Check desktop → Run workflow** to run only the desktop build checks on a selected branch. **Check server** can likewise be run independently. Normal branch pushes and pull requests run both through the Check workflow.
-
-A desktop version tag triggers only the desktop build checks:
-
-```sh
-git tag -a desktop/v0.1.0 -m "ServerSend Desktop 0.1.0"
-git push origin desktop/v0.1.0
-```
-
-Desktop checks cover Linux, Windows and macOS, bindings, frontend, native builds, and shared/desktop persistence. Server releases do not depend on these desktop jobs. Shared changes are checked for both consumers on branches and pull requests. The desktop workflow currently validates builds and discards temporary binaries; it does not upload installers, sign applications, or implement desktop auto-updates.
-
-Server Docker tags remain `0.1.0`, `0.1`, and `latest`; the `server/` prefix applies only to Git tags. A desktop release never moves a Docker tag. Record separate server and desktop changes in the changelog. After existing 0.1.x attempts, choose the next unused server patch number; do not overwrite already-published image versions when adopting prefixed Git tags.
-
-### Compatibility policy
-
-Client and server versions need not match. Each release's notes should state the opposite component versions actually tested. Keep compatible API additions optional so deployed desktops continue working. For breaking changes, introduce an explicit protocol/API version and a migration window; coordinate a minimum supported client/server version before publishing. Independent build success alone does not prove compatibility with old releases. The current CI does not yet test a matrix of historical client/server binaries, and no new runtime version negotiation is added by this workflow split.
+Normal pushes and pull requests run the combined **Check** workflow. Use **Actions → Check → Run workflow** to check both components on demand. The reusable component workflows remain available for troubleshooting; component-prefixed tags no longer trigger them. A shared release version identifies a tested source revision, but CI does not test compatibility against historical desktop/server binaries. Keep API additions compatible with deployed clients; breaking protocols need an explicit migration window.

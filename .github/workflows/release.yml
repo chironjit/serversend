@@ -1,49 +1,153 @@
-name: Release server
+name: Release
 
 on:
   push:
-    tags: ['server/v*']
+    tags: ['v*']
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-server
+  group: release
   cancel-in-progress: false
 
 jobs:
-  check:
-    uses: ./.github/workflows/check-server.yml
-
-  publish:
-    needs: check
+  prepare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
     permissions:
-      contents: read
-      packages: write
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     env:
       RELEASE_TAG: ${{ github.ref_name }}
-      REPOSITORY: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Validate release version
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+      - name: Validate version and create draft release
+        id: version
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$RELEASE_TAG" =~ ^server/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo 'Use a release tag such as server/v0.1.0; prereleases are not published by this workflow.' >&2
+          version=$(node scripts/release.mjs --validate-tag "$RELEASE_TAG")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          releases=$(gh release list --limit 100 --json tagName,isDraft)
+          state=$(RELEASES="$releases" node --input-type=module -e '
+            const release = JSON.parse(process.env.RELEASES).find(r => r.tagName === process.env.RELEASE_TAG);
+            console.log(release ? (release.isDraft ? "draft" : "published") : "missing");')
+          case "$state" in
+            published) echo 'This release is already published; use a new version.' >&2; exit 1 ;;
+            missing) gh release create "$RELEASE_TAG" --verify-tag --draft --title "ServerSend $version" --generate-notes ;;
+          esac
+
+  check:
+    needs: prepare
+    uses: ./.github/workflows/check.yml
+
+  desktop:
+    needs: [prepare, check]
+    name: Package desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      CGO_ENABLED: '1'
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: |
+            apps/desktop/go.sum
+            shared/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: apps/desktop/frontend/package-lock.json
+      - name: Linux native build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev libwayland-dev
+      - name: Windows CGO compiler
+        if: runner.os == 'Windows'
+        run: echo 'C:/msys64/mingw64/bin' >> "$GITHUB_PATH"
+      - name: Restore pinned dependencies
+        run: |
+          (cd apps/desktop/frontend && npm ci)
+          (cd shared && go mod download)
+          (cd apps/desktop && go mod download)
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+      - name: Build production frontend
+        working-directory: apps/desktop/frontend
+        run: npm run build
+      - name: Package native desktop
+        run: bash scripts/package-desktop.sh "$RELEASE_VERSION"
+      - name: Verify packaging did not change tracked files
+        run: git diff --exit-code
+      - name: Upload desktop download to draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test "$(gh release view "v$RELEASE_VERSION" --json isDraft --jq .isDraft)" = true
+          gh release upload "v$RELEASE_VERSION" dist/* --clobber
+
+  publish:
+    needs: [prepare, check, desktop]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set image names
+        shell: bash
+        run: |
+          echo "IMAGE=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "SERIES=${VERSION%.*}" >> "$GITHUB_ENV"
+      - name: Sign in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Refuse replacing an exact image version
+        shell: bash
+        run: |
+          set -euo pipefail
+          error=$(mktemp)
+          trap 'rm -f "$error"' EXIT
+          if docker manifest inspect "$IMAGE:$VERSION" >/dev/null 2>"$error"; then
+            echo 'Exact image version already exists; release a new version instead.' >&2
             exit 1
           fi
-          newest=$(git tag --list | grep -E '^server/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -n 1)
-          test "$RELEASE_TAG" = "$newest" || { echo 'Publish versions in increasing order.' >&2; exit 1; }
-          version=${RELEASE_TAG#server/v}
-          echo "IMAGE=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_ENV"
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-          echo "SERIES=${version%.*}" >> "$GITHUB_ENV"
+          if ! grep -Eq 'manifest unknown|no such manifest' "$error"; then
+            cat "$error" >&2
+            exit 1
+          fi
       - name: Build linux/amd64 image
         run: |
           docker build --platform linux/amd64 \
@@ -56,10 +160,6 @@ jobs:
         run: |
           bash apps/server/scripts/check_container.sh "$IMAGE:$VERSION" --private-ipv4
           bash apps/server/scripts/check_container.sh "$IMAGE:$VERSION" external
-      - name: Sign in to GHCR
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
       - name: Publish version and update channels
         run: |
           docker push "$IMAGE:$VERSION"
@@ -68,3 +168,27 @@ jobs:
       - name: Sign out of GHCR
         if: always()
         run: docker logout ghcr.io
+      - name: Publish GitHub Release with checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh release view "v$VERSION" --json isDraft --jq .isDraft)" = true
+          mkdir -p dist
+          gh release download "v$VERSION" --pattern 'serversend-desktop-*' --dir dist
+          test "$(find dist -type f | wc -l)" -eq 3
+          (cd dist && sha256sum serversend-desktop-* > SHA256SUMS)
+          gh release upload "v$VERSION" dist/SHA256SUMS --clobber
+          gh release view "v$VERSION" --json body --jq .body > dist/notes.md
+          cat >> dist/notes.md <<EOF
+
+          Server image: \`$IMAGE:$VERSION\` (Linux amd64).
+          Update channels: \`$IMAGE:$SERIES\`, \`$IMAGE:latest\`.
+
+          Desktop downloads are native builds for the OS/architecture in each filename.
+          Linux requires GTK4 and WebKitGTK 6.0; Windows requires WebView2.
+          Windows downloads are unsigned; macOS bundles are ad-hoc signed, without notarization.
+          Install desktop updates manually. Transfers are interrupted by server updates; back up before upgrading.
+          EOF
+          gh release edit "v$VERSION" --notes-file dist/notes.md --draft=false --latest

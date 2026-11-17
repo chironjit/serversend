@@ -45,7 +45,7 @@ jobs:
           (cd shared && go mod download)
           (cd apps/server && go mod download)
       - name: Shared and server checks
-        run: make check-shared check-server
+        run: make check-release check-shared check-server
       - name: Native shared and server persistence
         run: bash shared/scripts/check_persistence.sh shared apps/server
       - name: Race checks

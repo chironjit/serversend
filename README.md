@@ -27,6 +27,8 @@ Use the Go version declared in `go.work`, and the desktop prerequisites describe
 make check
 ```
 
+Release both components from a clean, pushed default branch with `make release` (preview with `make release DRY_RUN=1`; choose a version with `VERSION=0.2.0`). See [release instructions](docs/releases.md) for desktop downloads and server updates.
+
 Checks can also run individually:
 
 ```sh

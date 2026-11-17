@@ -1,7 +1,16 @@
 .PHONY: local-test-server-setup local-test-desktop local-test-reset check check-shared check-server check-admin check-desktop check-layout check-bindings check-smoke check-persistence
 
+.PHONY: release check-release
+export VERSION DRY_RUN
+
+release:
+	node scripts/release.mjs
+
+check-release:
+	node --test scripts/release.test.mjs
+
 # Component checks own their tooling and run without changing dependencies.
-check: check-layout check-shared check-server check-desktop check-bindings check-smoke
+check: check-release check-layout check-shared check-server check-desktop check-bindings check-smoke
 
 check-shared:
 	bash shared/scripts/check.sh

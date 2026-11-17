@@ -24,6 +24,9 @@ profile.cov
 # Local workspace dependency checksums
 go.work.sum
 
+# Release download archives
+/dist/
+
 # env file
 .env
 

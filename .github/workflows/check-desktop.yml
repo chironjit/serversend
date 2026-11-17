@@ -1,8 +1,6 @@
 name: Check desktop
 
 on:
-  push:
-    tags: ['desktop/v*']
   workflow_dispatch:
   workflow_call:
 
