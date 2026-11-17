@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/chironjit/serversend/apps/server/internal/backup"
 	"github.com/chironjit/serversend/shared/api"
@@ -54,7 +53,6 @@ func TestOfflineBackupRestoresStandardBytesAndIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(3 * time.Second) // Allow the real authentication limiter to refill.
 	uploader, _ := onboardedClient(t, probe.Origin, probe.Fingerprint, "backup-user", user.TemporaryPassword)
 	_, expected := writeFixture(t, t.TempDir(), "recover.bin", (4<<20)+17)
 	account, _ := uploader.Account()

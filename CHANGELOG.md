@@ -27,6 +27,9 @@
 
 ### Build and release tooling
 
+- Kept the shared QUIC transport alive until active HTTP/3 responses finish draining during shutdown.
+- Fixed intermittent release-test failures when integration onboarding exhausts the real authentication limiter; test-only bounded retries replace fixed sleeps without changing production limits.
+
 - Unified server/desktop releases with `make release`, automatic patch selection, combined checks, GHCR publishing and native desktop downloads with checksums. Historical component tags are preserved.
 - Startup desktop update checks with an explicit Update and restart / Later popup, with required SHA-256 verification and embedded release versions. Linux downloads now use AppImage packaging (host GTK4/WebKitGTK required).
 - Portable desktop formatter invocation on Windows.

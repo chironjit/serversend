@@ -42,34 +42,44 @@ func onboardWithClient(t testing.TB, c *client.Client, username, temporary strin
 }
 func onboardWithRecovery(t testing.TB, c *client.Client, username, temporary string) (*client.Client, string, []string) {
 	t.Helper()
-	ctx := t.Context()
-	attempt, err := c.Password(ctx, username, temporary)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	passwordAttempt := func(password string) (api.PasswordAttempt, error) {
+		return retryAuthentication(ctx, func() (api.PasswordAttempt, error) { return c.Password(ctx, username, password) })
+	}
+	attempt, err := passwordAttempt(temporary)
 	if err != nil || attempt.NextStep != "replace_password" {
 		t.Fatalf("temporary login: %q %v", attempt.NextStep, err)
 	}
 	password := "permanent password for " + username
-	if err := c.ReplacePassword(ctx, attempt.Challenge, password); err != nil {
+	if _, err := retryAuthentication(ctx, func() (struct{}, error) { return struct{}{}, c.ReplacePassword(ctx, attempt.Challenge, password) }); err != nil {
 		t.Fatal(err)
 	}
-	if attempt, err = c.Password(ctx, username, password); err != nil || attempt.NextStep != "enroll_totp" {
+	if attempt, err = passwordAttempt(password); err != nil || attempt.NextStep != "enroll_totp" {
 		t.Fatalf("enrollment login: %q %v", attempt.NextStep, err)
 	}
-	enrollment, err := c.EnrollTOTP(ctx, attempt.Challenge)
+	enrollment, err := retryAuthentication(ctx, func() (api.TOTPEnrollment, error) { return c.EnrollTOTP(ctx, attempt.Challenge) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, _ := totp.GenerateCode(enrollment.Secret, time.Now())
-	codes, err := c.ConfirmTOTP(ctx, attempt.Challenge, code)
+	codes, err := retryAuthentication(ctx, func() ([]string, error) {
+		// Generate at each attempt so waiting across a TOTP boundary is safe.
+		code, err := totp.GenerateCode(enrollment.Secret, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		return c.ConfirmTOTP(ctx, attempt.Challenge, code)
+	})
 	if err != nil || len(codes) != 10 {
 		t.Fatalf("confirmation: %v", err)
 	}
-	if attempt, err = c.Password(ctx, username, password); err != nil || attempt.NextStep != "second_factor" {
+	if attempt, err = passwordAttempt(password); err != nil || attempt.NextStep != "second_factor" {
 		t.Fatalf("login: %q %v", attempt.NextStep, err)
 	}
 	// The enrollment code's time step is spent; a recovery code signs in.
-	session, err := c.SignIn(ctx, attempt.Challenge, codes[0], "test device")
+	session, err := retryAuthentication(ctx, func() (api.Session, error) { return c.SignIn(ctx, attempt.Challenge, codes[0], "test device") })
 	if err != nil || session.Username != username || session.AccessToken != "" {
-		t.Fatalf("session: %+v %v", session, err)
+		t.Fatalf("session for %s: %v", username, err)
 	}
 	return c, password, codes
 }
@@ -139,7 +149,6 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(3 * time.Second)
 	admin, _ := onboardedClient(t, origin, probe.Fingerprint, "first", user.TemporaryPassword)
 	if _, err := admin.CreateUser(t.Context(), "forbidden"); !errors.As(err, &denied) || denied.Code != api.PermissionDenied {
 		t.Fatalf("user created account: %v", err)
@@ -239,7 +248,6 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 	if _, err := s.db.Exec(`INSERT INTO accounts(id,username,role,state,password_hash,created_at,temporary_expires_at) VALUES('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','second','user','password_required',?,?,?)`, hash, now.UnixMilli(), now.Add(time.Hour).UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(3 * time.Second) // Let the global sign-in attempt budget refill.
 	other, _ := onboardedClient(t, origin, probe.Fingerprint, "second", temporary)
 	if mine, err := other.Catalog(t.Context()); err != nil || len(mine.Entries) != 0 {
 		t.Fatalf("foreign catalog visible: %v", err)

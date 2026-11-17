@@ -188,6 +188,9 @@ func TestDualTransportCancellationDrainsQUICRequest(t *testing.T) {
 			if r.Method == "HEAD" {
 				return
 			}
+			if r.ProtoMajor != 3 {
+				t.Error("drain fixture did not use HTTP/3")
+			}
 			close(entered)
 			select {
 			case <-release:
@@ -203,7 +206,9 @@ func TestDualTransportCancellationDrainsQUICRequest(t *testing.T) {
 	}
 	defer c.Close()
 	requestDone := make(chan error, 1)
-	go func() { _, err := c.Password(t.Context(), "user", "secret"); requestDone <- err }()
+	requestCtx, requestCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer requestCancel()
+	go func() { _, err := c.Password(requestCtx, "user", "secret"); requestDone <- err }()
 	select {
 	case <-entered:
 	case <-time.After(3 * time.Second):

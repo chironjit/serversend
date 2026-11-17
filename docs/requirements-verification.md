@@ -153,3 +153,11 @@ Linux amd64, Go 1.26.3; `GOCACHE=/tmp/serversend-go-cache`, installed dependenci
 | Real locked store / cancelled unlock / OS restart | Not run; application fault tests pass | Not run | Not run |
 
 Run the [qualification command](desktop-development.md#native-credential-store-qualification) as the native desktop user. Remaining acceptance gates are those native checks and native single-instance/UI lifecycle qualification; real OS restart behavior is not inferred from a child-process test. Feature 4 remains partially accepted for that reason.
+
+### Release onboarding rate-limit regression (2026-11-17)
+
+CI exposed a timing assumption in the real TLS transfer test: a fixed three-second pause replenishes six authentication slots, while full onboarding consumes seven. Test onboarding now retries only explicit `overloaded` responses, honors bounded retry delays (three attempts, cancellation-aware), regenerates TOTP after a wait and keeps a 30-second overall deadline. Removed the transfer/backup fixed sleeps; production authentication limits and client behavior are unchanged. The failing transfer flow and deterministic HTTP-429 regression passed five consecutive runs. The regression checks that enrollment is not repeated and session retry creates one device; negative cases reject retries after credential/transport errors, cancellation or exhausted attempts.
+
+The standalone race run then exposed a separate QUIC shutdown lifetime bug: the listener goroutine closed its shared UDP transport before `http3.Server.Shutdown` finished active responses. Transport cleanup now belongs to the complete serve/drain lifetime; listener cleanup only stops new handshakes. The drain regression asserts HTTP/3 and bounds the client request to five seconds so response loss cannot stall the check for a minute.
+
+Final Linux validation passed: `make check-server` (29 admin tests, assets, vet, all server tests and production build), standalone/offline `go test -mod=readonly -race ./...` in `apps/server`, and 25 consecutive race-enabled QUIC drain runs. Loopback listener permission was required. No dependency or migration changed; hosted release rerun remains external to these local results.

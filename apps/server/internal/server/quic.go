@@ -43,15 +43,19 @@ func (s *Server) serveTransports(ctx context.Context, cancel context.CancelFunc,
 		MaxHeaderBytes: 16 << 10, IdleTimeout: time.Minute,
 	}
 	defer h3.Close()
+	transport := &quic.Transport{Conn: udp, ConnContext: func(ctx context.Context, _ *quic.ClientInfo) (context.Context, error) {
+		return httpapi.IdentityConnectionContext(ctx), nil
+	}}
+	// ServeListener returns when accepting stops, before active responses
+	// finish. The shared UDP transport must outlive the complete HTTP/3 drain.
+	defer transport.Close()
 	tcpDone, quicDone := make(chan error, 1), make(chan error, 1)
 	go func() { tcpDone <- s.serve(ctx, tcp, handler) }()
 	go func() {
-		transport := &quic.Transport{Conn: udp, ConnContext: func(ctx context.Context, _ *quic.ClientInfo) (context.Context, error) {
-			return httpapi.IdentityConnectionContext(ctx), nil
-		}}
-		defer transport.Close()
 		listener, err := transport.ListenEarly(http3.ConfigureTLSConfig(h3.TLSConfig), h3.QUICConfig)
 		if err == nil {
+			// Stop new handshakes without aborting accepted connections.
+			defer listener.Close()
 			err = h3.ServeListener(listener)
 		}
 		if errors.Is(err, http.ErrServerClosed) {
