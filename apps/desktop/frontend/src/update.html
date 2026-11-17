@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"
+    />
+    <title>ServerSend Update</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font:
+          15px system-ui,
+          sans-serif;
+        background: light-dark(#fafafa, #17151e);
+        color: light-dark(#24202e, #eeeaf7);
+      }
+      body {
+        margin: 0;
+        padding: 28px;
+      }
+      h1 {
+        font-size: 22px;
+        margin-top: 0;
+      }
+      p {
+        line-height: 1.6;
+      }
+      #notes {
+        white-space: pre-wrap;
+        overflow: auto;
+        max-height: 180px;
+        font: inherit;
+        border-block: 1px solid #8885;
+        padding-block: 12px;
+      }
+      footer {
+        display: flex;
+        gap: 12px;
+        justify-content: flex-end;
+        margin-top: 20px;
+      }
+      button {
+        font: inherit;
+        padding: 10px 16px;
+        border: 1px solid #8887;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      #install {
+        background: #6d28d9;
+        color: white;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+      progress {
+        width: 100%;
+        accent-color: #7c3aed;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <main aria-labelledby="heading">
+      <h1 id="heading">ServerSend Update</h1>
+      <p id="version"></p>
+      <p id="message" role="status" aria-live="polite"></p>
+      <pre id="notes" hidden></pre>
+      <progress id="progress" hidden aria-label="Update download"></progress>
+      <p id="warning" hidden>
+        Save your work and finish transfers first. Updating will close and restart ServerSend.
+      </p>
+      <footer>
+        <button id="close">Later</button><button id="install" hidden>Update and restart</button>
+      </footer>
+    </main>
+    <script>
+      (function () {
+        const events = window.wails.Events;
+        const get = (id) => document.getElementById(id);
+        let busy = false;
+        let revision = 0;
+        events.On('serversend:update:state', function (event) {
+          const view = event.data;
+          if (view.revision < revision) return;
+          revision = view.revision;
+          busy = view.state === 'installing';
+          get('heading').textContent =
+            view.state === 'available'
+              ? 'An update is available'
+              : view.state === 'current'
+                ? 'ServerSend is up to date'
+                : view.state === 'error'
+                  ? 'Update unsuccessful'
+                  : 'Updating ServerSend';
+          get('version').textContent = view.version
+            ? 'Version ' + view.current + ' → ' + view.version
+            : 'Version ' + view.current;
+          get('message').textContent = view.message || '';
+          get('notes').textContent = view.notes || '';
+          get('notes').hidden = !view.notes || busy;
+          get('progress').hidden = !busy;
+          get('warning').hidden = !view.version || busy;
+          get('install').hidden = !view.version || busy;
+          get('install').disabled = busy;
+          get('close').disabled = busy;
+          get('close').textContent = view.state === 'available' ? 'Later' : 'Close';
+        });
+        events.On('wails:updater:download-progress', function (event) {
+          if (!busy) return;
+          const p = event.data;
+          if (p.total > 0) {
+            get('progress').max = p.total;
+            get('progress').value = p.written;
+          } else get('progress').removeAttribute('value');
+        });
+        get('install').addEventListener('click', function () {
+          if (busy) return;
+          busy = true;
+          get('install').disabled = true;
+          events.Emit('serversend:update:install');
+        });
+        get('close').addEventListener('click', () => {
+          if (!busy) events.Emit('serversend:update:close');
+        });
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape' && !busy) events.Emit('serversend:update:close');
+        });
+        window._wails.invoke('wails:runtime:ready');
+        events.Emit('serversend:update:ready');
+      })();
+    </script>
+  </body>
+</html>

@@ -99,7 +99,7 @@ After administrator sign-in, **Application logs** shows server startup/shutdown,
 
 Logs persist in `SERVER_SEND_CONFIG_DIR/logs/app.jsonl`, rotating at 2 MiB with one retained file (`app.jsonl.1`). The viewer keeps at most 5,000 recent entries in memory; restart loads retained files. Directories/files use 0700/0600 permissions. Logging write failures are reported to stderr and recent events remain visible in memory. These are bounded operational diagnostics, not permanent audit history. Failures before server initialization remain in process/container output. Credentials, authentication bodies, file contents and URL query strings are excluded; request routes use templates rather than submitted names. Internal errors can contain storage paths, so logs are administrator-only.
 
-Folder deletion refuses active uploads. Expired open uploads no longer block deletion indefinitely; finalizing uploads and legacy uploads with no expiry remain protected. Deletion is still permanent and removes the selected tree and its expired upload objects.
+Folder deletion refuses active uploads. Expired open uploads no longer block deletion indefinitely; finalizing uploads and legacy uploads with no expiry remain protected. Deletion is still permanent and removes the selected tree and its expired upload objects. Large deletions can spill SQLite temporary tables to disk: the Docker image sets `SQLITE_TMPDIR=/staging` to support its read-only root. See the [Unraid permission-error remedy](unraid-testing.md#folder-deletion-reports-a-sqlite-permission-error) for existing containers.
 
 ## Environment settings
 

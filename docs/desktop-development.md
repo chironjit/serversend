@@ -39,7 +39,7 @@ Run `bash apps/desktop/scripts/check_test.sh` to test the validation entry point
 
 ## Interactive development and packaging
 
-Release downloads and on-demand self-updates are described in [release instructions](releases.md). Release packaging embeds `main.currentVersion` and `main.updateRepository`; ordinary development builds use `dev` and disable the updater.
+Release downloads and startup self-update checks are described in [release instructions](releases.md). Release packaging embeds `main.currentVersion` and `main.updateRepository`; ordinary development builds use `dev` and disable the updater.
 
 Wails CLI operations run from `apps/desktop`. The configuration is `build/config.yml`, and platform build tasks are under `build`. The generated Taskfiles place application output in `bin` by default. They can install dependencies and run `go mod tidy`; review dependency changes before invoking them and follow the repository approval rule.
 

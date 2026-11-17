@@ -62,6 +62,12 @@ jobs:
         run: GOWORK=off go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
       - name: Workspace, frontend tests, and native desktop build
         run: make check-layout check-desktop check-bindings
+      - name: Linux AppImage updater swap and relaunch
+        if: runner.os == 'Linux'
+        working-directory: apps/desktop
+        env:
+          SERVERSEND_TEST_APPIMAGE: '1'
+        run: go test -mod=readonly -count=1 -run '^TestNativeUpdateSwapAndRelaunch$' .
       - name: Shared code and desktop scaffold smoke
         if: runner.os == 'Linux'
         run: make check-shared check-smoke
