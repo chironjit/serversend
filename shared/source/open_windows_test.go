@@ -3,6 +3,7 @@
 package source
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -143,8 +144,8 @@ func TestWindowsACLPermissionFailureIsNotASkip(t *testing.T) {
 		f.Close()
 		t.Fatal("opened ACL-denied source")
 	}
-	if err == nil {
-		t.Fatal("ACL denial succeeded")
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("expected permission-denied classification: %v", err)
 	}
 	if _, ok := Skipped(err); ok {
 		t.Fatal("ACL denial hidden as policy skip")

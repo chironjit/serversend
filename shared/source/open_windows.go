@@ -54,6 +54,10 @@ func openWithHook(path string, beforeOpen func(string)) (*os.File, error) {
 		err = windows.NtCreateFile(&next, windows.FILE_GENERIC_READ, &attrs, &status, nil, 0, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, windows.FILE_OPEN, windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT|windows.FILE_OPEN_FOR_BACKUP_INTENT, 0, 0)
 		parent.Close()
 		if err != nil {
+			// Go classifies filesystem errors by Win32 errno, not NTSTATUS.
+			if status, ok := err.(windows.NTStatus); ok {
+				err = status.Errno()
+			}
 			return nil, &os.PathError{Op: "open source", Path: path, Err: err}
 		}
 		parent = os.NewFile(uintptr(next), path)

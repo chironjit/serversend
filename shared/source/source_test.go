@@ -1,6 +1,7 @@
 package source
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -18,6 +19,25 @@ func makeLink(t *testing.T, target, path string) {
 	t.Helper()
 	if err := os.Symlink(target, path); err != nil {
 		t.Skipf("native symlink fixture unavailable (platform gate remains): %v", err)
+	}
+}
+
+func TestOpenMissingSourceReturnsNotExist(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"missing", filepath.Join("missing-parent", "file")} {
+		t.Run(name, func(t *testing.T) {
+			f, err := Open(filepath.Join(root, name))
+			if f != nil {
+				f.Close()
+				t.Fatal("opened missing source")
+			}
+			if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("expected file-not-found classification: %v", err)
+			}
+		})
 	}
 }
 
