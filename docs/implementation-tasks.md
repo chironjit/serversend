@@ -6,7 +6,7 @@ This is the active delivery roadmap, reorganized on 2026-11-17 around features i
 
 Already implemented: versioned contracts and identity-proof helpers; SQLite foundations and migrations; a TLS server with persistent identity and certificates; administrator bootstrap; Argon2id passwords, mandatory replacement, TOTP and recovery codes; seven-day admin cookies, rotating desktop refresh credentials with 30-day inactivity/60-day second-factor limits, desktop profiles and optional OS-keychain persistence; browser user listing/creation; concurrent standard uploads (eight desktop workers), recursive folders and empty directories; folder browsing/creation; verified whole-file downloads; confirmed permanent deletion with restartable deleted-object cleanup; Tailwind components and theme selection in both interfaces; desktop throughput display; component checks and release workflows.
 
-These are existing building blocks, not completed versions of the features below. The desktop queue remains in memory; remembered session credentials use the OS credential store. There is no transfer resume, private mode, trash or complete version-management experience. Catalogs currently stop at 1000 entries per directory. Hosted CI results, actual Unraid qualification and complete native UI workflows must be verified, not inferred from workflow files. This status review uses the current implementation and previously executed checks recorded in the verification map; it does not represent a fresh test run.
+These are existing building blocks, not completed versions of the features below. The desktop queue remains in memory; remembered session credentials use the OS credential store. Brief transfer interruptions now retry, and single-file downloads retain verified checkpoints. Upload restart resume, private mode, trash and complete version management remain open. Catalogs currently stop at 1000 entries per directory. Hosted CI results, actual Unraid qualification and complete native UI workflows must be verified, not inferred from workflow files. This status review uses the current implementation and previously executed checks recorded in the verification map; it does not represent a fresh test run.
 
 Current pending temporary passwords can be retrieved by administrators until replacement or one-hour expiry. The original specification calls for showing them once. Resolve that discrepancy in Complete account administration; do not silently treat the current behavior as the final security policy.
 
@@ -22,8 +22,8 @@ Checked items mean the stated scope is implemented with recorded evidence. Compo
 | 2. Performance and QUIC | Partial | QUIC-first transport complete; deployment resource/performance validation open; later integrations tracked in features 5, 9, 10, 12 and 14 |
 | 3. Recoverable storage | Partial | Instance locks, offline backup/restore, startup reconciliation, quota reservations and upload retirement delivered; actual filesystem/power-loss qualification open |
 | 4. Persistent sign-in/devices | Partial | Refresh, installation deduplication, verified trust/scoped storage, self-service/admin devices and browser protections delivered; complete native qualification open |
-| 5. Resumable uploads | Pending | Existing in-memory queue only; persistence and resume open |
-| 6. Browsing/restores | Pending | Existing folder browsing and whole-file downloads only; pagination and resumable folder restores open |
+| 5. Resumable uploads | Partial | Replay-safe reconnect retries delivered; durable queue/scans and restart resume open |
+| 6. Browsing/restores | Partial | Verified single-file checkpoint resume and read retries delivered; pagination, durable selections and folder restores open |
 | 7. Storage visibility | Pending | Existing local throughput display only; accounting and dashboards open |
 | 8. Versions/trash | Pending | Existing version records and permanent deletion only; history, trash and retention open |
 | 9. Private storage | Pending | Contracts only; format prototype, encryption and recovery open |
@@ -114,10 +114,11 @@ For every feature:
 
 **Outcome:** selected files survive application restarts in a durable queue and resume only missing work.
 
-**Existing:** sequential in-memory transfer manager, recursive scans and a server missing-chunk route; database queue foundations are not connected to this workflow.
+**Existing:** eight upload workers, recursive scans and a server missing-chunk route; database queue foundations are not connected to this workflow. Replay-safe requests now retry transient failures up to six attempts with cancellable exponential backoff/jitter, retaining upload IDs, per-file batch keys and prepared bytes through reconnect. Longer outages still fail; uploads do not survive app exit.
 
 **Depends on:** features 3, 4. Design server/account scoping for feature 10 now.
 
+- [x] Recover brief connection failures in directory creation, upload admission, identical chunk writes, finalization and prepared small-file batches without generating new identities. Trust/authentication/source/capacity failures remain terminal.
 - [ ] Persist jobs before network work; stream discovered files/directories into SQLite and resume interrupted scans without unbounded batch buffering.
 - [ ] Persist upload IDs, source fingerprints, acknowledgements, retry schedules and explicit queue/wait states.
 - [ ] Reconcile missing chunks after reconnect, lost acknowledgements and restart; never mix source generations when files change, disappear or become unreadable.
@@ -131,10 +132,11 @@ For every feature:
 
 **Outcome:** users can browse large catalogs and safely restore selected files or folders across interruptions.
 
-**Existing:** folder navigation and verified whole-file downloads; 1000-entry listing limit and no persisted download progress.
+**Existing:** folder navigation with bounded transient read retries, a 1000-entry listing limit, and verified single-file downloads with local chunk checkpoints. Selecting the same immutable version and destination again resumes its verified prefix; queue selections are not persisted or automatically restarted.
 
 **Depends on:** features 3, 4, 5; version selection completes with feature 8.
 
+- [x] Retry interrupted single-file reads and retain flushed chunk checkpoints across attempts. Revalidate checkpoints, copy into a fresh exclusive file without writing through existing links, and publish by destination-directory rename.
 - [ ] Replace truncated catalogs with account/query/snapshot-bound pagination and bounded desktop lists.
 - [ ] Implement catalog revisions, reconnect reconciliation and full refresh after expired history; events are hints, not the source of truth.
 - [ ] Add recursive folder and multi-file download selection, persistent temporary destinations and chunk-boundary resume.

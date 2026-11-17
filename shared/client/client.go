@@ -239,7 +239,10 @@ func (c *Client) exchange(ctx context.Context, request call, input, output any) 
 		return nil
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxJSONResponse+1))
-	if err != nil || len(body) > maxJSONResponse {
+	if err != nil {
+		return fmt.Errorf("reading server response: %w", err)
+	}
+	if len(body) > maxJSONResponse {
 		return errors.New("the server sent an unreadable or oversized response")
 	}
 	if err := json.Unmarshal(body, output); err != nil {
@@ -342,6 +345,16 @@ func (c *Client) Catalog(ctx context.Context) (api.CatalogPage, error) {
 }
 
 func (c *Client) CatalogFolder(ctx context.Context, parent protocol.ID) (api.CatalogPage, error) {
+	var page api.CatalogPage
+	err := retryTransfer(ctx, func() error {
+		var e error
+		page, e = c.catalogFolder(ctx, parent)
+		return e
+	})
+	return page, err
+}
+
+func (c *Client) catalogFolder(ctx context.Context, parent protocol.ID) (api.CatalogPage, error) {
 	if parent != "" && parent.Validate() != nil {
 		return api.CatalogPage{}, errors.New("invalid folder ID")
 	}
@@ -352,7 +365,7 @@ func (c *Client) CatalogFolder(ctx context.Context, parent protocol.ID) (api.Cat
 	defer response.Body.Close()
 	page, err := api.DecodeCatalogPage(response.Body, nil)
 	if err != nil {
-		return api.CatalogPage{}, errors.New("the server sent a file list this version cannot read")
+		return api.CatalogPage{}, fmt.Errorf("the server sent an unreadable file list: %w", err)
 	}
 	return page, nil
 }

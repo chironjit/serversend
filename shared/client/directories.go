@@ -12,7 +12,10 @@ func (c *Client) CreateDirectory(ctx context.Context, parent protocol.ID, name s
 		return api.CatalogEntry{}, err
 	}
 	var entry api.CatalogEntry
-	err := c.exchange(ctx, call{method: "POST", path: "/directories", token: c.token()}, request, &entry)
+	// The same parent/name and ID are replayed; the server merges existing folders.
+	err := retryTransfer(ctx, func() error {
+		return c.exchange(ctx, call{method: "POST", path: "/directories", token: c.token()}, request, &entry)
+	})
 	if err == nil {
 		err = entry.Validate(nil)
 	}

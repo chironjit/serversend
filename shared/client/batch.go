@@ -87,13 +87,22 @@ func (c *Client) UploadBatch(ctx context.Context, files []BatchFile) ([]BatchOut
 		api.BatchHeaderBytesHeader: {strconv.Itoa(len(header))},
 		"Content-Type":             {"application/octet-stream"},
 	}}
-	response, err := c.do(ctx, call)
+	var decoded api.BatchUploadResponse
+	// Keep the prepared bytes and each per-file idempotency key unchanged,
+	// including when the first response was lost after publication.
+	err = retryTransfer(ctx, func() error {
+		response, e := c.do(ctx, call)
+		if e != nil {
+			return e
+		}
+		defer response.Body.Close()
+		decoded, e = api.DecodeBatchUploadResponse(response.Body)
+		return e
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
-	decoded, err := api.DecodeBatchUploadResponse(response.Body)
-	if err != nil || len(decoded.Results) != len(sent) {
+	if decoded.Validate() != nil || len(decoded.Results) != len(sent) {
 		return nil, errors.New("the server sent an invalid batch result")
 	}
 	for k, result := range decoded.Results {

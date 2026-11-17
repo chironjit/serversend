@@ -74,6 +74,21 @@ Replace the sample IP with the same configured address. Save the printed tempora
 
 Create a user account in the admin page. Creation requires a full admin sign-in within five minutes; sign out and in again if that window expires. Give the user the displayed temporary password. In the desktop, connect to `UNRAID_IP`, compare its certificate fingerprint against `docker logs serversend`, and sign in as the user. Replace the user's temporary password and enroll their authenticator. Administrators cannot browse, upload, or download files; existing administrator-owned test files remain stored but are no longer accessible through transfer routes.
 
+## Resetting uploaded files
+
+Images with the browsable file tree refuse data written by earlier pre-release images. `-reset-files` permanently deletes every uploaded file and folder and keeps accounts, devices, identity and certificates.
+
+Run it in the Unraid terminal (**>_** in the web UI, or SSH). `serversend` exists only inside the image, so typing `serversend …` on the host fails; it must run through `docker run`. Published images are named `ghcr.io/chironjit/serversend:<version>`. The container must be stopped; `docker exec` into the running container is refused by the deployment lock. Reusing the container's own image and folders avoids typing paths:
+
+```sh
+docker stop serversend
+docker run --rm --network none --read-only --volumes-from serversend \
+  "$(docker inspect serversend --format '{{.Config.Image}}')" -reset-files
+docker start serversend
+```
+
+Success prints `All uploaded files and folders were deleted; accounts were kept`.
+
 ## Changing an existing installation from port 8443
 
 Change both the host and container port in the saved Unraid template to **58443**, and update its WebUI URL. If you explicitly set `SERVER_SEND_TCP_ADDRESS`, change it to `:58443` (otherwise the new image supplies that default). Recreate the container with the new image and unchanged storage mappings. Use `https://UNRAID_IP:58443/admin/` and reconnect the desktop at port 58443. Certificates and accounts do not need to be recreated for a port change.

@@ -2,7 +2,7 @@
 
 ServerSend is a desktop client and private file-storage server for LAN and Tailscale access. The planned server runs in Docker on Unraid. The desktop targets Linux first, then Windows, with macOS support also required.
 
-The end-to-end test slice supports TLS, persistent server identity/accounts/metadata, browser administrator onboarding and user creation, and desktop user sign-in, file and recursive folder uploads, server folders, verified downloads and live throughput. Administrators manage accounts at `/admin/`; file transfers require a user account. See [local testing](docs/local-testing.md), [Unraid Docker setup](docs/unraid-testing.md), [versioned GHCR releases](docs/releases.md), and [current limits](docs/vertical-slice.md). This remains a development build with sequential transfers and no persistent desktop queue or resume.
+The end-to-end test slice supports TLS, persistent server identity/accounts/metadata, browser administrator onboarding and user creation, and desktop user sign-in, file and recursive folder uploads, server folders, verified downloads and live throughput. Administrators manage accounts at `/admin/`; file transfers require a user account. See [local testing](docs/local-testing.md), [Unraid Docker setup](docs/unraid-testing.md), [versioned GHCR releases](docs/releases.md), and [current limits](docs/vertical-slice.md). This remains a development build with concurrent uploads, brief connection retries and verified single-file download checkpoints; persistent upload queues and folder restores remain open.
 
 The next implementation priorities are tracked in the [feature roadmap](docs/implementation-tasks.md), with the full product specification in the [implementation plan](docs/implementation-plan.md).
 
