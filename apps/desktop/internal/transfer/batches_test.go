@@ -117,9 +117,15 @@ func TestWorkerRechecksSourceAndReportsLinkReplacementAsSkipped(t *testing.T) {
 }
 
 func TestScanFailuresAndCancellationAreNotSuccessfulSkips(t *testing.T) {
+	// macOS temporary paths can contain directory aliases. Resolve the
+	// existing fixture root so this tests a missing file, not a policy skip.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	m := &Manager{client: &client.Client{}, queue: make(chan job, 10), emit: func(Item) {}}
-	if err := m.Upload([]string{filepath.Join(t.TempDir(), "missing")}, ""); err == nil {
-		t.Fatal("missing source succeeded")
+	if err := m.Upload([]string{filepath.Join(root, "missing")}, ""); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing source: %v", err)
 	}
 	b := m.Batches()[0]
 	if b.State != "failed" || b.Error == "" || b.Skipped != 0 {
@@ -127,7 +133,7 @@ func TestScanFailuresAndCancellationAreNotSuccessfulSkips(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := m.UploadFolder(ctx, t.TempDir(), ""); !errors.Is(err, context.Canceled) {
+	if err := m.UploadFolder(ctx, root, ""); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation=%v", err)
 	}
 	b = m.Batches()[1]
