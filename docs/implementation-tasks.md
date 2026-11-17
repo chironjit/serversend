@@ -6,13 +6,32 @@ This is the active delivery roadmap, reorganized on 2026-11-17 around features i
 
 Already implemented: versioned contracts and identity-proof helpers; SQLite foundations and migrations; a TLS server with persistent identity and certificates; administrator bootstrap; Argon2id passwords, mandatory replacement, TOTP and recovery codes; temporary 12-hour sessions; browser user listing/creation; sequential standard uploads, recursive folders and empty directories; folder browsing/creation; verified whole-file downloads; confirmed permanent deletion with restartable deleted-object cleanup; Tailwind components and theme selection in both interfaces; desktop throughput display; component checks and release workflows.
 
-These are existing building blocks, not completed versions of the features below. The desktop queue and credentials remain in memory. There is no transfer resume, private mode, trash or complete version-management experience. Catalogs currently stop at 1000 entries per directory. Hosted CI results, actual Unraid qualification and complete native UI workflows must be verified, not inferred from workflow files. This roadmap records source review, not a fresh execution of the tests.
+These are existing building blocks, not completed versions of the features below. The desktop queue and credentials remain in memory. There is no transfer resume, private mode, trash or complete version-management experience. Catalogs currently stop at 1000 entries per directory. Hosted CI results, actual Unraid qualification and complete native UI workflows must be verified, not inferred from workflow files. This status review uses the current implementation and previously executed checks recorded in the verification map; it does not represent a fresh test run.
 
 Current pending temporary passwords can be retrieved by administrators until replacement or one-hour expiry. The original specification calls for showing them once. Resolve that discrepancy in Complete account administration; do not silently treat the current behavior as the final security policy.
 
-### Implementation in progress, 2026-11-17
+### Delivery status, 2026-11-17
 
-The first parallel delivery includes consistent no-follow source opening and bounded skipped-item batch reports, desktop summaries, HTTP/3 evaluation with verified HTTP/2 fallback, [reproducible performance measurements](performance-baseline.md), deployment-directory instance locks, and a [stopped-server backup command](backup-restore.md). Connections try HTTP/3 first and use HTTP/2 only after QUIC fails; the local tmpfs results do not establish Unraid/tailnet performance. This is partial delivery of features 1–3, not acceptance of the complete roadmap. The [verification map](requirements-verification.md#feature-roadmap-execution-2026-11-17) records executed checks and remaining native/hardware gates.
+Delivered work includes consistent no-follow source opening and bounded skipped-item batch reports, desktop summaries, HTTP/3-first connections with verified HTTP/2 fallback, [reproducible performance measurements](performance-baseline.md), deployment-directory instance locks, and a [stopped-server backup command](backup-restore.md). Every replacement connection tries QUIC again; a working HTTP/2 fallback connection has no timed upgrade attempts. The local tmpfs results do not establish Unraid/tailnet performance. The [verification map](requirements-verification.md#feature-roadmap-execution-2026-11-17) records executed checks and remaining native/hardware gates.
+
+Checked items mean the stated scope is implemented with recorded evidence. Compound tasks are split below where only part has been delivered. Full feature acceptance still requires its remaining checks; none of the 14 features is fully accepted yet.
+
+| Feature | Status | Delivered scope / remaining work |
+| --- | --- | --- |
+| 1. Symlink handling | Partial | Skip/report, safe source opening and desktop summaries delivered; native Windows/macOS and picker qualification open |
+| 2. Performance and QUIC | Partial | QUIC-first transport complete; deployment resource/performance validation open; later integrations tracked in features 5, 9, 10, 12 and 14 |
+| 3. Recoverable storage | Partial | Instance locks, offline standard backup/restore and upgrade guidance delivered; reconciliation, reservations and failure-boundary qualification open |
+| 4. Persistent sign-in/devices | Pending | Existing access sessions only; refresh, secure stores and device controls open |
+| 5. Resumable uploads | Pending | Existing in-memory queue only; persistence and resume open |
+| 6. Browsing/restores | Pending | Existing folder browsing and whole-file downloads only; pagination and resumable folder restores open |
+| 7. Storage visibility | Pending | Existing local throughput display only; accounting and dashboards open |
+| 8. Versions/trash | Pending | Existing version records and permanent deletion only; history, trash and retention open |
+| 9. Private storage | Pending | Contracts only; format prototype, encryption and recovery open |
+| 10. Multiple servers/routes | Pending | Existing single connection only; persistent profiles and route switching open |
+| 11. Account administration | Pending | Existing user creation/listing and backend foundations only; complete controls and security policy open |
+| 12. Deployment/backup/upgrades | Partial | Initial standard backup/restore and operator guidance delivered; actual Unraid, private recovery and version compatibility open |
+| 13. Background desktop | Partial | Bounded batch summaries and skip/failure counts delivered; durable controls, tray and native lifecycle open |
+| 14. Distribution/qualification | Pending | Existing workflows only; published installers and full platform/scale qualification open |
 
 ## How to execute this plan
 
@@ -30,64 +49,46 @@ For every feature:
 
 ## 1. Graceful cross-platform symlink handling
 
-**Outcome:** encountering a link does not abort a folder upload or prevent unrelated files from being backed up. This is the critical first fix, independent of the later persistent queue work.
+**Status:** implemented; native Windows/macOS and picker verification remain open.
 
-**Original defect:** `UploadFolder` used `Lstat` and returned an error for symlinks/special files, stopping the remaining traversal; direct file uploads could follow a file symlink. The implementation now applies one skip-and-report policy using the explicitly approved `golang.org/x/sys` filesystem APIs. Linux runtime/race and UI checks pass. Native Windows/macOS and picker qualification remain open, so the feature is not accepted as complete.
+**Policy:** skip links, directory redirections and unsupported special files, continue uploading ordinary files and empty directories, and report skipped paths/reasons. Do not follow targets or preserve links on restore. Ordinary hard-linked files upload normally at each selected path.
 
-**Approved policy (2026-11-17):** skip symbolic links and directory redirections, continue scanning, and report them visibly. The user selected skip-and-report for the initial implementation; this is no longer an open policy decision. Implementation and native-platform verification remain pending. Following targets is a possible later opt-in, not part of the immediate fix or an approved requirement. Skipped links are not backed up as link objects and are not recreated on restore.
+- [x] Apply the same policy to selected files, selected folders and recursive entries, including broken links and cycles.
+- [x] Open sources without following links, including when a file or ancestor is replaced after scanning.
+- [x] Show bounded skip reports and clear completed-with-skips/all-skipped outcomes; keep permission, cancellation and server failures distinct from skips.
+- [x] Pass Linux source/scanner/worker and UI checks. Windows/macOS code cross-compiles; Windows junction/reparse/ACL fixtures are present.
+- [ ] Run native Windows/macOS tests and picker workflows, covering links, junctions, cloud placeholders, permissions and replacement races. Cross-compilation does not close this check.
 
-- [x] Apply consistent no-follow classification to recursive entries, selected root folders and directly selected files. Report an explicitly selected link as skipped with guidance to select its real target if desired. Linux runtime coverage passes; native Windows/macOS qualification remains below.
-- [x] Continue past file/directory links, broken links and link cycles without resolving or reading their targets; retain normal files and empty directories before and after skipped entries. Linux scanner/source tests pass.
-- [ ] Verify Linux/macOS symbolic links and Windows file/directory symlinks, junctions and other name-surrogate reparse points. Classify by platform semantics, not file extensions or a blanket assumption that every Windows reparse point is a symlink. Define and test behavior for unsupported/cloud-placeholder cases separately.
-- [x] Skip unsupported special files with an explicit reason; distinguish policy skips from actual read/permission failures, cancellation and server errors. Linux FIFO, permission, cancellation and server-failure tests pass; genuine failures remain failures.
-- [x] Show skipped counts and a bounded, reviewable list of paths/reasons, including a clear “completed with skipped items” result and a zero-files-uploaded result for all-skipped selections. Linux manager and Vue tests pass. Preservation when the persistent queue arrives remains an explicit feature 5 integration gate.
-- [x] Guard source opening against a regular file/directory being replaced by a link after discovery; do not rely on a check-then-open sequence alone. Linux file/ancestor replacement races and worker rechecks pass. Link-bearing ancestors are refused; native picker resolution is documented as an outstanding platform qualification gate below.
-- [x] Treat ordinary hard-linked regular files as regular files at each selected path; Linux source/selection tests pass. Link-relationship preservation and deduplication are outside this fix.
-- [ ] Add scanner, direct-upload and UI coverage plus native Linux/Windows/macOS fixtures for nested links, broken links, outside-root targets, cycles, junctions, permission failures and replacement races. Record unavailable fixture privileges as an outstanding platform gate, not a passing test.
+**Why still open:** the remaining work verifies platform behavior; it is not a missing skip/report implementation. Preserve these reports when the persistent queue is added in feature 5.
 
-**Accept when:** mixed selections upload all eligible ordinary files and preserve empty directories despite links anywhere in the traversal; skipped entries have accurate visible reasons/counts; default uploads neither traverse directory redirections nor read linked targets; native platform evidence covers the cases above. No dependency on refresh tokens, persistent queues or QUIC is required to deliver this fix.
+## 2. HTTP/3-first connections and measured performance
 
-**Follow-target option: outside the approved scope.** A future proposal must decide separately whether to support files only or directories too. It must be explicit per selection, define outside-root/remote-target permission, detect cycles, bound traversal, handle changing targets and report duplicates. Store target contents as an ordinary file at the selected logical path, clearly explaining that this does not preserve the link. Users can explicitly select the real target meanwhile.
+**Status:** transport implementation complete; deployment performance and resource validation remain open.
 
-Platform references: [Go filesystem inspection](https://pkg.go.dev/os#Lstat), [Windows hard links and junctions](https://learn.microsoft.com/en-us/windows/win32/fileio/hard-links-and-junctions), [Windows reparse points](https://learn.microsoft.com/en-us/windows/win32/fileio/reparse-points).
+**Policy:** try HTTP/3 over QUIC on every connection establishment. If QUIC fails, use verified HTTP/2 for that connection. Do not periodically attempt an upgrade; reconnecting starts with QUIC again. Use the approved `quic-go` module.
 
-## 2. Measured performance and QUIC
+- [x] Apply this policy to desktop certificate inspection and authenticated requests; serve the same API over QUIC and HTTP/2.
+- [x] Bound QUIC probing to 500 ms, retain certificate checks, reject redirects and disable authentication/mutation 0-RTT. Keep HTTP/2 available if the server's UDP listener fails.
+- [x] Test connection reuse, fallback and reconnection. Never automatically replay a write whose outcome is uncertain.
+- [x] Record local scanning/hash, request-reuse/batching and standard-transfer measurements in the [performance baseline](performance-baseline.md). Retain the measured 4-MiB preferred chunk size and source-sized small-file buffers.
+- [ ] Measure useful throughput and peak client/server memory on the intended deployment, then set practical worker/buffer/concurrent-transfer limits. Add batching or more workers only if measurements justify them.
 
-**Outcome:** many-small-file and large-file transfers use available bandwidth within explicit resource budgets.
-
-**Early prerequisite work:** measure HTTP/2 per-file request/metadata overhead and candidate chunk sizes before feature 3 freezes APIs. Record hardware and provisional budgets then, not only at release.
-
-**Delivery approach:** begin benchmarking and QUIC against the existing standard-file workflow now. Extend measurements and transport recovery tests as resumable transfers (5–6), visibility (7), private storage (9) and multiple routes (10) arrive; these later integrations remain acceptance gates, not prerequisites to starting this feature after the critical link-handling fix.
-
-**Current implementation:** the user approved `quic-go` on 2026-11-17. The server serves the same API over TCP and UDP, with HTTP/3-first selection in the desktop/shared client. A credential-free same-origin probe is bounded to 500 ms on each connection establishment. HTTP/2 fallback lasts for that connection, with no timed upgrades; uncertain mutations are returned to the caller rather than blindly replayed. [The local baseline](performance-baseline.md) covers standard uploads, chunk sizes, hashing, directory enumeration and request reuse/batching candidates. Private mode, production batching, target-hardware limits, fairness and LAN/tailnet runs remain open.
-
-- [ ] Benchmark scanning, hashing, encryption, network, metadata and finalization separately; test bounded batching/request reuse before increasing worker counts.
-- [ ] Set measured defaults and configurable limits for workers, buffers, files, KDF concurrency and client/server memory; revise provisional format limits where measurements require it.
-- [ ] Obtain approval before adding QUIC dependencies; implement HTTP/3 with verified HTTP/2 fallback, bounded probing/failure caching and no authentication/mutation 0-RTT.
-- [ ] Preserve TLS/identity checks, upload identity and progress across route/transport changes.
-- [ ] Measure LAN, direct tailnet and relayed tailnet with standard/private, small/large files and concurrent users.
-
-**Accept when:** published results are reproducible, resource ceilings hold, fairness is demonstrated and blocked UDP falls back without lost work or weaker authentication. Choose transport defaults from results, not assumed speedups.
+**Later integration:** upload resume belongs to feature 5, private-transfer/KDF measurements to feature 9, and route switching to feature 10. Validate LAN/direct/relayed-tailnet operation in feature 12 and concurrent-user fairness/scale in feature 14. These remain required there; they do not mean the QUIC connection policy is unfinished. Local loopback results do not establish deployment performance.
 
 ## 3. Safe and recoverable storage
 
-**Outcome:** an acknowledged file remains recoverable after crashes, storage exhaustion and ordinary restarts. This follows the performance baseline and protects files users can already put into the application.
+**Status:** basic verified writes, instance locks and offline standard backup/restore are implemented; crash recovery and capacity control remain incomplete.
 
-**Existing:** verified chunks, flush/rename storage, metadata transactions, filesystem validation and restartable cleanup of explicitly deleted objects. General orphan recovery and capacity reservation are absent.
+- [x] Verify chunk length/digest, flush object bytes and publish by rename before recording the chunk; commit file metadata transactionally. Retain restartable cleanup of explicitly deleted objects. Crash-boundary qualification remains below.
+- [x] Lock config/data/staging before initialization so a second process cannot modify the same deployment. Local exclusivity, rollback and crash-release tests pass.
+- [x] Provide `serversend -backup DIR` with a stopped-server barrier and consistent SQLite snapshot. The isolated restore test preserves identity/account/catalog and downloads the original standard-file bytes.
+- [x] Document pre-upgrade backups and matching-backup/image downgrade restoration in [backup/restore](backup-restore.md); reject unsupported schemas.
+- [ ] Test and close gaps in write/metadata/publication ordering using crashes, short writes and full/read-only disks; reconcile interrupted states safely at startup.
+- [ ] Add per-user/global disk-usage limits, capacity reservations and free-space checks so concurrent uploads cannot overcommit storage. Existing request/chunk/manifest bounds remain in force.
+- [ ] Complete upload expiry/cancellation and idempotency rules, including duplicate/conflicting chunks and cancellation/finalization races. Existing validation and retry handling are foundations, not completion of this lifecycle.
+- [ ] Clean up abandoned uploads and orphan objects without deleting referenced data or racing active transfers; make repeated restart cleanup safe.
 
-**Current incremental safety work:** native deployment locks fence config, data and staging before TLS/metadata/object initialization; a duplicate instance sharing any volume is refused. `serversend -backup DIR` uses that stopped-server barrier, a consistent SQLite snapshot and streamed config/data/staging copies; see [backup and isolated restore](backup-restore.md). This does not freeze upload/private contracts or implement general orphan recovery, quotas, live snapshots or clone identity migration.
-
-**Prerequisites:** before freezing manifests or upload APIs, run the private-format prototype in feature 9 and the small-file overhead baseline in feature 2. Performance/QUIC follows the critical link-handling fix; the private-format prototype must also precede contract freeze, with full encryption integration later.
-
-- [ ] Define and test durable acknowledgement ordering for object writes, metadata and final publication; add recoverable pending transitions and idempotent startup reconciliation.
-- [ ] Enforce per-user/global limits, request bounds, capacity reservations and filesystem-aware free-space checks, including temporary overlap on separate staging/data filesystems.
-- [ ] Implement destination-side copy, verification, flush and rename for cross-filesystem staging; reject unsafe paths and symlink escapes.
-- [ ] Complete scoped idempotency, duplicate/conflicting chunk handling, manifest validation, upload expiry and cancellation/finalization race rules. Record byte-accounting transitions for feature 7.
-- [ ] Reconcile abandoned uploads and orphan objects without deleting referenced data or racing readers/writers; retain and test the existing deleted-object recovery path.
-- [ ] Provide an initial consistent standard-data backup and isolated restore procedure covering metadata, identity, configuration keys and referenced objects. Enforce one process per storage directory and prevent accidental concurrent replacement instances.
-- [ ] Add pre-migration backup/rollback guidance for changes introduced here; keep unsupported-schema rejection.
-
-**Accept when:** injected crashes at each write/publication boundary, full/read-only disks, short writes and separate filesystems produce no acknowledged data loss or corrupt visible version; cleanup converges after repeated restarts; an isolated restored server downloads the original bytes. Record any hardware-dependent checks still needed for supported Unraid deployment.
+**Scope:** current object writes use `data/incoming` and publish into `data/objects` on the same filesystem. A separate staging-to-data copy path is unnecessary today. If a later feature uses the staging volume for object publication, add destination-side copy/verification/flush/rename and account for temporary overlap then. Private-format work in feature 9 must precede freezing shared/private contracts; it does not block fixing current standard-data safety. Actual Unraid locking/durability and upgrade qualification belong to feature 12.
 
 ## 4. Stay signed in and control device access
 
@@ -116,7 +117,7 @@ Platform references: [Go filesystem inspection](https://pkg.go.dev/os#Lstat), [W
 - [ ] Persist jobs before network work; stream discovered files/directories into SQLite and resume interrupted scans without unbounded batch buffering.
 - [ ] Persist upload IDs, source fingerprints, acknowledgements, retry schedules and explicit queue/wait states.
 - [ ] Reconcile missing chunks after reconnect, lost acknowledgements and restart; never mix source generations when files change, disappear or become unreadable.
-- [ ] Add bounded workers, fair scheduling, bandwidth controls and typed retry/backoff; one failing job/profile must not block other eligible work.
+- [ ] Add bounded workers, fair scheduling, bandwidth controls and typed retry/backoff; one failing job/profile must not block other eligible work. Preserve upload identity and acknowledged progress through transport fallback/reconnect.
 - [ ] Implement durable pause/resume/cancel and retry-failed controls with race-safe server cancellation and reservation release.
 - [ ] Preserve hierarchy, empty files/directories and completed partial-batch work; report skipped links, special files, source changes and failure totals.
 
@@ -176,7 +177,7 @@ Platform references: [Go filesystem inspection](https://pkg.go.dev/os#Lstat), [W
 
 **Existing:** outer contracts and explicit unsupported-format rejection; no production private encryption or vault workflow.
 
-**Early prerequisite work:** run the format/library evaluation, bounded-object prototype, test vectors and initial small-file impact review before feature 3 freezes contracts. Obtain approvals for new dependencies or new crypto usage. Full integration depends on features 4, 5, 6, 8. Use the server/account scope established by feature 4; extend to simultaneous profiles when feature 10 arrives.
+**Early prerequisite work:** run the format/library evaluation, bounded-object prototype, test vectors and initial small-file impact review before feature 3 freezes contracts. Obtain approvals for new dependencies or new crypto usage. Measure encryption/KDF cost and bounded concurrency as part of this work. Full integration depends on features 4, 5, 6, 8. Use the server/account scope established by feature 4; extend to simultaneous profiles when feature 10 arrives.
 
 - [ ] Specify and review authenticated, versioned objects/manifests, key hierarchy, associated data and nonce/randomness rules; test swaps, duplication, truncation, wrong keys and tampering.
 - [ ] Create optional per-account vaults with bounded KDF parameters, passphrase and recovery wrappers, creation races and revision-checked atomic rewrap.
@@ -192,7 +193,7 @@ Platform references: [Go filesystem inspection](https://pkg.go.dev/os#Lstat), [W
 
 **Outcome:** multiple independent accounts/servers work simultaneously, with safe LAN/tailnet switching.
 
-**Existing:** single active desktop connection, certificate-fingerprint approval and shared identity-proof contracts. Feature 2 establishes persistent single-profile trust.
+**Existing:** single active desktop connection, certificate-fingerprint approval and shared identity-proof contracts. Feature 2 preserves transport pinning; feature 4 establishes persistent single-profile trust.
 
 **Depends on:** features 4, 5, 6. Add combined/per-server queue views here; feature 13 later completes their background lifecycle and UI qualification.
 
@@ -225,15 +226,17 @@ Platform references: [Go filesystem inspection](https://pkg.go.dev/os#Lstat), [W
 
 **Outcome:** the server can be operated, upgraded and restored predictably on the actual Unraid host.
 
-**Existing:** non-root Docker build, Compose examples, certificates, release workflow and deployment/update documentation. Feature 1 establishes an initial standard restore path.
+**Existing:** non-root Docker build, Compose examples, certificates, release workflow and deployment/update documentation. Feature 3 delivers an initial offline standard backup/restore path.
 
 **Depends on:** features 3, 4, 8 and 9; verify QUIC reachability after feature 2.
 
 - [ ] Finish the versioned Unraid template and validate UID/GID, mounts, locking, resource guidance and pool/array/separate-staging layouts on actual hardware.
-- [ ] Validate existing host Tailscale TCP/UDP reachability, private IPv4 CA provisioning, browser/per-profile trust and certificate renewal without public exposure.
-- [ ] Complete consistent backup tooling using a maintenance barrier or reference snapshot with GC suspension; include identity, keys, envelopes and referenced blobs.
-- [ ] Implement isolated restore checks, replacement-versus-clone rules and identity migration; extend restore drills to standard and recovery-key private downloads.
-- [ ] Add pre-upgrade backups, migration compatibility checks and documented downgrade restore. Record tested client/server version compatibility and avoid overwriting release tags.
+- [ ] Validate LAN, direct-tailnet and relayed-tailnet transfers, blocked-UDP fallback, private IPv4 CA provisioning, browser/per-profile trust and certificate renewal without public exposure.
+- [x] Deliver an offline standard-data backup tool with a stopped-server maintenance barrier, identity/keys/object copies and consistent SQLite snapshot; document operator pre-upgrade backups and matching-image downgrade restore. Local backup/restore evidence is recorded under feature 3.
+- [ ] Extend backup tooling to private envelopes/recovery material and qualify it on actual Unraid storage. Live snapshots, if implemented, require reference snapshots with GC suspension.
+- [x] Add a local isolated standard restore integration check preserving identity and downloading original bytes; document replacement-only identity reuse and require the original process to remain stopped.
+- [ ] Complete replacement-versus-clone enforcement and independent-clone identity migration; extend restore drills to recovery-key private downloads and actual Unraid.
+- [ ] Automate pre-upgrade backup integration and migration compatibility checks. Record tested client/server version compatibility and avoid overwriting release tags; execute the documented downgrade restore procedure on supported deployments.
 
 **Accept when:** an actual Unraid deployment survives restart/update and restores from backup onto an isolated instance with both storage modes intact; tested TCP/UDP, filesystem and permission outcomes are recorded. A workflow file or instructions alone do not close this feature.
 
@@ -246,6 +249,7 @@ Platform references: [Go filesystem inspection](https://pkg.go.dev/os#Lstat), [W
 **Depends on:** features 4, 5, 6.
 
 - [ ] Add tray close behavior, explicit quit with durable checkpoints, optional launch at login and sleep/wake recovery.
+- [x] Show per-file/batch progress and accurate completed/skipped/failed counts, bounded skipped paths/reasons, completed-with-skips and all-skipped outcomes. Retain bounded recent summaries/finished rows; Vue tests and the generated Batches bridge smoke pass. This remains an in-memory foreground workflow.
 - [ ] Build complete queue controls and per-file/batch progress, skipped/failed counts, useful rates and retry actions without premature ETAs.
 - [ ] Bound/throttle progress events and virtualize large lists; a slow frontend must not stall transfers.
 - [ ] Complete keyboard/focus/contrast and both-theme checks for the real workflows; remove scaffold-only UI/services when their smoke coverage is replaced.
@@ -265,7 +269,7 @@ Platform references: [Go filesystem inspection](https://pkg.go.dev/os#Lstat), [W
 - [ ] Record hosted Linux/Windows/macOS checks, native SQLite/CGO qualification and real UI walkthroughs; do not infer results from configured jobs.
 - [ ] Update every planned row in the requirement-to-test map with owning tests, execution evidence and remaining release blockers.
 - [ ] Run two-server/two-user/multiple-device isolation, concurrent updates and replacement-server scenarios.
-- [ ] Run a real non-sparse >100-GiB file and at least 100,000 small files, concurrent clients, process kills, network failures, full disks, corruption and revocation in standard/private modes.
+- [ ] Run a real non-sparse >100-GiB file and at least 100,000 small files, concurrent clients and fairness/resource limits, process kills, network failures, full disks, corruption and revocation in standard/private modes.
 - [ ] Complete race/fuzz/dependency/format review, record hardware/resource measurements and demonstrate clean-device restores and operational recovery.
 
 **Accept when:** all intended features and platform gates have recorded passing evidence, with no unresolved data-loss, authorization-bypass, plaintext-leak or recovery defects. Until then, label releases experimental and describe specific limits.
