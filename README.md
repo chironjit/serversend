@@ -43,26 +43,81 @@ Each target delegates to the owning component's `scripts/check.sh`, which can al
 
 See [server development](docs/server-development.md) to run the process or container, [protocol foundation](docs/protocol-foundation.md) for completed Chunk 02 contracts, [SQLite foundation](docs/sqlite-foundation.md) for schemas, scoped repositories, snapshots, fault fixtures and platform qualification, and [TOTP foundation](docs/twofactor-foundation.md) for enrollment and verification helpers. [Requirement verification](docs/requirements-verification.md) distinguishes existing checks from planned acceptance coverage. To run the server and desktop together and upload a file, run `make local-test-server-setup` and `make local-test-desktop` and follow [local end-to-end testing](docs/local-testing.md); the [vertical slice](docs/vertical-slice.md) page lists what is implemented. It is an early end-to-end path with deliberate limits, not yet a usable file-storage product.
 
-## Deploying on docker
-### Settings
-| Header | Setting |
-| Name | ServerSend |
-| Repository | ghcr.io/chironjit/serversend:latest |
-| WebUI | https://[IP]:[PORT:58443]/admin/ |
-| Extra Params | --read-only --cap-drop=ALL --security-opt=no-new-privileges --stop-timeout=15 |
+## Deploying on Docker (Unraid)
 
-### Ports
-| Name | Container Port | Host Port |
-| Port 1 | 58443 | 58443 | 
+Full details: [Unraid setup](docs/unraid-testing.md) and [releases](docs/releases.md).
 
-### Paths
-| Name | Container Path | Host Path |
-| Config | /config | /mnt/user/appdata/serversend/config/ |
-| Data | /data | /mnt/user/serversend/data/ |
-| Staging | /staging | /mnt/user/serversend/staging |
+### 1. Prepare host folders (Unraid terminal)
 
-### Variables
-| Name | Key | Value
-| SQLITE Temp Dir | SQLITE_TMPDIR | /staging |
-| Server IP Addr | SERVER_SEND_TLS_IPS | <server_addr> |
+```sh
+mkdir -p /mnt/user/appdata/serversend/config /mnt/user/serversend/data /mnt/user/serversend/staging
+chown 10001:10001 /mnt/user/appdata/serversend/config /mnt/user/serversend/data /mnt/user/serversend/staging
+chmod 700 /mnt/user/appdata/serversend/config /mnt/user/serversend/data /mnt/user/serversend/staging
+```
 
+Keep config on a local pool (not SMB/NFS). The container runs as UID/GID 10001.
+
+### 2. Add the container (Docker tab → Add Container, Advanced View)
+
+| Field | Value |
+| --- | --- |
+| Name | `serversend` |
+| Repository | `ghcr.io/chironjit/serversend:latest` (or `:0.1` to stay on the 0.1 series) |
+| Network Type | Bridge |
+| WebUI | `https://[IP]:[PORT:58443]/admin/` |
+| Extra Parameters | `--read-only --cap-drop=ALL --security-opt=no-new-privileges --stop-timeout=15` |
+| Privileged | Off |
+
+| Port | Container | Host | Protocol |
+| --- | --- | --- | --- |
+| HTTPS (HTTP/2) | 58443 | 58443 | TCP |
+| HTTP/3 (QUIC) | 58443 | 58443 | UDP |
+
+| Path | Container | Host | Access |
+| --- | --- | --- | --- |
+| Config | `/config` | `/mnt/user/appdata/serversend/config` | Read/Write |
+| Data | `/data` | `/mnt/user/serversend/data` | Read/Write |
+| Staging | `/staging` | `/mnt/user/serversend/staging` | Read/Write |
+
+| Variable | Key | Value |
+| --- | --- | --- |
+| Server IPs | `SERVER_SEND_TLS_IPS` | Unraid LAN IPv4, e.g. `192.168.1.10`; add the Tailscale IP comma-separated if used (e.g `192.168.1.10,172.100.1.10`) |
+| User quota (optional) | `SERVER_SEND_STORAGE_USER_BYTES` | Bytes per account; `0` = unlimited (default) |
+| Total quota (optional) | `SERVER_SEND_STORAGE_GLOBAL_BYTES` | Bytes for all accounts; `0` = unlimited (default) |
+| Free-space floor (optional) | `SERVER_SEND_STORAGE_MIN_FREE_BYTES` | Default `67108864` (64 MiB) |
+
+`SQLITE_TMPDIR=/staging` is set by the image; add it manually only if you changed the staging container path. UDP is optional: clients fall back to HTTP/2 over TCP.
+
+### 3. Create the first administrator (once)
+
+```sh
+docker stop serversend
+docker run --rm --network none --read-only \
+  -e SERVER_SEND_TLS_IPS=192.168.1.10 \
+  -v /mnt/user/appdata/serversend/config:/config \
+  -v /mnt/user/serversend/data:/data \
+  -v /mnt/user/serversend/staging:/staging \
+  ghcr.io/chironjit/serversend:latest -bootstrap-admin admin
+docker start serversend
+```
+
+Save the printed temporary password (valid one hour), open `https://UNRAID_IP:58443/admin/`, accept the private certificate after checking it is your server, then set a password, enrol TOTP and keep the recovery codes. Create user accounts there; in the desktop app connect to `UNRAID_IP` and compare the fingerprint with `docker logs serversend`.
+
+### Updating
+
+Use **Check for Updates → Apply Update**; keep paths and variables, and do not bootstrap again. Back up all three folders (container stopped) before upgrading — see [backup/restore](docs/backup-restore.md).
+
+**Breaking change (per-user file tree):** files uploaded by older images are not migrated and the server refuses to start with them. Accounts survive, but all uploaded files are deleted by:
+
+```sh
+docker stop serversend
+docker run --rm --network none --read-only \
+  -e SERVER_SEND_TLS_IPS=192.168.1.10 \
+  -v /mnt/user/appdata/serversend/config:/config \
+  -v /mnt/user/serversend/data:/data \
+  -v /mnt/user/serversend/staging:/staging \
+  ghcr.io/chironjit/serversend:latest -reset-files
+docker start serversend
+```
+
+Files are then browsable on the host at `/mnt/user/serversend/data/<username>/…`; leave `data/.serversend` alone.
