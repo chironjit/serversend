@@ -13,6 +13,7 @@
 ### Build and release tooling
 
 - Unified server/desktop releases with `make release`, automatic patch selection, combined checks, GHCR publishing and native desktop downloads with checksums. Historical component tags are preserved.
+- On-demand desktop self-updates from GitHub Releases through the Wails update window, with required SHA-256 verification and embedded release versions. Linux downloads now use AppImage packaging (host GTK4/WebKitGTK required).
 - Portable desktop formatter invocation on Windows.
 - Removed the unsupported npm minimum-release-age setting (npm did not enforce it).
 
@@ -26,4 +27,4 @@ First planned version: **0.1.0** (experimental network-testing release).
 - Browser-compatible ECDSA TLS certificates and explicit migration for older development certificates.
 - Versioned GHCR server releases, OCI version/commit labels and Unraid update channels.
 
-Known limits: sequential transfers, no resume or persistent desktop queue, at most 1000 catalog entries per directory, and unsigned desktop downloads with manual updates (no installers or auto-updates).
+Known limits: sequential transfers, no resume or persistent desktop queue, at most 1000 catalog entries per directory, and unsigned desktop downloads (no installers or independent release signatures).

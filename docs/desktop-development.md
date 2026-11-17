@@ -1,6 +1,6 @@
 # Desktop development
 
-The desktop application lives in `apps/desktop`. It currently contains the Wails/Vue scaffold; transfer, account and vault features are not implemented yet. Keep reusable code in root `shared` and project documentation in root `docs`.
+The desktop application lives in `apps/desktop`. It contains the Wails/Vue client, account connection and file transfer services. Keep reusable code in root `shared` and project documentation in root `docs`.
 
 ## Validation
 
@@ -38,6 +38,8 @@ The eight scaffold component tests cover bound-service results, empty/Unicode in
 Run `bash apps/desktop/scripts/check_test.sh` to test the validation entry point itself. These dependency-free fixtures verify command execution, failure propagation, missing prerequisites, read-only/offline Go settings and paths containing spaces. They do not replace native application builds.
 
 ## Interactive development and packaging
+
+Release downloads and on-demand self-updates are described in [release instructions](releases.md). Release packaging embeds `main.currentVersion` and `main.updateRepository`; ordinary development builds use `dev` and disable the updater.
 
 Wails CLI operations run from `apps/desktop`. The configuration is `build/config.yml`, and platform build tasks are under `build`. The generated Taskfiles place application output in `bin` by default. They can install dependencies and run `go mod tidy`; review dependency changes before invoking them and follow the repository approval rule.
 

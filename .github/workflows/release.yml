@@ -178,7 +178,10 @@ jobs:
           mkdir -p dist
           gh release download "v$VERSION" --pattern 'serversend-desktop-*' --dir dist
           test "$(find dist -type f | wc -l)" -eq 3
-          (cd dist && sha256sum serversend-desktop-* > SHA256SUMS)
+          for payload in 'linux-*.AppImage' 'windows-*.zip' 'darwin-*.zip'; do
+            compgen -G "dist/serversend-desktop-$VERSION-$payload" >/dev/null
+          done
+          (cd dist && sha256sum serversend-desktop-* > SHA256SUMS && sha256sum --check SHA256SUMS)
           gh release upload "v$VERSION" dist/SHA256SUMS --clobber
           gh release view "v$VERSION" --json body --jq .body > dist/notes.md
           cat >> dist/notes.md <<EOF
@@ -187,8 +190,10 @@ jobs:
           Update channels: \`$IMAGE:$SERIES\`, \`$IMAGE:latest\`.
 
           Desktop downloads are native builds for the OS/architecture in each filename.
-          Linux requires GTK4 and WebKitGTK 6.0; Windows requires WebView2.
+          Linux AppImages require Ubuntu 24.04 or compatible, GTK4, WebKitGTK 6.0 and FUSE 2 (or use --appimage-extract-and-run); Windows requires WebView2.
           Windows downloads are unsigned; macOS bundles are ad-hoc signed, without notarization.
-          Install desktop updates manually. Transfers are interrupted by server updates; back up before upgrading.
+          Desktop: use ServerSend → Check for Updates… and finish transfers before Restart & Apply.
+          Downloads are checked against SHA256SUMS; release signatures are not configured.
+          Transfers are interrupted by server updates; back up before upgrading.
           EOF
           gh release edit "v$VERSION" --notes-file dist/notes.md --draft=false --latest

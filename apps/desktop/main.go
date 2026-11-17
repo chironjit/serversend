@@ -52,6 +52,10 @@ func main() {
 		},
 	})
 
+	if err := configureUpdater(app); err != nil {
+		log.Fatalf("configure updater: %v", err)
+	}
+
 	// Create a new window with the necessary options.
 	// 'Title' is the title of the window.
 	// 'Mac' options tailor the window when running on macOS.
