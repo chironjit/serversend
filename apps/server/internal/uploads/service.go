@@ -183,9 +183,14 @@ func (s *Service) Missing(ctx context.Context, account, upload protocol.ID) (api
 // PutChunk acknowledges a chunk only after its bytes are verified, flushed
 // and published, and its metadata is committed. An identical retry returns
 // the same acknowledgement (created false); different bytes conflict.
+//
+// Receiving, hashing and flushing run outside the mutation lock so concurrent
+// uploads overlap network and disk time. An unrecorded object is invisible to
+// cleanup, RecordChunk re-checks state and reservation transactionally, and
+// startup reconciliation removes objects orphaned by a crash. Concurrent
+// chunks may pass the free-space pre-check together; upload reservations
+// already cover their bytes.
 func (s *Service) PutChunk(ctx context.Context, account, upload protocol.ID, index, length int64, digest protocol.Digest, body io.Reader) (api.ChunkAcknowledgement, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	t, err := s.transfer(ctx, account, upload)
 	if err != nil {
 		return api.ChunkAcknowledgement{}, false, err
@@ -223,11 +228,14 @@ func (s *Service) PutChunk(ctx context.Context, account, upload protocol.ID, ind
 			}
 			return api.ChunkAcknowledgement{}, false, err
 		}
+		s.mu.Lock()
 		existing, created, err = s.repo.RecordChunk(ctx, account, upload, chunk, s.now())
+		s.mu.Unlock()
 		if err == nil && !created {
 			s.store.Remove(chunk.ObjectID)
 		}
 		if errors.Is(err, database.ErrUploadClosed) {
+			s.store.Remove(chunk.ObjectID) // never recorded, so nothing references it
 			err = errGone
 		}
 	}

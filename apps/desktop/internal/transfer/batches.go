@@ -1,8 +1,12 @@
 package transfer
 
 import (
-	"github.com/chironjit/serversend/shared/source"
+	"context"
+	"errors"
 	"sort"
+	"time"
+
+	"github.com/chironjit/serversend/shared/source"
 )
 
 const maxSkippedItems = 100
@@ -25,11 +29,19 @@ type Batch struct {
 	Skipped      int           `json:"skipped"`
 	SkippedItems []SkippedItem `json:"skippedItems"`
 	Error        string        `json:"error"`
+	Cancelled    int           `json:"cancelled"`
+	Bytes        int64         `json:"bytes"`      // uploaded by completed files
+	StartedAt    int64         `json:"startedAt"`  // Unix milliseconds
+	FinishedAt   int64         `json:"finishedAt"` // Unix milliseconds; 0 while unfinished
 	scanning     bool
 	pending      int
+	cancelled    bool
+	cancel       context.CancelFunc
 }
 
-func (m *Manager) startBatch(name string) int {
+// startBatch registers a selection whose context cancels its scan and files.
+func (m *Manager) startBatch(parent context.Context, name string) (int, context.Context) {
+	ctx, cancel := context.WithCancel(parent)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.batches == nil {
@@ -37,7 +49,7 @@ func (m *Manager) startBatch(name string) int {
 	}
 	m.nextBatch++
 	id := m.nextBatch
-	m.batches[id] = &Batch{ID: id, Name: name, State: "scanning", SkippedItems: []SkippedItem{}, scanning: true}
+	m.batches[id] = &Batch{ID: id, Name: name, State: "scanning", SkippedItems: []SkippedItem{}, scanning: true, StartedAt: time.Now().UnixMilli(), cancel: cancel}
 	// Retain recent outcomes and all active selections. There is no file-count
 	// cutoff, and historical skip paths cannot grow without bound.
 	for previous, batch := range m.batches {
@@ -45,7 +57,18 @@ func (m *Manager) startBatch(name string) int {
 			delete(m.batches, previous)
 		}
 	}
-	return id
+	return id, ctx
+}
+
+// CancelBatch stops scanning, skips queued files and interrupts active ones.
+// Files already published stay on the server.
+func (m *Manager) CancelBatch(id int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if b := m.batches[id]; b != nil && (b.scanning || b.pending > 0) {
+		b.cancelled = true
+		b.cancel()
+	}
 }
 
 func settleBatch(b *Batch) {
@@ -58,6 +81,14 @@ func settleBatch(b *Batch) {
 		return
 	}
 	b.State = "done"
+	if b.FinishedAt == 0 {
+		b.FinishedAt = time.Now().UnixMilli()
+		b.cancel()
+	}
+	if b.cancelled || (b.Cancelled > 0 && b.Completed == 0 && b.Failed == 0) {
+		b.State = "cancelled"
+		return
+	}
 	if b.Failed > 0 || b.Error != "" {
 		b.State = "failed"
 		return
@@ -78,7 +109,7 @@ func (m *Manager) endScan(id int, err error) {
 		return
 	}
 	b.scanning = false
-	if err != nil {
+	if err != nil && !(b.cancelled && errors.Is(err, context.Canceled)) {
 		b.Error = message(err).Error()
 	}
 	settleBatch(b)
@@ -103,7 +134,7 @@ func (m *Manager) queuedLocked(id int) {
 	}
 }
 
-func (m *Manager) finishFile(batchID int, err error) {
+func (m *Manager) finishFile(batchID int, bytes int64, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b := m.batches[batchID]
@@ -116,10 +147,13 @@ func (m *Manager) finishFile(batchID int, err error) {
 		if len(b.SkippedItems) < maxSkippedItems {
 			b.SkippedItems = append(b.SkippedItems, SkippedItem{skip.Path, skip.Reason})
 		}
+	} else if errors.Is(err, context.Canceled) {
+		b.Cancelled++
 	} else if err != nil {
 		b.Failed++
 	} else {
 		b.Completed++
+		b.Bytes += bytes
 	}
 	settleBatch(b)
 }

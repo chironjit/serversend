@@ -331,29 +331,69 @@ func TestCancelFinalizeRaceRetainsOnlyWinningState(t *testing.T) {
 	}
 }
 
-func TestCancellationWaitsForPublication(t *testing.T) {
-	s, _, _ := fixture(t, StoragePolicy{})
+// Cancellation does not wait for a chunk still being received. The late
+// chunk is refused and its unrecorded object removed, so nothing leaks.
+func TestCancellationRefusesInFlightChunk(t *testing.T) {
+	s, _, data := fixture(t, StoragePolicy{})
 	ctx := context.Background()
 	u := create(t, s, 4)
 	b := []byte("data")
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	writeDone := make(chan error, 1)
-	cancelDone := make(chan error, 1)
 	reader := &blockingReader{entered: entered, release: release, body: bytes.NewReader(b)}
 	go func() { _, _, err := s.PutChunk(ctx, owner, u.ID, 0, 4, digest(b), reader); writeDone <- err }()
 	<-entered
-	go func() { cancelDone <- s.Cancel(ctx, owner, u.ID) }()
+	if err := s.Cancel(ctx, owner, u.ID); err != nil {
+		t.Fatal(err)
+	}
 	close(release)
-	if err := <-writeDone; err != nil {
-		t.Fatal(err)
-	}
-	if err := <-cancelDone; err != nil {
-		t.Fatal(err)
-	}
+	code(t, <-writeDone, api.UploadGone)
 	chunks, err := s.repo.StoredChunks(ctx, owner, u.ID)
 	if err != nil || len(chunks) != 0 {
 		t.Fatalf("chunks %+v %v", chunks, err)
+	}
+	assertNoObjects(t, data)
+}
+
+// A slow client must not hold back other uploads.
+func TestStalledChunkDoesNotBlockOtherUploads(t *testing.T) {
+	s, _, _ := fixture(t, StoragePolicy{})
+	ctx := context.Background()
+	slow, fast := create(t, s, 4), create(t, s, 4)
+	b := []byte("data")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	go s.PutChunk(ctx, owner, slow.ID, 0, 4, digest(b), &blockingReader{entered: entered, release: release, body: bytes.NewReader(b)})
+	<-entered
+	done := make(chan error, 1)
+	go func() { _, _, err := s.PutChunk(ctx, owner, fast.ID, 0, 4, digest(b), bytes.NewReader(b)); done <- err }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a stalled chunk body blocked another upload")
+	}
+}
+
+func assertNoObjects(t *testing.T, data string) {
+	t.Helper()
+	walkObjects(t, data, func() { t.Error("unexpected object") })
+}
+
+func walkObjects(t *testing.T, data string, visit func()) {
+	t.Helper()
+	err := filepath.WalkDir(filepath.Join(data, "objects"), func(path string, entry os.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() {
+			visit()
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

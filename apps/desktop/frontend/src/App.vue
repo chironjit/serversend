@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue';
 import { Events } from '@wailsio/runtime';
 import {
   ArrowDownToLine,
@@ -21,6 +21,7 @@ import {
   TriangleAlert,
   Upload,
   UserRound,
+  X,
 } from 'lucide-vue-next';
 import { TransferService } from '../bindings/github.com/chironjit/serversend/apps/desktop';
 import type {
@@ -144,6 +145,7 @@ const folderName = ref('');
 const rates = ref<{ up: number; down: number }[]>([]);
 let rateTimer: ReturnType<typeof setInterval> | undefined;
 const speed = ref({ up: 0, down: 0 });
+const clock = ref(Date.now());
 const samples = new Map<number, { done: number; time: number; direction: string }>();
 function sampleRates() {
   const now = performance.now();
@@ -159,6 +161,7 @@ function sampleRates() {
     samples.set(item.id, { done: item.done, time: now, direction: item.direction });
   }
   speed.value = { up, down };
+  clock.value = Date.now();
   rates.value = [...rates.value, speed.value].slice(-60);
 }
 function chart(direction: 'up' | 'down') {
@@ -202,7 +205,10 @@ const uploadFolder = () =>
     }
     files.value = (await TransferService.Files(parent.value)) ?? [];
   });
-const transfers = ref<Item[]>([]);
+// Replaced wholesale on each event batch; deep reactivity over thousands of
+// queued files is what made large folder uploads freeze the window.
+const transfers = shallowRef<Item[]>([]);
+const maxTransferRows = 200;
 const batches = ref<Batch[]>([]);
 const batchError = ref('');
 let batchTimer: ReturnType<typeof setInterval> | undefined;
@@ -215,6 +221,7 @@ const batchStateLabel: Record<string, string> = {
   done: 'Completed',
   done_with_skips: 'Completed with skipped items',
   all_skipped: 'Nothing uploaded',
+  cancelled: 'Cancelled',
   failed: 'Failed',
 };
 const batchStateTone: Record<string, 'primary' | 'neutral' | 'success' | 'warning' | 'danger'> = {
@@ -223,8 +230,23 @@ const batchStateTone: Record<string, 'primary' | 'neutral' | 'success' | 'warnin
   done: 'success',
   done_with_skips: 'warning',
   all_skipped: 'warning',
+  cancelled: 'neutral',
   failed: 'danger',
 };
+// Cancellation is reported through transfer events and batch summaries.
+function cancelTransfer(id: number) {
+  void TransferService.CancelTransfer(id).catch((reason) => {
+    error.value = failure(reason);
+  });
+}
+function cancelBatch(id: number) {
+  void TransferService.CancelBatch(id)
+    .then(() => refreshBatches())
+    .catch((reason) => {
+      error.value = failure(reason);
+    });
+}
+
 async function refreshBatches() {
   if (view.value !== 'files') return;
   if (fetchingBatches) {
@@ -254,7 +276,14 @@ let stopEvents: (() => void) | undefined;
 const fingerprintGroups = computed(
   () => probe.value?.fingerprint.match(/.{1,4}/g)?.join(' ') ?? '',
 );
-const recentTransfers = computed(() => transfers.value.toReversed());
+// Running work first, then what is next, then the newest finished rows.
+const recentTransfers = computed(() => {
+  const list = transfers.value;
+  const active = list.filter((t) => t.state === 'active');
+  const queued = list.filter((t) => t.state === 'queued');
+  const finished = list.filter((t) => t.state !== 'active' && t.state !== 'queued').toReversed();
+  return [...active, ...queued.slice(0, 20), ...finished].slice(0, maxTransferRows);
+});
 const activeCount = computed(
   () => transfers.value.filter((t) => t.state === 'active' || t.state === 'queued').length,
 );
@@ -264,6 +293,7 @@ const stateTone: Record<string, 'primary' | 'neutral' | 'success' | 'warning' | 
   done: 'success',
   failed: 'danger',
   skipped: 'warning',
+  cancelled: 'neutral',
 };
 const stateLabel: Record<string, string> = {
   active: 'Active',
@@ -271,6 +301,7 @@ const stateLabel: Record<string, string> = {
   done: 'Done',
   failed: 'Failed',
   skipped: 'Skipped',
+  cancelled: 'Cancelled',
 };
 
 function failure(reason: unknown): string {
@@ -432,7 +463,7 @@ function percent(item: Item): number {
 }
 
 function size(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
   const units = ['KiB', 'MiB', 'GiB', 'TiB'];
   let value = bytes / 1024;
   let unit = 0;
@@ -443,6 +474,23 @@ function size(bytes: number): string {
   return `${value.toFixed(1)} ${units[unit]}`;
 }
 
+function duration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+// Elapsed wall time for a selection, including scanning and waiting.
+function timing(batch: Batch): string {
+  if (!batch.finishedAt) return `Running for ${duration(clock.value - batch.startedAt)}`;
+  const ms = batch.finishedAt - batch.startedAt;
+  const rate = ms > 0 ? ` · ${size((batch.bytes * 1000) / ms)}/s average` : '';
+  return `Took ${duration(ms)} · ${size(batch.bytes)}${rate}`;
+}
+
 function status(item: Item): string {
   if (item.state === 'failed' || item.state === 'skipped') return item.error;
   if (item.state === 'queued') return 'Waiting';
@@ -450,26 +498,46 @@ function status(item: Item): string {
   return `${size(item.done)} of ${size(item.total)} · ${size(item.speed ?? 0)}/s`;
 }
 
-function onTransfer(item: Item) {
-  const index = transfers.value.findIndex((existing) => existing.id === item.id);
-  if (index === -1) {
-    transfers.value.push(item);
-    samples.set(item.id, { done: 0, time: performance.now(), direction: item.direction });
-  } else transfers.value[index] = item;
-  // Keep all current work and only the latest 500 finished rows. Source scans
+// Events arrive as batches of changed transfers, a few times a second.
+function onTransfers(items: Item[]) {
+  const list = [...transfers.value];
+  const index = new Map(list.map((entry, position) => [entry.id, position]));
+  let uploaded = false;
+  for (const item of items) {
+    const position = index.get(item.id);
+    if (position === undefined) {
+      index.set(item.id, list.length);
+      list.push(item);
+      samples.set(item.id, { done: 0, time: performance.now(), direction: item.direction });
+    } else list[position] = item;
+    uploaded ||= item.state === 'done' && item.direction === 'upload';
+  }
+  // Keep all current work and only the latest finished rows. Source scans
   // may contain arbitrarily many files; the window need not retain them all.
-  let finished = transfers.value.filter(
+  let finished = list.filter(
     (entry) => entry.state !== 'active' && entry.state !== 'queued',
   ).length;
-  if (finished > 500) {
-    transfers.value = transfers.value.filter((entry) => {
-      if (finished <= 500 || entry.state === 'active' || entry.state === 'queued') return true;
-      finished -= 1;
-      samples.delete(entry.id);
-      return false;
-    });
-  }
-  if (item.state === 'done' && item.direction === 'upload' && view.value === 'files') {
+  transfers.value =
+    finished <= maxTransferRows
+      ? list
+      : list.filter((entry) => {
+          if (finished <= maxTransferRows || entry.state === 'active' || entry.state === 'queued')
+            return true;
+          finished -= 1;
+          samples.delete(entry.id);
+          return false;
+        });
+  if (uploaded && view.value === 'files') refreshFilesSoon();
+}
+
+// At most one listing request every two seconds while uploads complete.
+let filesTimer: ReturnType<typeof setTimeout> | undefined;
+let filesRefreshedAt = 0;
+function refreshFilesSoon() {
+  if (filesTimer) return;
+  const run = () => {
+    filesTimer = undefined;
+    filesRefreshedAt = Date.now();
     void TransferService.Files(parent.value)
       .then((list) => {
         files.value = list ?? [];
@@ -477,7 +545,10 @@ function onTransfer(item: Item) {
       .catch((reason) => {
         error.value = failure(reason);
       });
-  }
+  };
+  const wait = filesRefreshedAt + 2000 - Date.now();
+  if (wait <= 0) run();
+  else filesTimer = setTimeout(run, wait);
 }
 
 function applyTheme(next: Theme) {
@@ -512,13 +583,16 @@ onMounted(() => {
       void refreshBatches();
     }
   }, 1000);
-  stopEvents = Events.On('transfer', (event: { data: Item }) => onTransfer(event.data));
+  stopEvents = Events.On('transfer', (event: { data: Item[] | null }) =>
+    onTransfers(event.data ?? []),
+  );
 });
 onUnmounted(() => {
   clearInterval(sessionTimer);
   stopEvents?.();
   clearInterval(rateTimer);
   clearInterval(batchTimer);
+  clearTimeout(filesTimer);
 });
 </script>
 
@@ -1125,19 +1199,23 @@ onUnmounted(() => {
             </UiCardHeader>
           </div>
           <div class="grid grid-cols-2 gap-3 p-5 pb-3">
-            <div class="bg-muted/60 rounded-lg p-3">
+            <div class="bg-muted/60 min-w-0 rounded-lg p-3">
               <p class="text-muted-foreground m-0 flex items-center gap-1.5 text-xs">
                 <ArrowUpFromLine class="text-chart-up size-3.5" aria-hidden="true" />
                 Upload
               </p>
-              <p class="m-0 mt-1 text-lg font-semibold tabular-nums">{{ size(speed.up) }}/s</p>
+              <p class="m-0 mt-1 truncate text-lg font-semibold tabular-nums">
+                {{ size(speed.up) }}/s
+              </p>
             </div>
-            <div class="bg-muted/60 rounded-lg p-3">
+            <div class="bg-muted/60 min-w-0 rounded-lg p-3">
               <p class="text-muted-foreground m-0 flex items-center gap-1.5 text-xs">
                 <ArrowDownToLine class="text-chart-down size-3.5" aria-hidden="true" />
                 Download
               </p>
-              <p class="m-0 mt-1 text-lg font-semibold tabular-nums">{{ size(speed.down) }}/s</p>
+              <p class="m-0 mt-1 truncate text-lg font-semibold tabular-nums">
+                {{ size(speed.down) }}/s
+              </p>
             </div>
           </div>
           <div class="px-5">
@@ -1201,11 +1279,27 @@ onUnmounted(() => {
                   <UiBadge :tone="batchStateTone[batch.state] ?? 'neutral'">{{
                     batchStateLabel[batch.state] ?? batch.state
                   }}</UiBadge>
+                  <UiButton
+                    v-if="batch.state === 'scanning' || batch.state === 'running'"
+                    variant="ghost"
+                    size="sm"
+                    :aria-label="`Cancel ${batch.name}`"
+                    @click="cancelBatch(batch.id)"
+                    >Cancel</UiButton
+                  >
                 </div>
                 <p class="text-muted-foreground m-0 mt-2 text-xs leading-5" role="status">
                   {{ batch.completed }} of {{ batch.files }} files uploaded ·
                   {{ batch.directories }} folders created · {{ batch.skipped }} skipped ·
-                  {{ batch.failed }} failed
+                  {{ batch.failed }} failed<template v-if="batch.cancelled">
+                    · {{ batch.cancelled }} cancelled</template
+                  >
+                </p>
+                <p
+                  v-if="batch.startedAt"
+                  class="text-muted-foreground m-0 mt-1 text-xs leading-5 tabular-nums"
+                >
+                  {{ timing(batch) }}
                 </p>
                 <p
                   v-if="batch.state === 'all_skipped'"
@@ -1279,6 +1373,15 @@ onUnmounted(() => {
                 <UiBadge :tone="stateTone[item.state] ?? 'neutral'" dot>
                   {{ stateLabel[item.state] ?? item.state }}
                 </UiBadge>
+                <UiButton
+                  v-if="item.state === 'active' || item.state === 'queued'"
+                  variant="ghost"
+                  size="icon-sm"
+                  :aria-label="`Cancel ${item.name}`"
+                  @click="cancelTransfer(item.id)"
+                >
+                  <X aria-hidden="true" />
+                </UiButton>
               </div>
               <p
                 class="text-muted-foreground m-0 truncate pl-6 text-xs tabular-nums"
@@ -1291,6 +1394,13 @@ onUnmounted(() => {
               </div>
             </li>
           </ul>
+          <p
+            v-if="transfers.length > recentTransfers.length"
+            class="text-muted-foreground border-border m-0 border-t px-5 py-3 text-xs"
+          >
+            Showing {{ recentTransfers.length }} of {{ transfers.length }} transfers. Waiting files
+            appear here as earlier ones finish.
+          </p>
         </UiCard>
       </main>
     </div>

@@ -114,6 +114,7 @@ type Client struct {
 	refreshChallengeExpires time.Time
 	store                   func(CredentialState) error
 	limits                  protocol.TransferLimits
+	batchUploads            bool
 }
 
 // New is the legacy leaf-pin client used by transport fixtures and benchmarks.
@@ -330,6 +331,7 @@ func (c *Client) transferLimits(ctx context.Context) (protocol.TransferLimits, e
 	}
 	c.mu.Lock()
 	c.limits = capabilities.Limits
+	c.batchUploads = capabilities.Supports(api.FeatureBatchUpload)
 	c.mu.Unlock()
 	return capabilities.Limits, nil
 }

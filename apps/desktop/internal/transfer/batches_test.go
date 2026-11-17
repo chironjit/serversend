@@ -55,10 +55,10 @@ func TestDirectSelectionReportsBoundedSkipsAndQueuesOrdinaryHardLinks(t *testing
 	}
 	for range 2 {
 		j := <-m.queue
-		m.finishFile(j.item.BatchID, nil)
+		m.finishFile(j.item.BatchID, 3, nil)
 	}
 	b = m.Batches()[1]
-	if b.State != "done_with_skips" || b.Completed != 2 {
+	if b.State != "done_with_skips" || b.Completed != 2 || b.Bytes != 6 || b.StartedAt == 0 || b.FinishedAt < b.StartedAt {
 		t.Fatalf("completion report: %+v", b)
 	}
 }
@@ -105,7 +105,7 @@ func TestWorkerRechecksSourceAndReportsLinkReplacementAsSkipped(t *testing.T) {
 	if err := os.Symlink(target, path); err != nil {
 		t.Skipf("native symlink fixture unavailable: %v", err)
 	}
-	m.run(t.Context(), <-m.queue)
+	m.run(<-m.queue)
 	b := m.Batches()[0]
 	if b.State != "all_skipped" || b.Completed != 0 || b.Skipped != 1 || b.Failed != 0 {
 		t.Fatalf("replacement report: %+v", b)

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
@@ -42,7 +43,7 @@ func (c *Client) Upload(ctx context.Context, path string, progress Progress) (ap
 	return c.UploadTo(ctx, path, "", progress)
 }
 
-func (c *Client) UploadTo(ctx context.Context, path string, parent protocol.ID, progress Progress) (api.FinalizeResult, error) {
+func (c *Client) UploadTo(ctx context.Context, path string, parent protocol.ID, progress Progress) (_ api.FinalizeResult, err error) {
 	account, signedIn := c.Account()
 	if !signedIn {
 		return api.FinalizeResult{}, api.Error{Code: api.AuthenticationRequired, Message: "Sign in before uploading"}
@@ -125,6 +126,15 @@ func (c *Client) UploadTo(ctx context.Context, path string, parent protocol.ID, 
 	if upload.ID.Validate() != nil {
 		return api.FinalizeResult{}, errors.New("the server sent an invalid upload")
 	}
+	// A failed or cancelled upload releases its reservation now rather than at
+	// expiry. A finalized upload refuses cancellation, so this is always safe.
+	defer func() {
+		if err != nil {
+			release, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			_ = c.exchange(release, call{method: "DELETE", path: "/uploads/" + string(upload.ID), token: c.token()}, nil, nil)
+		}
+	}()
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return api.FinalizeResult{}, err
 	}

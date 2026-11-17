@@ -25,6 +25,17 @@ type Capabilities struct {
 	Limits           protocol.TransferLimits `json:"limits"`
 	ManifestVersions []uint16                `json:"manifest_versions,omitempty"`
 	PrivateFormats   []string                `json:"private_formats,omitempty"`
+	// Features lists optional endpoints; older peers ignore unknown entries.
+	Features []string `json:"features,omitempty"`
+}
+
+func (c Capabilities) Supports(feature string) bool {
+	for _, offered := range c.Features {
+		if offered == feature {
+			return true
+		}
+	}
+	return false
 }
 
 func (c Capabilities) Validate() error {
@@ -43,6 +54,13 @@ func (c Capabilities) Validate() error {
 			return fmt.Errorf("empty or duplicate transport: %q", transport)
 		}
 		seen[transport] = true
+	}
+	features := make(map[string]bool, len(c.Features))
+	for _, feature := range c.Features {
+		if feature == "" || len(feature) > 64 || features[feature] {
+			return errors.New("invalid or duplicate feature")
+		}
+		features[feature] = true
 	}
 	versions := make(map[uint16]bool, len(c.ManifestVersions))
 	for _, version := range c.ManifestVersions {

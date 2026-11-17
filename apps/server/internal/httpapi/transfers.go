@@ -136,6 +136,7 @@ func newTransferRoutes(accounts *auth.Service, service *uploads.Service) *transf
 	t := &transferRoutes{accounts: accounts, service: service, mux: http.NewServeMux()}
 	for pattern, handler := range map[string]accountHandler{
 		"POST " + api.BasePath + "/uploads":                                       t.create,
+		"POST " + api.BasePath + api.BatchUploadPath:                              t.batch,
 		"DELETE " + api.BasePath + "/uploads/{upload}":                            t.cancel,
 		"GET " + api.BasePath + "/uploads/{upload}":                               t.get,
 		"GET " + api.BasePath + "/uploads/{upload}/missing":                       t.missing,
@@ -216,6 +217,37 @@ func (t *transferRoutes) create(w http.ResponseWriter, r *http.Request, account 
 		status = http.StatusCreated
 	}
 	writeJSON(w, r, status, upload)
+	return nil
+}
+
+// batch reads the JSON header of the declared length, then streams each
+// file's bytes straight into the object store.
+func (t *transferRoutes) batch(w http.ResponseWriter, r *http.Request, account protocol.ID) error {
+	limits := t.service.Limits()
+	header, err := strconv.ParseInt(r.Header.Get(api.BatchHeaderBytesHeader), 10, 64)
+	if err != nil || header <= 0 || header > api.MaxControlBytes || r.ContentLength < header || r.Header.Get("Content-Encoding") != "" {
+		return api.Error{Code: api.InvalidRequest, Message: "Send an uncompressed batch with its header length and a Content-Length"}
+	}
+	if r.ContentLength-header > limits.MaxRequestBytes {
+		return api.Error{Code: api.RequestTooLarge, Message: "Batch exceeds the server's advertised request limit"}
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, r.ContentLength)
+	request, err := api.DecodeBatchUpload(io.LimitReader(r.Body, header), header, limits)
+	if err != nil {
+		return api.Error{Code: api.InvalidRequest, Message: "Send a valid batch of small files within the server's advertised limits"}
+	}
+	var data int64
+	for _, file := range request.Files {
+		data += file.TransmittedBytes
+	}
+	if data != r.ContentLength-header {
+		return api.Error{Code: api.InvalidRequest, Message: "Batch length does not match its declared files"}
+	}
+	results, err := t.service.UploadBatch(r.Context(), account, request, r.Body)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, r, http.StatusOK, api.BatchUploadResponse{Results: results})
 	return nil
 }
 

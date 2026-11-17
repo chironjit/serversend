@@ -50,13 +50,15 @@ type Item struct {
 	ID        int     `json:"id"`
 	Name      string  `json:"name"`
 	Direction string  `json:"direction"` // "upload" or "download"
-	State     string  `json:"state"`     // "queued", "active", "done", "skipped" or "failed"
+	State     string  `json:"state"`     // "queued", "active", "done", "skipped", "cancelled" or "failed"
 	Done      int64   `json:"done"`
 	Total     int64   `json:"total"`
 	Error     string  `json:"error"`
 }
 
 type job struct {
+	ctx    context.Context // cancelled by CancelTransfer or CancelBatch
+	size   int64           // at queue time; batching uses it as a hint
 	item   Item
 	path   string
 	entry  api.CatalogEntry
@@ -65,6 +67,7 @@ type job struct {
 }
 
 type Manager struct {
+	ctx          context.Context
 	connectionMu sync.Mutex
 	version      string
 	emit         func(Item)
@@ -78,6 +81,7 @@ type Manager struct {
 	challenge   string
 	catalog     map[string]api.CatalogEntry
 	items       []Item
+	cancels     map[int]context.CancelFunc
 	queue       chan job
 	batches     map[int]*Batch
 	nextBatch   int
@@ -85,15 +89,61 @@ type Manager struct {
 	profiles    []Profile
 }
 
-// New starts one worker, so transfers run in order and memory stays bounded
-// to a single chunk buffer. emit receives every state change and must not block.
-func New(ctx context.Context, emit func(Item)) *Manager {
+// workers transfer files concurrently. Small files are dominated by request
+// round trips, which overlap; memory stays bounded to one chunk buffer each.
+const workers = 8
+
+// New starts the transfer workers. emit receives the latest state of changed
+// transfers at most five times a second, from its own goroutine, so a slow
+// window can neither stall transfers nor be flooded by many small files.
+func New(ctx context.Context, emit func([]Item)) *Manager {
 	if emit == nil {
-		emit = func(Item) {}
+		emit = func([]Item) {}
 	}
-	m := &Manager{emit: emit, queue: make(chan job, 4096), catalog: map[string]api.CatalogEntry{}}
-	go m.work(ctx)
+	m := &Manager{ctx: ctx, emit: coalesce(ctx, emit), queue: make(chan job, 4096), catalog: map[string]api.CatalogEntry{}}
+	for range workers {
+		go m.work(ctx)
+	}
 	return m
+}
+
+// coalesce keeps only the newest state per transfer between deliveries.
+func coalesce(ctx context.Context, emit func([]Item)) func(Item) {
+	var mu sync.Mutex
+	changed := map[int]Item{}
+	wake := make(chan struct{}, 1)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-wake:
+			}
+			mu.Lock()
+			batch := make([]Item, 0, len(changed))
+			for _, item := range changed {
+				batch = append(batch, item)
+			}
+			changed = map[int]Item{}
+			mu.Unlock()
+			sort.Slice(batch, func(i, j int) bool { return batch[i].ID < batch[j].ID })
+			emit(batch)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+	}()
+	return func(item Item) {
+		mu.Lock()
+		changed[item.ID] = item
+		mu.Unlock()
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // message converts any failure into text that is safe and useful to display.
@@ -347,23 +397,50 @@ func (m *Manager) FileName(id string) (string, bool) {
 	return entry.Standard.Name, true
 }
 
-func (m *Manager) enqueue(j job) error {
+// register records a queued transfer with its own cancellable context.
+func (m *Manager) register(parent context.Context, j job) job {
+	var cancel context.CancelFunc
+	j.ctx, cancel = context.WithCancel(parent)
 	m.mu.Lock()
 	j.item.ID, j.item.State = len(m.items)+1, "queued"
 	m.items = append(m.items, j.item)
+	if m.cancels == nil {
+		m.cancels = map[int]context.CancelFunc{}
+	}
+	m.cancels[j.item.ID] = cancel
 	m.queuedLocked(j.item.BatchID)
 	m.mu.Unlock()
 	m.emit(j.item)
+	return j
+}
+
+func (m *Manager) enqueue(parent context.Context, j job) error {
+	j = m.register(parent, j)
 	select {
 	case m.queue <- j:
 		return nil
 	default:
-		m.update(j.item.ID, func(item *Item) {
-			item.State, item.Error = "failed", "Too many transfers are waiting; try again when some finish"
-		})
-		m.finishFile(j.item.BatchID, errors.New("too many transfers are waiting"))
-		return errors.New("too many transfers are waiting")
+		err := errors.New("too many transfers are waiting; try again when some finish")
+		m.finish(j, err)
+		return err
 	}
+}
+
+// CancelTransfer stops one queued or active transfer.
+func (m *Manager) CancelTransfer(id int) {
+	m.mu.Lock()
+	cancel := m.cancels[id]
+	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (m *Manager) base() context.Context {
+	if m.ctx == nil {
+		return context.Background()
+	}
+	return m.ctx
 }
 
 // Upload queues local files. Each is published as a new file on the server.
@@ -372,7 +449,7 @@ func (m *Manager) Upload(paths []string, parent string) (err error) {
 	if err != nil {
 		return err
 	}
-	batchID := m.startBatch("Selected files")
+	batchID, ctx := m.startBatch(m.base(), "Selected files")
 	defer func() { m.endScan(batchID, err) }()
 	for _, path := range paths {
 		f, openErr := source.Open(path)
@@ -392,7 +469,7 @@ func (m *Manager) Upload(paths []string, parent string) (err error) {
 			m.skip(batchID, &source.SkipError{Path: path, Reason: "Directory skipped; use Upload folder to preserve its contents"})
 			continue
 		}
-		if err := m.enqueue(job{client: c, parent: protocol.ID(parent), path: path, item: Item{BatchID: batchID, Name: filepath.Base(path), Direction: "upload"}}); err != nil {
+		if err := m.enqueue(ctx, job{client: c, parent: protocol.ID(parent), path: path, size: info.Size(), item: Item{BatchID: batchID, Name: filepath.Base(path), Direction: "upload", Total: info.Size()}}); err != nil {
 			return err
 		}
 	}
@@ -411,7 +488,7 @@ func (m *Manager) Download(id, destination string) error {
 	if err != nil {
 		return err
 	}
-	return m.enqueue(job{client: c, path: destination, entry: entry, item: Item{Name: entry.Standard.Name, Direction: "download"}})
+	return m.enqueue(m.base(), job{client: c, path: destination, entry: entry, item: Item{Name: entry.Standard.Name, Direction: "download"}})
 }
 
 // Transfers returns every transfer of this run, oldest first.
@@ -428,62 +505,6 @@ func (m *Manager) update(id int, change func(*Item)) {
 	snapshot := *item
 	m.mu.Unlock()
 	m.emit(snapshot)
-}
-
-func (m *Manager) work(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case j := <-m.queue:
-			m.run(ctx, j)
-		}
-	}
-}
-
-func (m *Manager) run(ctx context.Context, j job) {
-	id := j.item.ID
-	c := j.client
-	var err error
-	if c != nil {
-		m.update(id, func(item *Item) { item.State = "active" })
-		// Progress is reported at most ten times a second so a slow window
-		// cannot hold back the transfer or flood the frontend.
-		last := time.Now()
-		var lastDone int64
-		progress := func(done, total int64) {
-			if done == 0 {
-				last = time.Now()
-				lastDone = 0
-				m.update(id, func(item *Item) { item.Done, item.Total, item.Speed = 0, total, 0 })
-				return
-			}
-			if now := time.Now(); done == total || now.Sub(last) >= 100*time.Millisecond {
-				elapsed := now.Sub(last).Seconds()
-				speed := float64(done-lastDone) / elapsed
-				last, lastDone = now, done
-				m.update(id, func(item *Item) { item.Done, item.Total, item.Speed = done, total, speed })
-			}
-		}
-		if j.item.Direction == "upload" {
-			_, err = c.UploadTo(ctx, j.path, j.parent, progress)
-		} else {
-			err = c.Download(ctx, j.entry, j.path, progress)
-		}
-	}
-	m.update(id, func(item *Item) {
-		item.Speed = 0
-		item.State = "done"
-		if err != nil {
-			item.State, item.Error = "failed", message(err).Error()
-			if _, ok := source.Skipped(err); ok {
-				item.State = "skipped"
-			}
-		}
-	})
-	if j.item.Direction == "upload" {
-		m.finishFile(j.item.BatchID, err)
-	}
 }
 
 func sortFiles(files []File) {

@@ -17,6 +17,11 @@
 - Seven-day browser admin cookies; separate Dashboard, Accounts, Logs and Settings views. Dashboard adds Linux host CPU/memory, stored bytes and available storage; accounts show committed file bytes per user.
 
 - Persistent application logs in the admin panel, with search, level filters, coloured Info/OK/Warning/Error indicators and older-entry navigation.
+- Batched small-file uploads: queued files up to 1 MiB are sent up to 256 per request and published in one server transaction, about 75 times faster per file on a flushing disk. Servers advertise `batch_upload`; older servers use individual uploads.
+- Uploads can be cancelled per file or per selection; scanning stops, queued files are skipped and interrupted uploads release their server reservations immediately.
+- Deleting a file or folder now cancels unfinished uploads into it instead of refusing until they expire.
+- Desktop uploads run on eight workers and the server no longer holds its upload lock while receiving and flushing chunk bytes. Upload selections show elapsed time, bytes and average speed; speeds under 1 KiB/s no longer overflow the throughput tiles.
+- Fixed the desktop window freezing and uploads crawling for folders with many small files: transfer events are coalesced (≤5/s) off the transfer worker, folder scans run in the background, the queue renders at most 200 rows and file listings refresh at most every two seconds.
 - Fixed expired open uploads blocking recursive folder deletion indefinitely; active uploads remain protected.
 
 - Persistent admin user list with encrypted pending passwords until replacement or one-hour expiry; refreshes every five seconds. Passwords issued before this upgrade cannot be recovered from their hashes.

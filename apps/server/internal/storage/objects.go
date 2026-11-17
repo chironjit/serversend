@@ -57,49 +57,116 @@ func (s *Store) path(id protocol.ID) (string, error) {
 // Put streams at most length bytes to a temporary file, verifies the exact
 // length and SHA-256, flushes file and directory, and only then publishes the
 // object. A mismatch or failure leaves nothing behind.
-func (s *Store) Put(id protocol.ID, body io.Reader, length int64, digest protocol.Digest) (err error) {
-	final, err := s.path(id)
+func (s *Store) Put(id protocol.ID, body io.Reader, length int64, digest protocol.Digest) error {
+	staged, err := s.Stage(body, length, digest)
 	if err != nil {
 		return err
 	}
+	return s.Publish([]protocol.ID{id}, []*Staged{staged})
+}
+
+// Staged is verified object data that is not yet durable or visible.
+type Staged struct{ file objectFile }
+
+// Discard removes data that will not be published.
+func (st *Staged) Discard() {
+	st.file.Close()
+	os.Remove(st.file.Name())
+}
+
+// Stage reads at most length+1 bytes and verifies the exact length and SHA-256.
+func (s *Store) Stage(body io.Reader, length int64, digest protocol.Digest) (staged *Staged, err error) {
 	create := s.createTemporary
 	if create == nil {
 		create = func(dir, pattern string) (objectFile, error) { return os.CreateTemp(dir, pattern) }
 	}
 	file, err := create(s.temporary, "object-*")
 	if err != nil {
-		return err
+		return nil, err
 	}
+	staged = &Staged{file: file}
 	defer func() {
 		if err != nil {
-			file.Close()
-			os.Remove(file.Name())
+			staged.Discard()
+			staged = nil
 		}
 	}()
 	hash := sha256.New()
 	written, err := io.Copy(io.MultiWriter(file, hash), io.LimitReader(body, length+1))
 	if err != nil {
-		return err
+		return staged, err
 	}
 	if written != length || hex.EncodeToString(hash.Sum(nil)) != string(digest) {
-		return ErrMismatch
+		return staged, ErrMismatch
 	}
-	if err = file.Sync(); err != nil {
+	return staged, nil
+}
+
+// Publish flushes staged objects concurrently, renames them to ids, then
+// flushes each affected directory once: object shards, object root and
+// incoming. On failure nothing staged remains and published objects are
+// removed; none is referenced yet.
+func (s *Store) Publish(ids []protocol.ID, staged []*Staged) (err error) {
+	finals := make([]string, len(ids))
+	published := 0
+	defer func() {
+		if err != nil {
+			for i := range staged {
+				if i < published {
+					os.Remove(finals[i])
+				} else {
+					staged[i].Discard()
+				}
+			}
+		}
+	}()
+	if len(ids) != len(staged) {
+		return errors.New("each staged object needs one ID")
+	}
+	for i, id := range ids {
+		if finals[i], err = s.path(id); err != nil {
+			return err
+		}
+	}
+	// Concurrent flushes let the filesystem combine journal commits.
+	failures := make(chan error, len(staged))
+	limit := make(chan struct{}, 16)
+	for _, st := range staged {
+		limit <- struct{}{}
+		go func() {
+			defer func() { <-limit }()
+			failures <- st.file.Sync()
+		}()
+	}
+	for range staged {
+		err = errors.Join(err, <-failures)
+	}
+	if err != nil {
 		return err
 	}
-	if err = file.Close(); err != nil {
-		return err
+	shards := map[string]bool{}
+	for i, st := range staged {
+		if err = st.file.Close(); err != nil {
+			return err
+		}
+		shard := filepath.Dir(finals[i])
+		if !shards[shard] {
+			if err = os.MkdirAll(shard, 0o700); err != nil {
+				return err
+			}
+			shards[shard] = true
+		}
+		if err = os.Rename(st.file.Name(), finals[i]); err != nil {
+			return err
+		}
+		published = i + 1
 	}
-	if err = os.MkdirAll(filepath.Dir(final), 0o700); err != nil {
-		return err
-	}
-	if err = os.Rename(file.Name(), final); err != nil {
-		return err
-	}
-	// Persist the shard entry in objects as well as its new file entry. Both
-	// sides of the rename must be durable before SQLite acknowledges the object.
-	if err = syncDirectory(filepath.Dir(final)); err != nil {
-		return err
+	// Persist each shard entry in objects as well as the new file entries. Both
+	// sides of every rename must be durable before SQLite acknowledges objects.
+	for shard := range shards {
+		if err = syncDirectory(shard); err != nil {
+			return err
+		}
 	}
 	if err = syncDirectory(s.objects); err != nil {
 		return err

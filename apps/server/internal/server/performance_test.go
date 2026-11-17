@@ -29,14 +29,29 @@ func BenchmarkStandardUpload(b *testing.B) {
 					continue
 				}
 				b.Run(fmt.Sprintf("%s/bytes_%d/chunk_%d", transport, size, chunk), func(b *testing.B) {
-					benchmarkUpload(b, transport, size, chunk)
+					benchmarkUpload(b, transport, size, chunk, 1)
 				})
 			}
 		}
 	}
 }
 
-func benchmarkUpload(b *testing.B, transport string, size int, chunk int64) {
+// BenchmarkParallelSmallUploads matches the desktop's concurrent workers.
+func BenchmarkParallelSmallUploads(b *testing.B) {
+	for _, transport := range []string{"http2", "http3"} {
+		for _, workers := range []int{1, 8} {
+			b.Run(fmt.Sprintf("%s/workers_%d", transport, workers), func(b *testing.B) {
+				benchmarkUpload(b, transport, 1024, 4<<20, workers)
+			})
+			b.Run(fmt.Sprintf("%s/batched_workers_%d", transport, workers), func(b *testing.B) {
+				benchmarkUpload(b, transport, 1024, 4<<20, -workers)
+			})
+		}
+	}
+}
+
+// Negative workers send batches of up to 256 files per request.
+func benchmarkUpload(b *testing.B, transport string, size int, chunk int64, workers int) {
 	cfg := fixture(b)
 	s, err := New(b.Context(), cfg)
 	if err != nil {
@@ -112,11 +127,42 @@ func benchmarkUpload(b *testing.B, transport string, size int, chunk int64) {
 	b.ReportAllocs()
 	b.SetBytes(int64(size))
 	b.ResetTimer()
-	for range b.N {
-		if _, err := c.Upload(b.Context(), path, nil); err != nil {
-			b.Fatal(err)
-		}
+	batch := 1
+	if workers < 0 {
+		workers, batch = -workers, client.MaxBatchFileCount
 	}
+	var group sync.WaitGroup
+	next := make(chan int)
+	for range workers {
+		group.Go(func() {
+			for n := range next {
+				if batch == 1 {
+					if _, err := c.Upload(b.Context(), path, nil); err != nil {
+						b.Error(err)
+					}
+					continue
+				}
+				files := make([]client.BatchFile, n)
+				for i := range files {
+					files[i].Path = path
+				}
+				outcomes, err := c.UploadBatch(b.Context(), files)
+				if err != nil {
+					b.Error(err)
+				}
+				for _, outcome := range outcomes {
+					if outcome.Err != nil {
+						b.Error(outcome.Err)
+					}
+				}
+			}
+		})
+	}
+	for sent := 0; sent < b.N; sent += batch {
+		next <- min(batch, b.N-sent)
+	}
+	close(next)
+	group.Wait()
 	b.StopTimer()
 	mu.Lock()
 	defer mu.Unlock()

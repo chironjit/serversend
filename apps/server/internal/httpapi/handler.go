@@ -24,6 +24,7 @@ func Capabilities() api.Capabilities {
 			MinChunkBytes: 1 << 20, MaxChunkBytes: 8 << 20,
 			MaxRequestBytes: 8 << 20, MaxManifestBytes: 1 << 20, MaxChunks: 1 << 20,
 		},
+		Features: []string{api.FeatureBatchUpload},
 	}
 }
 

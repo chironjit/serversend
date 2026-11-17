@@ -30,6 +30,8 @@ const bridge = vi.hoisted(() => ({
       >(),
     DeleteEntry: vi.fn<(id: string) => Promise<void>>(),
     ChooseAndUploadFolder: vi.fn<(parent: string) => Promise<void>>(),
+    CancelTransfer: vi.fn<(id: number) => Promise<void>>(),
+    CancelBatch: vi.fn<(id: number) => Promise<void>>(),
     ChooseAndUpload: vi.fn<() => Promise<number>>(),
     ChooseAndDownload: vi.fn<(id: string) => Promise<boolean>>(),
   },
@@ -287,7 +289,7 @@ describe('desktop transfer slice', () => {
     await submit(wrapper);
     expect(wrapper.text()).toContain('Uploads and downloads from this session appear here.');
 
-    const emit = (item: object) => bridge.listener?.({ data: item });
+    const emit = (item: object) => bridge.listener?.({ data: [item] });
     emit({
       id: 1,
       name: 'video.mp4',
@@ -401,6 +403,9 @@ describe('desktop transfer slice', () => {
           reason: 'Symbolic link; select the real target to upload it.',
         })),
         error: '',
+        bytes: 3 * 1024 * 1024,
+        startedAt: 1_000,
+        finishedAt: 76_000,
       },
       {
         id: 2,
@@ -434,6 +439,7 @@ describe('desktop transfer slice', () => {
     expect(selections.findAll('[aria-label="Skipped paths and reasons"] li')).toHaveLength(101);
     expect(selections.text()).toContain('/Documents/link-99');
     expect(selections.text()).toContain("Select a link's real target");
+    expect(selections.text()).toContain('Took 1m 15s · 3.0 MiB · 41.0 KiB/s average');
     expect(wrapper.find('progress').exists()).toBe(false);
     wrapper.unmount();
   });
@@ -518,38 +524,96 @@ describe('desktop transfer slice', () => {
     await flushPromises();
     await submit(wrapper);
     await submit(wrapper);
-    bridge.listener?.({
-      data: {
-        id: 1,
-        name: 'still running',
-        direction: 'download',
-        state: 'active',
-        done: 1,
-        total: 100,
-        speed: 1,
-        error: '',
-      },
+    const item = (id: number, state: string) => ({
+      id,
+      name: `${state}-${id}`,
+      direction: 'upload',
+      state,
+      done: 1,
+      total: 1,
+      speed: 0,
+      error: '',
     });
-    for (let id = 2; id < 503; id += 1) {
-      bridge.listener?.({
-        data: {
-          id,
-          name: `finished-${id}`,
-          direction: 'download',
-          state: 'done',
-          done: 1,
-          total: 1,
-          speed: 0,
-          error: '',
-        },
-      });
-    }
+    bridge.service.Files.mockClear();
+    // One batch per state, as a large folder scan and its uploads produce.
+    bridge.listener?.({ data: [item(1, 'active')] });
+    bridge.listener?.({
+      data: Array.from({ length: 501 }, (_, index) => item(index + 2, 'done')),
+    });
+    bridge.listener?.({
+      data: Array.from({ length: 5000 }, (_, index) => item(index + 600, 'queued')),
+    });
+    bridge.listener?.({ data: [item(503, 'done')] });
     await flushPromises();
     const queue = wrapper.get('[aria-label="Transfer queue"]');
-    expect(queue.findAll(':scope > li')).toHaveLength(501);
-    expect(queue.text()).toContain('still running');
-    expect(queue.text()).toContain('finished-502');
-    expect(queue.findAll('span.min-w-0').map((name) => name.text())).not.toContain('finished-2');
+    expect(queue.findAll(':scope > li')).toHaveLength(200);
+    expect(queue.text()).toContain('active-1');
+    expect(queue.text()).toContain('queued-600');
+    expect(queue.text()).not.toContain('queued-620');
+    expect(queue.text()).toContain('done-503');
+    expect(queue.text()).not.toContain('done-2');
+    expect(wrapper.text()).toContain('Showing 200 of 5201 transfers');
+    // Completed uploads refresh the listing at most once per interval.
+    expect(bridge.service.Files).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
+
+  it('cancels running selections and individual transfers', async () => {
+    bridge.service.SignIn.mockResolvedValue({ next: 'second_factor' });
+    bridge.service.CompleteSignIn.mockResolvedValue({
+      username: 'alice',
+      origin: 'https://server.test',
+      serverId: 's',
+    });
+    bridge.service.CancelTransfer.mockResolvedValue();
+    bridge.service.CancelBatch.mockResolvedValue();
+    bridge.service.Batches.mockResolvedValue([
+      {
+        id: 7,
+        name: 'Photos',
+        state: 'running',
+        files: 3,
+        completed: 1,
+        failed: 0,
+        cancelled: 1,
+        directories: 1,
+        skipped: 0,
+        skippedItems: [],
+        error: '',
+        bytes: 1,
+        startedAt: 1,
+        finishedAt: 0,
+      },
+    ]);
+    const wrapper = mount(App);
+    await submit(wrapper);
+    await wrapper.find('button').trigger('click');
+    await flushPromises();
+    await submit(wrapper);
+    await submit(wrapper);
+    bridge.listener?.({
+      data: [
+        {
+          id: 3,
+          name: 'a.jpg',
+          direction: 'upload',
+          state: 'queued',
+          done: 0,
+          total: 1,
+          error: '',
+        },
+        { id: 4, name: 'b.jpg', direction: 'upload', state: 'done', done: 1, total: 1, error: '' },
+      ],
+    });
+    await flushPromises();
+    const selections = wrapper.get('[aria-label="Upload selections"]');
+    expect(selections.text()).toContain('1 cancelled');
+    await selections.get('[aria-label="Cancel Photos"]').trigger('click');
+    expect(bridge.service.CancelBatch).toHaveBeenCalledWith(7);
+    const queue = wrapper.get('[aria-label="Transfer queue"]');
+    expect(queue.find('[aria-label="Cancel b.jpg"]').exists()).toBe(false);
+    await queue.get('[aria-label="Cancel a.jpg"]').trigger('click');
+    expect(bridge.service.CancelTransfer).toHaveBeenCalledWith(3);
     wrapper.unmount();
   });
 

@@ -13,7 +13,7 @@ declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
             "time": string;
-            "transfer": transfer$0.Item;
+            "transfer": transfer$0.Item[] | null;
         }
     }
 }

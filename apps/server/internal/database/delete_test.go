@@ -1,12 +1,15 @@
 package database
 
 import (
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
-	"testing"
 )
 
-func TestDeleteTreeRejectsActiveUploadWithoutPartialChanges(t *testing.T) {
+func TestDeleteTreeCancelsOpenUploads(t *testing.T) {
 	db, _ := openDatabase(t)
 	mustAccount(t, db, ownerA)
 	mustAccount(t, db, ownerB)
@@ -18,23 +21,29 @@ func TestDeleteTreeRejectsActiveUploadWithoutPartialChanges(t *testing.T) {
 	if _, err := repo.DeleteEntry(t.Context(), ownerB, uploadID); err == nil {
 		t.Fatal("foreign deletion accepted")
 	}
-	if _, err := db.Exec(`INSERT INTO uploads(account_id,id,state,mode,idempotency_key,expected_bytes,created_at,parent_id) VALUES(?,?,'open','standard','pending',0,0,?)`, ownerA, ownerB, uploadID); err != nil {
-		t.Fatal(err)
+	const object = "cccccccccccccccccccccccccccccccc"
+	for _, query := range []string{
+		`INSERT INTO uploads(account_id,id,state,mode,idempotency_key,expected_bytes,created_at,parent_id,expires_at,chunk_count) VALUES(?1,?2,'open','standard','pending',4,0,?3,32503680000000,1)`,
+		`INSERT INTO reservations(account_id,upload_id,bytes) VALUES(?1,?2,4)`,
+		`INSERT INTO chunks(account_id,upload_id,chunk_index,byte_count,digest,object_id) VALUES(?1,?2,0,4,'` + strings.Repeat("d", 64) + `','` + object + `')`,
+	} {
+		if _, err := db.Exec(query, ownerA, ownerB, uploadID); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := repo.DeleteEntry(t.Context(), ownerA, uploadID); err == nil {
-		t.Fatal("active upload deleted")
+	objects, err := repo.DeleteEntry(t.Context(), ownerA, uploadID)
+	if err != nil {
+		t.Fatalf("open upload blocked deletion: %v", err)
 	}
-	if err := repo.CheckDirectory(t.Context(), ownerA, uploadID); err != nil {
-		t.Fatal("failed delete removed folder")
+	if len(objects) != 1 || objects[0] != object {
+		t.Fatalf("objects %v", objects)
 	}
-	if _, err := db.Exec(`UPDATE uploads SET state='cancelled' WHERE account_id=?`, ownerA); err != nil {
-		t.Fatal(err)
+	var remaining int
+	if err := db.QueryRow(`SELECT (SELECT count(*) FROM uploads)+(SELECT count(*) FROM reservations)+(SELECT count(*) FROM chunks)+(SELECT count(*) FROM directories WHERE account_id=?)`, ownerA).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("remaining rows %d %v", remaining, err)
 	}
-	if _, err := repo.DeleteEntry(t.Context(), ownerA, uploadID); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.CheckDirectory(t.Context(), ownerA, uploadID); err == nil {
-		t.Fatal("folder still present")
+	if _, _, err := repo.RecordChunk(t.Context(), ownerA, ownerB, StoredChunk{Index: 0, Bytes: 4, Digest: protocol.Digest(strings.Repeat("d", 64)), ObjectID: object}, time.Now()); err != ErrUploadClosed {
+		t.Fatalf("late chunk after deletion: %v", err)
 	}
 }
 

@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"context"
+	"github.com/chironjit/serversend/shared/client"
 	"github.com/chironjit/serversend/shared/protocol"
 	"github.com/chironjit/serversend/shared/source"
 	"io"
@@ -25,8 +26,25 @@ func (m *Manager) UploadFolder(ctx context.Context, root, parent string) (err er
 	if err != nil {
 		return err
 	}
-	batchID := m.startBatch(filepath.Base(root))
+	batchID, ctx := m.startBatch(ctx, filepath.Base(root))
 	defer func() { m.endScan(batchID, err) }()
+	return m.scan(ctx, c, batchID, root, parent)
+}
+
+// StartFolderUpload returns once the selection is registered. Scanning waits
+// on the bounded queue, so it continues in the background; its outcome is
+// reported in Batches.
+func (m *Manager) StartFolderUpload(root, parent string) error {
+	c, err := m.current()
+	if err != nil {
+		return err
+	}
+	batchID, ctx := m.startBatch(m.base(), filepath.Base(root))
+	go func() { m.endScan(batchID, m.scan(ctx, c, batchID, root, parent)) }()
+	return nil
+}
+
+func (m *Manager) scan(ctx context.Context, c *client.Client, batchID int, root, parent string) error {
 	var visit func(string, protocol.ID) error
 	visit = func(path string, destination protocol.ID) error {
 		if err := ctx.Err(); err != nil {
@@ -46,20 +64,13 @@ func (m *Manager) UploadFolder(ctx context.Context, root, parent string) (err er
 			return err
 		}
 		if info.Mode().IsRegular() {
-			j := job{client: c, parent: destination, path: path, item: Item{BatchID: batchID, Name: filepath.Base(path), Direction: "upload"}}
+			j := m.register(ctx, job{client: c, parent: destination, path: path, size: info.Size(), item: Item{BatchID: batchID, Name: filepath.Base(path), Direction: "upload", Total: info.Size()}})
 			// Backpressure bounds pending files rather than truncating large trees.
-			m.mu.Lock()
-			j.item.ID, j.item.State = len(m.items)+1, "queued"
-			m.items = append(m.items, j.item)
-			m.queuedLocked(batchID)
-			m.mu.Unlock()
-			m.emit(j.item)
 			select {
 			case m.queue <- j:
 				return nil
 			case <-ctx.Done():
-				m.update(j.item.ID, func(item *Item) { item.State = "failed"; item.Error = ctx.Err().Error() })
-				m.finishFile(batchID, ctx.Err())
+				m.finish(j, ctx.Err())
 				return ctx.Err()
 			}
 		}

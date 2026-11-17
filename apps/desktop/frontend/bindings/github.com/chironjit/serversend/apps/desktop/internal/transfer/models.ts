@@ -30,6 +30,22 @@ export interface Batch {
     "skipped": number;
     "skippedItems": SkippedItem[] | null;
     "error": string;
+    "cancelled": number;
+
+    /**
+     * uploaded by completed files
+     */
+    "bytes": number;
+
+    /**
+     * Unix milliseconds
+     */
+    "startedAt": number;
+
+    /**
+     * Unix milliseconds; 0 while unfinished
+     */
+    "finishedAt": number;
 }
 
 export interface Enrollment {
@@ -62,7 +78,7 @@ export interface Item {
     "direction": string;
 
     /**
-     * "queued", "active", "done", "skipped" or "failed"
+     * "queued", "active", "done", "skipped", "cancelled" or "failed"
      */
     "state": string;
     "done": number;

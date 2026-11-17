@@ -12,7 +12,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// TransferEvent is emitted with a transfer.Item whenever a transfer changes.
+// TransferEvent carries the latest state of recently changed transfers.
 const TransferEvent = "transfer"
 
 // TransferService is the frontend's only route to a server. It exposes
@@ -22,9 +22,9 @@ type TransferService struct {
 }
 
 func NewTransferService(ctx context.Context) *TransferService {
-	manager := transfer.New(ctx, func(item transfer.Item) {
+	manager := transfer.New(ctx, func(items []transfer.Item) {
 		if app := application.Get(); app != nil {
-			app.Event.Emit(TransferEvent, item)
+			app.Event.Emit(TransferEvent, items)
 		}
 	})
 	manager.SetAppVersion(currentVersion)
@@ -65,6 +65,13 @@ func (s *TransferService) Files(ctx context.Context, parent string) ([]transfer.
 
 func (s *TransferService) Transfers() []transfer.Item { return s.manager.Transfers() }
 
+// CancelTransfer stops one queued or active transfer.
+func (s *TransferService) CancelTransfer(id int) { s.manager.CancelTransfer(id) }
+
+// CancelBatch stops an upload selection: scanning ends, queued files are
+// skipped and active ones interrupted. Files already uploaded remain.
+func (s *TransferService) CancelBatch(id int) { s.manager.CancelBatch(id) }
+
 // Batches returns bounded summaries of recent upload selections, including skipped paths.
 func (s *TransferService) Batches() []transfer.Batch { return s.manager.Batches() }
 
@@ -96,12 +103,14 @@ func (s *TransferService) ChooseAndDownload(fileID string) (bool, error) {
 func (s *TransferService) CreateDirectory(ctx context.Context, parent, name string) error {
 	return s.manager.CreateDirectory(ctx, parent, name)
 }
-func (s *TransferService) ChooseAndUploadFolder(ctx context.Context, parent string) error {
+
+// ChooseAndUploadFolder returns as soon as scanning starts; see Batches.
+func (s *TransferService) ChooseAndUploadFolder(parent string) error {
 	path, err := application.Get().Dialog.OpenFile().SetTitle("Choose folder to upload").CanChooseFiles(false).CanChooseDirectories(true).PromptForSingleSelection()
 	if err != nil || path == "" {
 		return err
 	}
-	return s.manager.UploadFolder(ctx, path, parent)
+	return s.manager.StartFolderUpload(path, parent)
 }
 
 func (s *TransferService) DeleteEntry(ctx context.Context, id string) error {

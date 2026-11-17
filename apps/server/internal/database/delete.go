@@ -7,10 +7,12 @@ import (
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
 	"strings"
-	"time"
 )
 
-// DeleteEntry removes a complete tree atomically. Active uploads must finish first.
+// DeleteEntry removes a complete tree atomically, cancelling unfinished
+// uploads into it: interrupted clients otherwise leave them blocking deletion
+// until expiry. Their reservations cascade, their acknowledged objects are
+// queued for deletion, and late chunks or finalization find no open upload.
 func (r *Repository) DeleteEntry(ctx context.Context, account, id protocol.ID) ([]protocol.ID, error) {
 	objects := []protocol.ID{}
 	err := r.write(ctx, func(tx *sql.Tx) error {
@@ -28,13 +30,6 @@ func (r *Repository) DeleteEntry(ctx context.Context, account, id protocol.ID) (
 		defer tx.ExecContext(context.Background(), `DROP TABLE IF EXISTS deletion_ids`)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO deletion_ids WITH RECURSIVE tree(id) AS (SELECT ? UNION SELECT d.id FROM directories d JOIN tree t ON d.parent_id=t.id WHERE d.account_id=?) SELECT id FROM tree UNION SELECT f.id FROM files f JOIN tree t ON f.parent_id=t.id WHERE f.account_id=?`, id, account, account); err != nil {
 			return err
-		}
-		var active int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM uploads WHERE account_id=? AND (file_id IN deletion_ids OR parent_id IN deletion_ids) AND (state='finalizing' OR (state='open' AND (expires_at IS NULL OR expires_at>?)))`, account, time.Now().UnixMilli()).Scan(&active); err != nil {
-			return err
-		}
-		if active > 0 {
-			return api.Error{Code: api.Conflict, Message: "Wait for uploads in this file or folder to finish before deleting"}
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT object_id FROM chunks WHERE account_id=? AND upload_id IN (SELECT id FROM uploads WHERE account_id=? AND (file_id IN deletion_ids OR parent_id IN deletion_ids))`, account, account)
 		if err != nil {

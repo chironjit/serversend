@@ -37,6 +37,21 @@ export function BeginEnrollment(): $CancellablePromise<transfer$0.Enrollment> {
 }
 
 /**
+ * CancelBatch stops an upload selection: scanning ends, queued files are
+ * skipped and active ones interrupted. Files already uploaded remain.
+ */
+export function CancelBatch(id: number): $CancellablePromise<void> {
+    return $Call.ByID(3926597944, id);
+}
+
+/**
+ * CancelTransfer stops one queued or active transfer.
+ */
+export function CancelTransfer(id: number): $CancellablePromise<void> {
+    return $Call.ByID(469066147, id);
+}
+
+/**
  * ChooseAndDownload asks where to save a listed file and queues the download.
  * It reports false when the user cancels the dialog.
  */
@@ -53,6 +68,9 @@ export function ChooseAndUpload(parent: string): $CancellablePromise<number> {
     return $Call.ByID(2242352341, parent);
 }
 
+/**
+ * ChooseAndUploadFolder returns as soon as scanning starts; see Batches.
+ */
 export function ChooseAndUploadFolder(parent: string): $CancellablePromise<void> {
     return $Call.ByID(1602388781, parent);
 }
