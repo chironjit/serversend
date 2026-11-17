@@ -12,6 +12,7 @@ services:
       - ALL
     ports:
       - "${SERVER_SEND_BIND_IP:?Set the Unraid LAN IP}:58443:58443/tcp"
+      - "${SERVER_SEND_BIND_IP:?Set the Unraid LAN IP}:58443:58443/udp"
     environment:
       SERVER_SEND_TLS_IPS: "${SERVER_SEND_TLS_IPS:?Set the Unraid LAN IP}"
     volumes:

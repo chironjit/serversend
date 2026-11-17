@@ -15,8 +15,12 @@ import (
 type options struct {
 	authentication *auth.Service
 	transfers      *uploads.Service
+	http3          bool
 }
 type Option func(*options)
+
+// WithHTTP3 advertises QUIC only for a process with an active UDP listener.
+func WithHTTP3() Option { return func(o *options) { o.http3 = true } }
 
 func WithAuthentication(service *auth.Service) Option {
 	return func(o *options) { o.authentication = service }

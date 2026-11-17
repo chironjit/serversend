@@ -22,6 +22,8 @@ import (
 
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 )
 
 const maxJSONResponse = 1 << 20
@@ -47,7 +49,7 @@ func fingerprint(certificate *x509.Certificate) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Probe opens one TLS connection, sends nothing, and reports the presented
+// Probe tries QUIC first, then TLS/TCP, sends no application data, and reports the presented
 // leaf certificate. It establishes no trust by itself.
 func Probe(ctx context.Context, origin string) (ServerProbe, error) {
 	if err := protocol.ValidateOrigin(origin); err != nil {
@@ -74,6 +76,18 @@ func Probe(ctx context.Context, origin string) (ServerProbe, error) {
 			return nil
 		},
 	}}
+	quicConfig := dialer.Config.Clone()
+	quicConfig.NextProtos = []string{http3.NextProtoH3}
+	quicCtx, cancel := context.WithTimeout(ctx, quicProbeTimeout)
+	quicConn, quicErr := quic.DialAddr(quicCtx, host, quicConfig, &quic.Config{HandshakeIdleTimeout: quicProbeTimeout})
+	cancel()
+	if quicErr == nil {
+		_ = quicConn.CloseWithError(0, "certificate inspection complete")
+		return probe, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return ServerProbe{}, err
+	}
 	connection, err := dialer.DialContext(ctx, "tcp", host)
 	if err != nil {
 		return ServerProbe{}, fmt.Errorf("could not reach a ServerSend server at %s: %w", origin, err)
@@ -94,6 +108,12 @@ type Client struct {
 // New returns a client that accepts exactly the approved certificate. Every
 // connection is checked against the pin before any request bytes are written.
 func New(origin, approvedFingerprint string) (*Client, error) {
+	return NewWithOptions(origin, approvedFingerprint, TransportOptions{PreferHTTP3: true})
+}
+
+// NewWithOptions permits HTTP/2-only measurements. Production callers use New,
+// which tries HTTP/3 first on every connection establishment.
+func NewWithOptions(origin, approvedFingerprint string, options TransportOptions) (*Client, error) {
 	if err := protocol.ValidateOrigin(origin); err != nil {
 		return nil, err
 	}
@@ -110,10 +130,19 @@ func New(origin, approvedFingerprint string) (*Client, error) {
 				return nil
 			}},
 	}
-	return &Client{origin: origin, http: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	var selected http.RoundTripper = transport
+	if options.PreferHTTP3 {
+		selected = newAdaptiveTransport(origin, transport)
+	}
+	return &Client{origin: origin, http: &http.Client{Transport: selected, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
-func (c *Client) Close() { c.http.CloseIdleConnections() }
+func (c *Client) Close() {
+	c.http.CloseIdleConnections()
+	if closer, ok := c.http.Transport.(io.Closer); ok {
+		_ = closer.Close()
+	}
+}
 
 func (c *Client) Origin() string { return c.origin }
 

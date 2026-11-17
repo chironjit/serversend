@@ -1,6 +1,6 @@
 # Server development
 
-The server module remains at `apps/server`. `cmd/serversend` runs the TLS-only process with persistent identity and metadata, health/readiness endpoints, capability discovery and a public admin shell at `/admin/`. Authentication, file storage, pairing and account administration remain unimplemented. No setup, account or file endpoints are exposed.
+The server module remains at `apps/server`. `cmd/serversend` runs the TLS-only process with persistent identity and metadata, health/readiness endpoints, capability discovery, browser administrator onboarding/user creation, and the standard-file transfer workflow described in the [vertical slice](vertical-slice.md). Complete pairing and account/device administration remain roadmap work.
 
 Install Node.js 26 and restore the pinned admin dependencies once, then run the component checks from the repository root:
 
@@ -91,7 +91,7 @@ The admin shell's readiness probe sends no credentials, follows no redirects, ab
 
 The shell uses a same-origin Content Security Policy without inline scripts/styles or eval, blocks framing, forms, objects and base-URL changes, and disables unused camera/microphone/geolocation permissions. These headers do not implement authenticated admin security: role checks, secure session cookies, CSRF/origin protection and sensitive-action reauthentication still belong to Chunk 22. The public shell never grants administrative access.
 
-The TLS listener supports HTTP/2 and the standard HTTP/1.1 fallback. It requires TLS 1.3 and has bounded request-header, read, write and idle times. UDP/HTTP/3 are not active. Capabilities advertise only HTTP/2; no file-format support is advertised. The provisional ceilings are 1–8 MiB chunks, 8 MiB requests, 1 MiB manifests and 1,048,576 chunks. These are bounds for future transfer integration, not benchmarked production settings or proof that upload endpoints are available.
+The executable now opens TCP and UDP listeners for the same API, advertising HTTP/3 only through the dual-transport entry point. TCP supports HTTP/2 and HTTP/1.1, with TLS 1.3 required. Desktop certificate inspection and authenticated connections try HTTP/3 first, then verified HTTP/2 if QUIC fails. Each replacement connection repeats that order, with no timed upgrades and no mutation 0-RTT; see [performance measurements and operation](performance-baseline.md). The provisional ceilings remain 1–8 MiB chunks, 8 MiB requests, 1 MiB manifests and 1,048,576 chunks. Local measurements do not qualify target-hardware resource ceilings.
 
 ## Environment settings
 
@@ -116,7 +116,9 @@ Empty TLS paths remain valid for configuration parsing. Startup requires either 
 
 `config.CheckStorage` requires all three directories to exist and probes file creation, writing, syncing, removal and directory syncing. It resolves symlinks and compares directory/ancestor identities to reject aliased or nested paths, including bind-mount aliases. It never creates a missing mount path. The config directory must have no group/other permissions (normally 0700); an existing database must be a regular private file (normally 0600), not a symlink. Protect these directories against modification by other local users. Startup checks do not eliminate filesystem races in an untrusted parent directory.
 
-Operators must still provide persistent mounts and a local filesystem suitable for SQLite WAL; these checks cannot prove a directory is mounted or qualify SMB/NFS locking. Capacity reservations, single-process deployment enforcement and durable object reconciliation remain storage work. Only one server process may use a deployment.
+Operators must still provide persistent mounts and a local filesystem suitable for SQLite WAL; these checks cannot prove a directory is mounted or qualify SMB/NFS locking. Startup now holds native `.serversend.lock` files on config, data and staging before initializing certificates, metadata or objects. Another cooperating server or operator command sharing any volume is refused. Locks release on close/process exit; leave the lock files in place, because unlinking a live lock permits a second process to lock a different inode. Trusted directories and actual filesystem locking are required. Capacity reservations and general durable object reconciliation remain storage work. Independent copied volumes/identities cannot be fenced by these locks.
+
+Use `serversend -backup /absolute/new/directory` with the server stopped for the initial standard-data snapshot. See [backup and isolated restore](backup-restore.md) for included keys/objects, private permissions, upgrade rollback and remaining qualification gates.
 
 ## Metadata and identity
 
@@ -168,7 +170,7 @@ docker run --rm --name serversend --read-only --stop-timeout 15 \
   -p 58443:58443/tcp serversend:dev
 ```
 
-Use bind mounts or explicitly managed named volumes that survive container replacement; do not rely on anonymous volumes. `--mount type=bind` rejects missing source paths instead of creating them. The image declares TCP and UDP port 58443, but UDP is reserved and need not be published yet. No app state is written into the image layer. The container image is a process foundation, not a production-ready storage service or a completed Unraid deployment template.
+Use bind mounts or explicitly managed named volumes that survive container replacement; do not rely on anonymous volumes. `--mount type=bind` rejects missing source paths instead of creating them. Publish UDP 58443 as well as TCP for HTTP/3 evaluation; the Compose examples include both. No app state is written into the image layer. The container image remains experimental, with actual Unraid deployment qualification open.
 
 Tests cover configuration parsing/bounds; real filesystem permission and alias failures; metadata constraints and future-schema rejection; concurrent identity initialization and restart persistence; safe typed endpoint errors; embedded asset routing/MIME/security headers and rejected traversal/mutations; verified TLS 1.3/HTTP/2 requests; invalid TLS before metadata mutation; certificate renewal; listener failures; and graceful draining. Admin UI tests cover both themes, blocked storage, early theme application, OS/tab changes, malformed readiness responses, retry/timeout and disposal. Pairing endpoint integration, complete account/storage workflows and full deployment qualification remain. Chunk 03 still awaits Windows/macOS native persistence qualification; the Chunk 04 process/shell work does not close that dependency. Chunk 02 shared contracts are complete; they do not expose these runtime workflows.
 
@@ -183,10 +185,10 @@ Create the first administrator from a shell on the host or inside the container.
 
 ```sh
 serversend -bootstrap-admin admin
-# container: docker exec -it <container> serversend -bootstrap-admin admin
+# Stop the serving container first; use a one-shot container with the same mounts/settings.
 ```
 
-The command prints a one-hour temporary password to standard output only (never the log) and exits without serving. It may run while the server is running. If the password expires or is lost before that administrator finishes TOTP enrollment, run `serversend -recover-bootstrap-admin admin`; it works only for the sole, still-unenrolled first administrator. The administrator then signs in, replaces the password and enrolls TOTP through the endpoints below. A fully onboarded account can open a slice device session (`POST /api/v1/sessions`); administrators can create users with `POST /api/v1/admin/users` after a recent sign-in and list users with `GET /api/v1/admin/users`. Resets and disablement still have no network caller.
+The command prints a one-hour temporary password to standard output only (never the log) and exits without serving. Stop the serving process before running it: deployment locks also apply to `-check`, bootstrap and recovery commands. If the password expires or is lost before that administrator finishes TOTP enrollment, run `serversend -recover-bootstrap-admin admin`; it works only for the sole, still-unenrolled first administrator. The administrator then signs in, replaces the password and enrolls TOTP through the endpoints below. A fully onboarded account can open a slice device session (`POST /api/v1/sessions`); administrators can create users with `POST /api/v1/admin/users` after a recent sign-in and list users with `GET /api/v1/admin/users`. Resets and disablement still have no network caller.
 
 Passwords are hashed with Argon2id using 64 MiB, three passes and four lanes (the RFC 9106 memory-constrained profile), a random 128-bit salt and the self-describing PHC string format, so parameters can be raised later without invalidating stored hashes. At most two hashes run at once, bounding KDF memory near 128 MiB. Verification rejects stored parameters above 256 MiB, ten passes or sixteen lanes. These parameters are not yet calibrated on target Unraid hardware. State-machine and adapter tests inject an explicitly test-only fast hasher and are not cryptographic password tests; `auth/argon2id_test.go`, `server/accounts_test.go` and the command tests use the real one.
 

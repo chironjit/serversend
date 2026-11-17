@@ -60,8 +60,12 @@ func (s *TransferService) Files(ctx context.Context, parent string) ([]transfer.
 
 func (s *TransferService) Transfers() []transfer.Item { return s.manager.Transfers() }
 
+// Batches returns bounded summaries of recent upload selections, including skipped paths.
+func (s *TransferService) Batches() []transfer.Batch { return s.manager.Batches() }
+
 // ChooseAndUpload opens the native file picker and queues the selection. It
-// returns how many files were queued; cancelling the dialog queues none.
+// returns how many paths were selected; links and unsupported files are reported
+// in Batches rather than uploaded. Cancelling the dialog queues none.
 func (s *TransferService) ChooseAndUpload(parent string) (int, error) {
 	paths, err := application.Get().Dialog.OpenFile().SetTitle("Choose files to upload").CanChooseFiles(true).PromptForMultipleSelection()
 	if err != nil || len(paths) == 0 {

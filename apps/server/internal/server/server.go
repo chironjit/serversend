@@ -18,6 +18,7 @@ import (
 	"github.com/chironjit/serversend/apps/server/internal/database"
 	"github.com/chironjit/serversend/apps/server/internal/httpapi"
 	"github.com/chironjit/serversend/apps/server/internal/identity"
+	"github.com/chironjit/serversend/apps/server/internal/instancelock"
 	"github.com/chironjit/serversend/apps/server/internal/storage"
 	"github.com/chironjit/serversend/apps/server/internal/uploads"
 	"github.com/chironjit/serversend/shared/protocol"
@@ -27,6 +28,7 @@ const shutdownTimeout = 10 * time.Second
 
 type Server struct {
 	db           *sql.DB
+	locks        *instancelock.Locks
 	tls          *tls.Config
 	identity     identity.Identity
 	accounts     *auth.Service
@@ -47,6 +49,16 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 	if err := c.CheckStorage(); err != nil {
 		return nil, err
 	}
+	locks, err := instancelock.Acquire(c.ConfigDir, c.DataDir, c.StagingDir)
+	if err != nil {
+		return nil, err
+	}
+	keepLocks := false
+	defer func() {
+		if !keepLocks {
+			_ = locks.Close()
+		}
+	}()
 	tlsConfig, err := loadTLS(c, time.Now())
 	if err != nil {
 		return nil, err
@@ -75,7 +87,8 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Server{db: db, tls: tlsConfig, identity: id, accounts: accounts, transfers: transfers, drainTimeout: shutdownTimeout}, nil
+	keepLocks = true
+	return &Server{db: db, locks: locks, tls: tlsConfig, identity: id, accounts: accounts, transfers: transfers, drainTimeout: shutdownTimeout}, nil
 }
 
 // newAccounts loads the TOTP protection key before any account request can be
@@ -104,7 +117,7 @@ func (s *Server) Accounts() *auth.Service { return s.accounts }
 // Identity returns public material only; it is not itself proof of trust.
 func (s *Server) Identity() identity.Identity { return s.identity }
 
-func (s *Server) Close() error { return s.db.Close() }
+func (s *Server) Close() error { return errors.Join(s.db.Close(), s.locks.Close()) }
 
 // Serve owns listener and serves TLS only. Cancellation marks the process
 // unready before draining requests. A timeout forcibly closes active requests.

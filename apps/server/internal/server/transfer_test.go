@@ -22,9 +22,13 @@ import (
 
 // onboardedClient signs a new account in through the real client: temporary
 // password, replacement, TOTP enrollment and a device session.
-func onboardedClient(t *testing.T, origin, pin, username, temporary string) (*client.Client, string) {
+func onboardedClient(t testing.TB, origin, pin, username, temporary string) (*client.Client, string) {
+	return onboardedTransportClient(t, origin, pin, username, temporary, client.TransportOptions{})
+}
+
+func onboardedTransportClient(t testing.TB, origin, pin, username, temporary string, options client.TransportOptions) (*client.Client, string) {
 	t.Helper()
-	c, err := client.New(origin, pin)
+	c, err := client.NewWithOptions(origin, pin, options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,6 +67,13 @@ func onboardedClient(t *testing.T, origin, pin, username, temporary string) (*cl
 
 func writeFixture(t *testing.T, dir, name string, size int) (string, []byte) {
 	t.Helper()
+	// macOS temporary paths may include /var, a symlink. Upload fixtures
+	// target ordinary physical paths; link handling has separate fixtures.
+	var err error
+	dir, err = filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	data := make([]byte, size)
 	if _, err := rand.Read(data); err != nil {
 		t.Fatal(err)
@@ -128,7 +139,10 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 		t.Fatalf("initial catalog: %+v %v", page, err)
 	}
 
-	source := t.TempDir()
+	source, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	fixtures := map[string][]byte{}
 	for name, size := range map[string]int{"empty.bin": 0, "small.txt": 1234, "exactly-one-chunk.bin": 4 << 20, "multi chunk ünïcode.bin": 9<<20 + 17} {
 		path, data := writeFixture(t, source, name, size)

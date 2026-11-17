@@ -2,9 +2,34 @@
 
 ServerSend provides private file storage and backup through an Unraid Docker server and a desktop application. Users can upload large batches in the background, retrieve selected files, connect to multiple independent servers, and use multiple devices. Optional private uploads are encrypted on the desktop so the server never receives plaintext contents or usable decryption keys.
 
-This is the implementation specification. Work is divided into dependency-ordered chunks in [Implementation tasks](implementation-tasks.md), which also records current implementation progress. The specification describes the intended product; only completed work should be treated as available functionality.
+This is the implementation specification. Remaining work is organized into prioritized features in [Implementation tasks](implementation-tasks.md), which records the current baseline, delivery order, dependencies and acceptance criteria. That feature roadmap supersedes the historical numbered chunks. The specification describes the intended product; only completed work should be treated as available functionality.
 
-Revisit this specification at every milestone boundary. A document this detailed drifts once implementation teaches real constraints (as happened with Talos and `rsc.io/2fa`); correct it deliberately at each boundary rather than letting the per-component documents and this plan disagree. The per-component documents in `docs` record implemented truth; this plan records intent.
+Revisit this specification at every feature acceptance boundary. A document this detailed drifts once implementation teaches real constraints (as happened with Talos and `rsc.io/2fa`); correct it deliberately at each boundary rather than letting the per-component documents and this plan disagree. The per-component documents in `docs` record implemented truth; this plan records intent.
+
+## Delivery priorities after the initial application
+
+As of 2026-11-17, the repository has an experimental end-to-end standard-file workflow: account onboarding, temporary sessions, sequential uploads, directories, verified downloads, permanent deletion and basic administration. Foundations and contract tests do not establish production reliability. The feature task document is the source of current implementation status; the sections below retain the full intended product specification.
+
+Implement in this priority order, respecting the explicit dependencies in the task document:
+
+1. Graceful cross-platform symlink handling: skip and report links without aborting uploads; unify file/folder behavior and verify native platforms.
+2. Measured performance and QUIC: small-file throughput and bounded resource use.
+3. Safe and recoverable storage: capacity, crash consistency and an initial backup/restore path.
+4. Stay signed in and control device access: secure credentials, refresh, revocation and browser session security.
+5. Persistent, resumable uploads: durable scanning, scheduling and recovery.
+6. Reliable browsing and resumable restores: pagination, folder downloads and destination safety.
+7. Accurate storage and transfer visibility: accounting, capacity and reconnectable events.
+8. Versions, trash and retention: recover mistakes and preserve concurrent edits.
+9. Private encrypted storage: optional vaults, encrypted transfers and clean-device recovery.
+10. Multiple servers and trusted routes: independent profiles, stable identity trust and LAN/tailnet switching.
+11. Complete account administration: resets, recovery, disablement and audit history.
+12. Supported deployment, backup and upgrades: actual Unraid qualification and complete recovery tooling.
+13. Background desktop operation: tray, sleep/wake and usable transfer controls.
+14. Desktop distribution and release qualification: installable clients and demonstrated acceptance on all required platforms.
+
+Priority is an order of delivery focus, not permission to postpone correctness prerequisites. Before freezing storage contracts, complete the private-format design prototype and small-file overhead measurements. Design profile/account scoping and stable server trust into persistent credentials from the start. Record storage accounting transitions when reservations and retention are introduced. Establish an initial consistent standard-data backup/restore path with storage safety, then extend it for vaults, retention and supported deployment. Native credential-store feasibility must be checked during persistent sign-in, not deferred to packaging.
+
+The first delivery focus is fixing upload interruption on symlinks with a consistent, visible skip policy. Performance measurement and QUIC on the existing standard-file workflow come next, followed by safe storage and persistent, resumable backup and restore. Extend performance qualification as private storage and multiple profiles become available; keep those later acceptance gates open. The full planned release still requires private storage, multiple servers, administration, performance, deployment and platform qualification. No feature is accepted solely because its happy path works.
 
 ## Scope and operating assumptions
 
@@ -81,7 +106,7 @@ Create folders when their first implementation needs them, rather than creating 
 
 Keep entry points thin. Separate transport handling, business rules, and persistence. Prefer files named for a responsibility such as `password_reset.go`, `upload_finalize.go`, or `queue_retry.go`; split a file when it mixes independent responsibilities. Avoid general-purpose `utils` packages and interfaces that merely duplicate every method of a concrete type. Shared protocol interfaces belong in `shared`; implementation-specific dependency interfaces belong near their consumer.
 
-Database repositories use a consistent convention: as repositories multiply beyond the initial account/upload/queue functions, group them behind a receiver type that carries the database handle and makes transaction scoping explicit, rather than accumulating package-level functions that each take `*sql.DB`. Adopt the receiver convention no later than the first chunk that adds a second repository family (chunk 05); converting the existing package-level functions is part of that change.
+Database repositories use a consistent convention: as repositories multiply beyond the initial account/upload/queue functions, group them behind a receiver type that carries the database handle and makes transaction scoping explicit, rather than accumulating package-level functions that each take `*sql.DB`. The receiver convention is established; retain it when adding repository families.
 
 Every implemented scenario includes tests in the same change: normal operation, invalid input, authorization, relevant boundaries, and failure/recovery behaviour. Keep Go unit tests beside their implementations, UI tests beside their features, and integration suites in the owning application's `tests` directory. Generated bindings are regenerated, not manually patched.
 
@@ -166,7 +191,7 @@ Downloads are resumable into local temporary files, verified, flushed, and renam
 
 Persist jobs before starting network work. Model states such as queued, scanning, running, paused, waiting for network, waiting for authentication, waiting for vault unlock, retry scheduled, complete, cancelled, and failed. State transitions and reasons are durable. One unavailable server must not block other profiles.
 
-Folder scans stream into the local database. Preserve relative hierarchy, empty directories, Unicode names, and zero-length files. Do not follow symlinks by default; report skipped links and unsupported special files. Define case collisions, reserved names, invalid destination characters, and path-length errors for each destination platform. Resolve paths safely and refuse traversal or symlink escape during downloads.
+Folder scans stream into the local database. Preserve relative hierarchy, empty directories, Unicode names, and zero-length files. The user approved skip-and-report on 2026-11-17: do not follow symlinks; skip and visibly report them and unsupported special files while continuing unrelated uploads. Show skipped counts and reviewable paths/reasons, distinguish “completed with skipped items” from a complete backup, and make all-skipped selections explicit. Apply the same policy to selected roots, direct file selections and recursive entries, including Windows directory redirections such as junctions. Distinguish skipped items from actual failures and guard against link replacement between discovery and source opening. Preserve ordinary hard-linked file contents without promising link-relationship preservation. Following link targets is outside the approved implementation scope and requires a separate future decision; the initial behavior does not store or restore link objects. Define case collisions, reserved names, invalid destination characters, and path-length errors for each destination platform. Resolve paths safely and refuse traversal or symlink escape during downloads.
 
 Detect deleted, unreadable, replaced, or changed source files before resuming and after reading. Restart changed files as new upload attempts; never combine chunks from different file generations. Ordinary portable checks cannot guarantee a consistent snapshot of an actively changing file. Report that limitation and require stable sources for a successful backup; filesystem snapshot integration is deferred.
 
@@ -228,7 +253,7 @@ Implement HTTPS/HTTP/2 first and add HTTP/3 through `quic-go` behind the same ty
 
 Probe QUIC with bounded timeouts, cache failures briefly, and fall back to verified HTTPS when UDP is unavailable. Preserve transfer identity across transport changes. Compare QUIC and HTTP/2 under LAN, direct tailnet, and relayed-tailnet conditions; adopt defaults based on measured useful throughput, CPU, memory, and fairness. QUIC is not an unconditional throughput guarantee.
 
-The small-file workload is a design risk, not only a tuning concern. Per-file request and metadata overhead at 100,000-file scale can invalidate a chunk-per-request API shape after it is frozen; the storage abstraction does not protect the public API from that outcome. Benchmark raw per-file request/metadata overhead over HTTP/2 (and HTTP/3 when available) on the target deployment hardware before chunk 11 freezes the manifest and chunk API, alongside the chunk 17 format prototype. A disposable measurement rig is sufficient; record the results in `docs`.
+The small-file workload is a design risk, not only a tuning concern. Per-file request and metadata overhead at 100,000-file scale can invalidate a chunk-per-request API shape after it is frozen; the storage abstraction does not protect the public API from that outcome. Benchmark raw per-file request/metadata overhead over HTTP/2 (and HTTP/3 when available) on the target deployment hardware before the Safe and recoverable storage feature freezes the manifest and chunk API, alongside the Private encrypted storage format prototype. A disposable measurement rig is sufficient; record the results in `docs`.
 
 Measure scanning, disk reads/writes, hashing, encryption, network transfer, and finalization independently. Start without compression or deduplication. Tune chunk size and worker counts with large-file and small-file workloads. Apply global and per-user limits so one batch cannot exhaust memory, disk handles, or bandwidth. Prioritize small-file throughput: benchmark bounded metadata batching and request reuse before increasing workers. If object packing is needed, preserve individual file retrieval, independent ownership and private-file boundaries. Include buffers, metadata, cryptographic KDFs, caches and frontend state in peak-memory measurements.
 
@@ -238,10 +263,10 @@ Publish upload/download rates as rolling bytes-per-second measurements, separate
 
 ## Verification and release gates
 
-Every task chunk includes tests and an observable acceptance result. Unit tests cover deterministic rules; integration tests use real SQLite and temporary filesystems; protocol tests exercise real TLS and both transports; UI tests exercise onboarding, queue controls, and error states. Use fake clocks for expiry/backoff and injectable filesystem/network faults for reproducible recovery. Test races with Go's race detector where supported and fuzz parsers, manifests, path validation, and authorization boundaries.
+Every feature includes tests and an observable acceptance result. Unit tests cover deterministic rules; integration tests use real SQLite and temporary filesystems; protocol tests exercise real TLS and both transports; UI tests exercise onboarding, queue controls, and error states. Use fake clocks for expiry/backoff and injectable filesystem/network faults for reproducible recovery. Test races with Go's race detector where supported and fuzz parsers, manifests, path validation, and authorization boundaries.
 
 Cross-component acceptance fixtures include two servers, two users on each, multiple devices for one user, colliding identifiers, and a server replacement attempt. Standard and private modes run through the same interrupted-upload/download scenarios. Assert that private plaintext canaries and keys never appear in server storage, logs, telemetry, or metadata responses.
 
 Release-scale qualification includes a real non-sparse file above 100 GiB, at least 100,000 small files, concurrent clients, a full staging/data filesystem, container restarts, desktop restarts, blocked UDP, corrupted objects, and a clean-device restore. These are qualification targets, not advertised hard limits. Run reduced equivalents in normal CI and record long-run hardware, dataset, throughput, memory, and failures. Set memory and performance budgets from measured hardware baselines before optimization is accepted.
 
-Completion requires passing component tests, shared contract tests, restore drills, and deployment checks; no chunk is complete merely because its happy path works. Test cases must describe supported and intentionally rejected scenarios rather than mirror private implementation details.
+Completion requires passing component tests, shared contract tests, restore drills, and deployment checks; no feature is complete merely because its happy path works. Test cases must describe supported and intentionally rejected scenarios rather than mirror private implementation details.

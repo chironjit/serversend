@@ -59,14 +59,14 @@ try {
   );
   const method = binding.match(/\$Call\.ByID\((\d+),/);
   assert.ok(method, 'Generated greeting binding missing');
-  const call = (args, extraHeaders = {}) =>
+  const call = (args, extraHeaders = {}, methodID = Number(method[1])) =>
     request('/wails/runtime', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Origin: origin, ...extraHeaders },
       body: JSON.stringify({
         object: 0,
         method: 0,
-        args: { 'call-id': crypto.randomUUID(), methodID: Number(method[1]), args },
+        args: { 'call-id': crypto.randomUUID(), methodID, args },
       }),
     });
   const greeting = await call(['Zoë 東京']);
@@ -74,6 +74,25 @@ try {
   assert.equal(await greeting.text(), 'Hello Zoë 東京!');
   assert.ok((await call([123])).status >= 400, 'Malformed bridge argument was accepted');
   assert.equal((await call(['Ada'], { Origin: 'https://untrusted.invalid' })).status, 403);
+
+  const transferBinding = await readFile(
+    new URL(
+      '../frontend/bindings/github.com/chironjit/serversend/apps/desktop/transferservice.ts',
+      import.meta.url,
+    ),
+    'utf8',
+  );
+  const batchesMethod = transferBinding.match(
+    /export function Batches\(\)[\s\S]*?\$Call\.ByID\((\d+)/,
+  );
+  assert.ok(batchesMethod, 'Generated upload-summary binding missing');
+  const batches = await call([], {}, Number(batchesMethod[1]));
+  assert.equal(batches.status, 200);
+  assert.deepEqual(
+    await batches.json(),
+    [],
+    'New desktop process should have no upload selections',
+  );
 
   const ws = new WebSocket(origin.replace('http:', 'ws:') + '/wails/events');
   try {
@@ -95,7 +114,7 @@ try {
     ws.close();
   }
   console.log(
-    'Scaffold smoke passed: embedded assets, generated Go binding, invalid input, origin guard, live events',
+    'Scaffold smoke passed: embedded assets, generated Go bindings, upload summaries, invalid input, origin guard, live events',
   );
 } finally {
   child.kill('SIGTERM');

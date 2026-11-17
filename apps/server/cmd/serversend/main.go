@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/chironjit/serversend/apps/server/internal/auth"
+	"github.com/chironjit/serversend/apps/server/internal/backup"
 	"github.com/chironjit/serversend/apps/server/internal/config"
 	"github.com/chironjit/serversend/apps/server/internal/database"
 	"github.com/chironjit/serversend/apps/server/internal/server"
@@ -31,6 +32,7 @@ func main() {
 func run(ctx context.Context, args []string, out io.Writer) error {
 	flags := flag.NewFlagSet("serversend", flag.ContinueOnError)
 	check := flags.Bool("check", false, "validate TLS, storage, and metadata without serving")
+	backupDirectory := flags.String("backup", "", "back up a stopped server into a new absolute `directory`, without serving")
 	bootstrap := flags.String("bootstrap-admin", "", "create the first administrator `username` and print its one-hour temporary password, without serving")
 	recoverBootstrap := flags.String("recover-bootstrap-admin", "", "reissue the temporary password for the sole not-yet-enrolled administrator `username`, without serving")
 	if err := flags.Parse(args); err != nil {
@@ -42,11 +44,24 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if flags.NArg() != 0 {
 		return errors.New("unexpected arguments; use serversend -help")
 	}
-	if *bootstrap != "" && *recoverBootstrap != "" || *check && *bootstrap+*recoverBootstrap != "" {
-		return errors.New("use only one of -check, -bootstrap-admin and -recover-bootstrap-admin")
+	actions := 0
+	for _, selected := range []bool{*check, *bootstrap != "", *recoverBootstrap != "", *backupDirectory != ""} {
+		if selected {
+			actions++
+		}
+	}
+	if actions > 1 {
+		return errors.New("use only one of -check, -bootstrap-admin, -recover-bootstrap-admin and -backup")
 	}
 	c, err := config.Load()
 	if err != nil {
+		return err
+	}
+	if *backupDirectory != "" {
+		if err := backup.Create(ctx, c, *backupDirectory); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(out, "Backup complete:", *backupDirectory)
 		return err
 	}
 	s, err := server.New(ctx, c)
@@ -70,7 +85,13 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	log.Printf("Server %s listening for HTTPS on %s", s.Identity().ID, listener.Addr())
 	log.Printf("Certificate fingerprint for desktop approval: %s", s.CertificateFingerprint())
-	return s.Serve(ctx, listener)
+	udp, err := net.ListenPacket("udp", c.UDPAddress)
+	if err != nil {
+		log.Printf("HTTP/3 unavailable; serving HTTP/2 fallback: listen UDP: %v", err)
+		return s.Serve(ctx, listener)
+	}
+	log.Printf("HTTP/3 listening on UDP %s", udp.LocalAddr())
+	return s.ServeTransports(ctx, listener, udp)
 }
 
 // issueAdministrator writes the temporary password only to the operator's

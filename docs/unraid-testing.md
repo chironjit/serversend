@@ -1,6 +1,6 @@
 # Unraid network testing
 
-Use TCP **58443** permanently, with a DHCP reservation for the Unraid LAN address. This is the ServerSend default, selected to avoid the commonly used 8443 port. Check that another container is not already using it. The desktop accepts a bare IP and supplies HTTPS and port 58443. An explicit port is still supported. Only TCP is implemented; there is no QUIC/UDP listener yet.
+Use TCP **58443** permanently, with a DHCP reservation for the Unraid LAN address. This is the ServerSend default, selected to avoid the commonly used 8443 port. Check that another container is not already using it. The desktop accepts a bare IP and supplies HTTPS and port 58443. An explicit port is still supported. The server also listens on UDP 58443 for HTTP/3 evaluation; the desktop continues to prefer HTTP/2. See [transport measurements](performance-baseline.md). Actual Unraid/Tailscale UDP reachability remains unverified.
 
 This image uses Debian Bookworm slim and runs as UID/GID 10001.
 
@@ -38,6 +38,7 @@ Add a container (enable Advanced View where needed):
 | Network type | Bridge |
 | WebUI | `https://[IP]:[PORT:58443]/admin/` |
 | Port | Host `58443`, container `58443`, TCP |
+| Port for HTTP/3 evaluation | Host `58443`, container `58443`, UDP |
 | Path | `/mnt/user/appdata/serversend/config` → `/config`, read/write |
 | Path | `/mnt/user/serversend/data` → `/data`, read/write |
 | Path | `/mnt/user/serversend/staging` → `/staging`, read/write |
@@ -89,10 +90,16 @@ docker compose --env-file serversend.env -f compose.unraid.yaml up -d --force-re
 
 Do not bootstrap again, delete the host folders, or change the mappings. `/config` holds SQLite accounts/settings/metadata, server identity, TLS certificates and the TOTP protection key; `/data` holds uploaded objects; `/staging` is reserved for staging. The deployment template or env file persists listener/certificate-IP settings outside the image. Schema migrations apply automatically; make a stopped-container backup of all three paths and the deployment settings before upgrading. Preserve the complete config directory, especially its keys. Restore matching metadata and objects together. Downgrading an image after a schema migration is not supported without restoring the matching backup.
 
+The initial `serversend -backup DIR` command captures a consistent stopped-server snapshot, including committed SQLite WAL data, config keys, objects and staging. See [backup/restore instructions](backup-restore.md). Native locks now refuse a second process sharing any deployment volume; stop the serving process before bootstrap, recovery, `-check` or backup. Do not delete live `.serversend.lock` files. These local-lock and backup tests still require actual Unraid pool/array qualification.
+
 ## Measure actual throughput
 
 Upload a stable multi-gigabyte file, then download it to a different local directory. The desktop shows upload/download rates and a rolling 60-second chart. These are useful acknowledged/verified bytes per second, including network, disk and verification costs; chunk acknowledgements cause bursts. Source hashing before upload is preparation and does not count as transferred bytes. Compare the restored file's hash with the original.
 
-Then upload a folder containing nested folders, empty folders and many small files. Choose the destination by opening a server folder first. The selected source folder is created beneath it. Duplicate folder names return an error; choose another destination or rename the source. Symlinks and special files are rejected, with previously queued files and created directories retained. Transfers are sequential, not resumable, and not persisted across desktop restarts. The catalog currently shows at most 1000 entries per folder; large-scale pagination and queue persistence remain follow-up work. Desktop sign-in must be repeated after an app restart, but server setup and user enrollment persist.
+Then upload a folder containing nested folders, empty folders and many small files. Choose the destination by opening a server folder first. The selected source folder is created beneath it. Duplicate folder names return an error; choose another destination or rename the source. The skip-and-report implementation is described below; Linux backend tests pass, while native picker/Windows/macOS qualification remains pending. Transfers are sequential, not resumable, and not persisted across desktop restarts. The catalog currently shows at most 1000 entries per folder; large-scale pagination and queue persistence remain follow-up work. Desktop sign-in must be repeated after an app restart, but server setup and user enrollment persist.
 
 Older development images used Ed25519 HTTPS certificates that Firefox cannot negotiate. New images use ECDSA P-256. Existing deployments retain their original certificates until explicitly migrated; see [Firefox certificate compatibility](server-development.md#firefox-certificate-compatibility) before moving TLS files. This is separate from the normal private-CA trust warning.
+
+## Link-handling implementation and remaining gates
+
+The user approved skip-and-report and the `golang.org/x/sys` filesystem integration on 2026-11-17 as [feature 1](implementation-tasks.md#1-graceful-cross-platform-symlink-handling). The implementation skips links, directory redirections and unsupported special files and reports bounded path/reason details with exact counts. It distinguishes completion with skips, an entirely skipped selection and genuine failure. Source opening refuses link-bearing ancestors too, including `/tmp` and `/var` aliases on macOS; explicitly select the real path if needed. A native picker may resolve a link before returning it, so the application can enforce its policy only on the supplied path. Linux runtime/race and UI checks pass. Actual picker behavior, Windows reparse/cloud fixtures and native Windows/macOS execution remain open gates. Following targets is outside the approved fix.

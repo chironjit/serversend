@@ -21,6 +21,7 @@ import (
 
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/client"
+	"github.com/chironjit/serversend/shared/source"
 )
 
 // Step tells the frontend which screen follows; it carries no credential.
@@ -47,11 +48,12 @@ type File struct {
 
 // Item is one upload or download as shown in the transfer list.
 type Item struct {
+	BatchID   int     `json:"batchId"`
 	Speed     float64 `json:"speed"`
 	ID        int     `json:"id"`
 	Name      string  `json:"name"`
 	Direction string  `json:"direction"` // "upload" or "download"
-	State     string  `json:"state"`     // "queued", "active", "done" or "failed"
+	State     string  `json:"state"`     // "queued", "active", "done", "skipped" or "failed"
 	Done      int64   `json:"done"`
 	Total     int64   `json:"total"`
 	Error     string  `json:"error"`
@@ -77,6 +79,8 @@ type Manager struct {
 	catalog   map[string]api.CatalogEntry
 	items     []Item
 	queue     chan job
+	batches   map[int]*Batch
+	nextBatch int
 }
 
 // New starts one worker, so transfers run in order and memory stays bounded
@@ -126,7 +130,8 @@ func (m *Manager) Probe(ctx context.Context, origin string) (client.ServerProbe,
 	return probe, nil
 }
 
-// Approve pins exactly the certificate the last Probe displayed.
+// Approve pins exactly the certificate the last Probe displayed. New clients
+// try HTTP/3 first on every connection, with HTTP/2 only as fallback.
 func (m *Manager) Approve(fingerprint string) error {
 	if err := m.idle(); err != nil {
 		return err
@@ -311,6 +316,7 @@ func (m *Manager) enqueue(j job) error {
 	m.mu.Lock()
 	j.item.ID, j.item.State = len(m.items)+1, "queued"
 	m.items = append(m.items, j.item)
+	m.queuedLocked(j.item.BatchID)
 	m.mu.Unlock()
 	m.emit(j.item)
 	select {
@@ -320,18 +326,38 @@ func (m *Manager) enqueue(j job) error {
 		m.update(j.item.ID, func(item *Item) {
 			item.State, item.Error = "failed", "Too many transfers are waiting; try again when some finish"
 		})
+		m.finishFile(j.item.BatchID, errors.New("too many transfers are waiting"))
 		return errors.New("too many transfers are waiting")
 	}
 }
 
 // Upload queues local files. Each is published as a new file on the server.
-func (m *Manager) Upload(paths []string, parent string) error {
+func (m *Manager) Upload(paths []string, parent string) (err error) {
 	c, err := m.current()
 	if err != nil {
 		return err
 	}
+	batchID := m.startBatch("Selected files")
+	defer func() { m.endScan(batchID, err) }()
 	for _, path := range paths {
-		if err := m.enqueue(job{client: c, parent: protocol.ID(parent), path: path, item: Item{Name: filepath.Base(path), Direction: "upload"}}); err != nil {
+		f, openErr := source.Open(path)
+		if skip, ok := source.Skipped(openErr); ok {
+			m.skip(batchID, skip)
+			continue
+		}
+		if openErr != nil {
+			return openErr
+		}
+		info, statErr := f.Stat()
+		f.Close()
+		if statErr != nil {
+			return statErr
+		}
+		if info.IsDir() {
+			m.skip(batchID, &source.SkipError{Path: path, Reason: "Directory skipped; use Upload folder to preserve its contents"})
+			continue
+		}
+		if err := m.enqueue(job{client: c, parent: protocol.ID(parent), path: path, item: Item{BatchID: batchID, Name: filepath.Base(path), Direction: "upload"}}); err != nil {
 			return err
 		}
 	}
@@ -415,8 +441,14 @@ func (m *Manager) run(ctx context.Context, j job) {
 		item.State = "done"
 		if err != nil {
 			item.State, item.Error = "failed", message(err).Error()
+			if _, ok := source.Skipped(err); ok {
+				item.State = "skipped"
+			}
 		}
 	})
+	if j.item.Direction == "upload" {
+		m.finishFile(j.item.BatchID, err)
+	}
 }
 
 func sortFiles(files []File) {
@@ -431,6 +463,11 @@ func sortFiles(files []File) {
 func (m *Manager) idle() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, batch := range m.batches {
+		if batch.scanning || batch.pending > 0 {
+			return errors.New("wait for transfers to finish before changing accounts or servers")
+		}
+	}
 	for _, item := range m.items {
 		if item.State == "queued" || item.State == "active" {
 			return errors.New("wait for transfers to finish before changing accounts or servers")

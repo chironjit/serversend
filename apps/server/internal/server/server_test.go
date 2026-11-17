@@ -24,7 +24,7 @@ import (
 	"github.com/chironjit/serversend/shared/api"
 )
 
-func fixture(t *testing.T) config.Config {
+func fixture(t testing.TB) config.Config {
 	t.Helper()
 	c := config.Defaults()
 	root := t.TempDir()
@@ -39,7 +39,7 @@ func fixture(t *testing.T) config.Config {
 	return c
 }
 
-func writeCertificate(t *testing.T, c config.Config, change func(*x509.Certificate)) {
+func writeCertificate(t testing.TB, c config.Config, change func(*x509.Certificate)) {
 	t.Helper()
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

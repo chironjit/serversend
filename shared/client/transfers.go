@@ -16,6 +16,7 @@ import (
 
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
+	"github.com/chironjit/serversend/shared/source"
 )
 
 // ErrSourceChanged means the file was modified while it was being uploaded.
@@ -46,15 +47,8 @@ func (c *Client) UploadTo(ctx context.Context, path string, parent protocol.ID, 
 	if !signedIn {
 		return api.FinalizeResult{}, api.Error{Code: api.AuthenticationRequired, Message: "Sign in before uploading"}
 	}
-	limits, err := c.transferLimits(ctx)
-	if err != nil {
-		return api.FinalizeResult{}, err
-	}
 	name := filepath.Base(path)
-	if err := protocol.ValidateName(name); err != nil {
-		return api.FinalizeResult{}, fmt.Errorf("%q cannot be used as a file name on the server", name)
-	}
-	file, err := os.Open(path)
+	file, err := source.Open(path)
 	if err != nil {
 		return api.FinalizeResult{}, err
 	}
@@ -64,22 +58,37 @@ func (c *Client) UploadTo(ctx context.Context, path string, parent protocol.ID, 
 		return api.FinalizeResult{}, err
 	}
 	if !info.Mode().IsRegular() {
-		return api.FinalizeResult{}, fmt.Errorf("%q is not a regular file; folders are not supported yet", name)
+		return api.FinalizeResult{}, &source.SkipError{Path: path, Reason: "Directory skipped; use Upload folder to preserve its contents"}
+	}
+	if err := protocol.ValidateName(name); err != nil {
+		return api.FinalizeResult{}, fmt.Errorf("%q cannot be used as a file name on the server", name)
+	}
+	limits, err := c.transferLimits(ctx)
+	if err != nil {
+		return api.FinalizeResult{}, err
 	}
 	chunkBytes := min(max(int64(preferredChunkBytes), limits.MinChunkBytes), limits.MaxChunkBytes)
 	if info.Size()/chunkBytes >= limits.MaxChunks/2 || info.Size()/chunkBytes > limits.MaxManifestBytes/128 {
 		chunkBytes = limits.MaxChunkBytes
 	}
-	buffer := make([]byte, chunkBytes)
+	// A small file needs only its own bytes, rather than a full chunk-sized
+	// allocation. Keep one byte for the final growth check on empty files.
+	buffer := make([]byte, min(chunkBytes, max(info.Size(), 1)))
 
 	manifest := protocol.Manifest{SchemaVersion: protocol.ManifestVersion1, Scope: protocol.Scope{ServerID: account.ServerID, AccountID: account.AccountID},
 		FileID: randomID(), VersionID: randomID(), Mode: protocol.Standard, Chunks: []protocol.Chunk{}, Standard: &protocol.StandardMetadata{Name: name}}
 	for {
 		n, err := io.ReadFull(file, buffer)
 		if n > 0 {
+			if int64(n) > info.Size()-manifest.TotalBytes {
+				return api.FinalizeResult{}, ErrSourceChanged
+			}
 			sum := sha256.Sum256(buffer[:n])
 			manifest.Chunks = append(manifest.Chunks, protocol.Chunk{Index: int64(len(manifest.Chunks)), Bytes: int64(n), SHA256: protocol.Digest(hex.EncodeToString(sum[:]))})
 			manifest.TotalBytes += int64(n)
+			if int64(len(manifest.Chunks)) > limits.MaxChunks {
+				return api.FinalizeResult{}, fmt.Errorf("%q is larger than this server version accepts", name)
+			}
 		}
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
 			break
@@ -90,6 +99,13 @@ func (c *Client) UploadTo(ctx context.Context, path string, parent protocol.ID, 
 		if err := ctx.Err(); err != nil {
 			return api.FinalizeResult{}, err
 		}
+	}
+	currentInfo, err := file.Stat()
+	if err != nil {
+		return api.FinalizeResult{}, err
+	}
+	if manifest.TotalBytes != info.Size() || currentInfo.Size() != info.Size() || !currentInfo.ModTime().Equal(info.ModTime()) {
+		return api.FinalizeResult{}, ErrSourceChanged
 	}
 	body, err := json.Marshal(manifest)
 	if err != nil {

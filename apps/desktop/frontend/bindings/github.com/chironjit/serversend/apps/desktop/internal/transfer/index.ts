@@ -3,8 +3,10 @@
 
 export type {
     Account,
+    Batch,
     Enrollment,
     File,
     Item,
+    SkippedItem,
     Step
 } from "./models.js";

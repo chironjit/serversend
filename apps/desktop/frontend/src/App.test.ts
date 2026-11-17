@@ -14,6 +14,7 @@ const bridge = vi.hoisted(() => ({
     ConfirmEnrollment: vi.fn<(code: string) => Promise<string[] | null>>(),
     CompleteSignIn: vi.fn<(code: string) => Promise<unknown>>(),
     SignOut: vi.fn<() => Promise<void>>(),
+    Batches: vi.fn<() => Promise<unknown[] | null>>(),
     Files:
       vi.fn<
         (parent: string) => Promise<{ id: string; name: string; directory?: boolean }[] | null>
@@ -55,6 +56,7 @@ describe('desktop transfer slice', () => {
       publicly_trusted: false,
     });
     bridge.service.Approve.mockResolvedValue();
+    bridge.service.Batches.mockResolvedValue([]);
     bridge.service.Files.mockResolvedValue([{ id: 'f1', name: 'report.txt' }]);
     bridge.service.ChooseAndUpload.mockResolvedValue(1);
     bridge.service.ChooseAndDownload.mockResolvedValue(true);
@@ -229,6 +231,180 @@ describe('desktop transfer slice', () => {
     await flushPromises();
     expect(bridge.service.Files).toHaveBeenLastCalledWith('');
     expect(wrapper.get('.breadcrumbs').text()).not.toContain('Photos');
+    wrapper.unmount();
+  });
+
+  it('reports mixed and all-skipped selections with bounded, reviewable reasons', async () => {
+    bridge.service.SignIn.mockResolvedValue({ next: 'second_factor' });
+    bridge.service.CompleteSignIn.mockResolvedValue({
+      username: 'alice',
+      origin: 'https://server.test',
+      serverId: 's',
+    });
+    bridge.service.Batches.mockResolvedValue([
+      {
+        id: 1,
+        name: 'Documents',
+        state: 'done_with_skips',
+        files: 2,
+        completed: 2,
+        failed: 0,
+        directories: 3,
+        skipped: 103,
+        skippedItems: Array.from({ length: 100 }, (_, index) => ({
+          path: `/Documents/link-${index}`,
+          reason: 'Symbolic link; select the real target to upload it.',
+        })),
+        error: '',
+      },
+      {
+        id: 2,
+        name: 'shortcut',
+        state: 'all_skipped',
+        files: 0,
+        completed: 0,
+        failed: 0,
+        directories: 0,
+        skipped: 1,
+        skippedItems: [
+          { path: '/shortcut', reason: 'Symbolic link; select the real target to upload it.' },
+        ],
+        error: '',
+      },
+    ]);
+    const wrapper = mount(App);
+    await submit(wrapper);
+    await wrapper.find('button').trigger('click');
+    await flushPromises();
+    await submit(wrapper);
+    await submit(wrapper);
+    const selections = wrapper.get('[aria-label="Upload selections"]');
+    expect(selections.text()).toContain('Completed with skipped items');
+    expect(selections.text()).toContain(
+      '2 of 2 files uploaded · 3 folders created · 103 skipped · 0 failed',
+    );
+    expect(selections.text()).toContain('Zero files uploaded. Every selected item was skipped.');
+    expect(selections.text()).toContain('Showing 100 of 103 skipped paths');
+    expect(selections.findAll('details')).toHaveLength(2);
+    expect(selections.findAll('[aria-label="Skipped paths and reasons"] li')).toHaveLength(101);
+    expect(selections.text()).toContain('/Documents/link-99');
+    expect(selections.text()).toContain("Select a link's real target");
+    expect(wrapper.find('progress').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('refreshes selection outcomes after a failed scan and keeps failures distinct from skips', async () => {
+    bridge.service.SignIn.mockResolvedValue({ next: 'second_factor' });
+    bridge.service.CompleteSignIn.mockResolvedValue({
+      username: 'alice',
+      origin: 'https://server.test',
+      serverId: 's',
+    });
+    const wrapper = mount(App);
+    await submit(wrapper);
+    await wrapper.find('button').trigger('click');
+    await flushPromises();
+    await submit(wrapper);
+    await submit(wrapper);
+    bridge.service.Batches.mockResolvedValue([
+      {
+        id: 1,
+        name: 'Unreadable folder',
+        state: 'failed',
+        files: 1,
+        completed: 1,
+        failed: 0,
+        directories: 1,
+        skipped: 1,
+        skippedItems: [{ path: '/folder/link', reason: 'Symbolic link' }],
+        error: 'Read directory: permission denied',
+      },
+    ]);
+    bridge.service.ChooseAndUploadFolder.mockRejectedValueOnce(
+      new Error('Read directory: permission denied'),
+    );
+    await wrapper.get('.upload-menu > button').trigger('click');
+    await wrapper.get('.upload-options').findAll('button')[1]!.trigger('click');
+    await flushPromises();
+    const selections = wrapper.get('[aria-label="Upload selections"]');
+    expect(selections.text()).toContain('Failed');
+    expect(selections.text()).toContain('Read directory: permission denied');
+    expect(selections.text()).not.toContain('Completed with skipped items');
+    expect(wrapper.get('[role="alert"]').text()).toContain('Read directory: permission denied');
+    expect(wrapper.get('.upload-menu > button').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('offers retry when upload summaries cannot be read', async () => {
+    bridge.service.SignIn.mockResolvedValue({ next: 'second_factor' });
+    bridge.service.CompleteSignIn.mockResolvedValue({
+      username: 'alice',
+      origin: 'https://server.test',
+      serverId: 's',
+    });
+    bridge.service.Batches.mockRejectedValueOnce(new Error('Summary unavailable'));
+    const wrapper = mount(App);
+    await submit(wrapper);
+    await wrapper.find('button').trigger('click');
+    await flushPromises();
+    await submit(wrapper);
+    await submit(wrapper);
+    expect(wrapper.get('[aria-label="Upload selections"]').text()).toContain(
+      'Upload summaries unavailable: Summary unavailable',
+    );
+    await wrapper.get('[aria-label="Upload selections"] button').trigger('click');
+    await flushPromises();
+    expect(wrapper.get('[aria-label="Upload selections"]').text()).not.toContain(
+      'Upload summaries unavailable',
+    );
+    wrapper.unmount();
+  });
+
+  it('bounds finished transfer history while retaining current work', async () => {
+    bridge.service.SignIn.mockResolvedValue({ next: 'second_factor' });
+    bridge.service.CompleteSignIn.mockResolvedValue({
+      username: 'alice',
+      origin: 'https://server.test',
+      serverId: 's',
+    });
+    const wrapper = mount(App);
+    await submit(wrapper);
+    await wrapper.find('button').trigger('click');
+    await flushPromises();
+    await submit(wrapper);
+    await submit(wrapper);
+    bridge.listener?.({
+      data: {
+        id: 1,
+        name: 'still running',
+        direction: 'download',
+        state: 'active',
+        done: 1,
+        total: 100,
+        speed: 1,
+        error: '',
+      },
+    });
+    for (let id = 2; id < 503; id += 1) {
+      bridge.listener?.({
+        data: {
+          id,
+          name: `finished-${id}`,
+          direction: 'download',
+          state: 'done',
+          done: 1,
+          total: 1,
+          speed: 0,
+          error: '',
+        },
+      });
+    }
+    await flushPromises();
+    const queue = wrapper.get('[aria-label="Transfer queue"]');
+    expect(queue.findAll(':scope > li')).toHaveLength(501);
+    expect(queue.text()).toContain('still running');
+    expect(queue.text()).toContain('finished-502');
+    expect(queue.findAll('span.min-w-0').map((name) => name.text())).not.toContain('finished-2');
     wrapper.unmount();
   });
 

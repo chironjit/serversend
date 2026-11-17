@@ -22,6 +22,13 @@ export function Approve(fingerprint: string): $CancellablePromise<void> {
     return $Call.ByID(2096377435, fingerprint);
 }
 
+/**
+ * Batches returns bounded summaries of recent upload selections, including skipped paths.
+ */
+export function Batches(): $CancellablePromise<transfer$0.Batch[] | null> {
+    return $Call.ByID(1300059798);
+}
+
 export function BeginEnrollment(): $CancellablePromise<transfer$0.Enrollment> {
     return $Call.ByID(3479054327);
 }
@@ -36,7 +43,8 @@ export function ChooseAndDownload(fileID: string): $CancellablePromise<boolean> 
 
 /**
  * ChooseAndUpload opens the native file picker and queues the selection. It
- * returns how many files were queued; cancelling the dialog queues none.
+ * returns how many paths were selected; links and unsupported files are reported
+ * in Batches rather than uploaded. Cancelling the dialog queues none.
  */
 export function ChooseAndUpload(parent: string): $CancellablePromise<number> {
     return $Call.ByID(2242352341, parent);

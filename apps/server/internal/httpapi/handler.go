@@ -76,7 +76,11 @@ func New(ready func(context.Context) error, settings ...Option) http.Handler {
 				Status string `json:"status"`
 			}{"ready"})
 		case api.BasePath + "/capabilities":
-			writeJSON(w, r, http.StatusOK, Capabilities())
+			capabilities := Capabilities()
+			if opts.http3 {
+				capabilities.Transports = append(capabilities.Transports, api.HTTP3)
+			}
+			writeJSON(w, r, http.StatusOK, capabilities)
 		default:
 			writeError(w, r, http.StatusNotFound, api.NotFound, "Endpoint not found")
 		}

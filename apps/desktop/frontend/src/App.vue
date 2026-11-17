@@ -25,6 +25,7 @@ import {
 import { TransferService } from '../bindings/github.com/chironjit/serversend/apps/desktop';
 import type {
   Account,
+  Batch,
   File,
   Item,
 } from '../bindings/github.com/chironjit/serversend/apps/desktop/internal/transfer/models';
@@ -125,10 +126,59 @@ const uploadMenu = ref(false);
 const uploadFolder = () =>
   attempt(async () => {
     uploadMenu.value = false;
-    await TransferService.ChooseAndUploadFolder(parent.value);
+    try {
+      await TransferService.ChooseAndUploadFolder(parent.value);
+    } finally {
+      await refreshBatches();
+    }
     files.value = (await TransferService.Files(parent.value)) ?? [];
   });
 const transfers = ref<Item[]>([]);
+const batches = ref<Batch[]>([]);
+const batchError = ref('');
+let batchTimer: ReturnType<typeof setInterval> | undefined;
+let fetchingBatches = false;
+let pendingBatchRefresh = false;
+const recentBatches = computed(() => batches.value.toReversed());
+const batchStateLabel: Record<string, string> = {
+  scanning: 'Scanning',
+  running: 'Uploading',
+  done: 'Completed',
+  done_with_skips: 'Completed with skipped items',
+  all_skipped: 'Nothing uploaded',
+  failed: 'Failed',
+};
+const batchStateTone: Record<string, 'primary' | 'neutral' | 'success' | 'warning' | 'danger'> = {
+  scanning: 'primary',
+  running: 'primary',
+  done: 'success',
+  done_with_skips: 'warning',
+  all_skipped: 'warning',
+  failed: 'danger',
+};
+async function refreshBatches() {
+  if (view.value !== 'files') return;
+  if (fetchingBatches) {
+    pendingBatchRefresh = true;
+    return;
+  }
+  fetchingBatches = true;
+  try {
+    const list = await TransferService.Batches();
+    if (view.value === 'files') {
+      batches.value = (list ?? []).slice(-100);
+      batchError.value = '';
+    }
+  } catch (reason) {
+    batchError.value = failure(reason);
+  } finally {
+    fetchingBatches = false;
+    if (pendingBatchRefresh) {
+      pendingBatchRefresh = false;
+      void refreshBatches();
+    }
+  }
+}
 const theme = ref<Theme>('system');
 let stopEvents: (() => void) | undefined;
 
@@ -139,17 +189,19 @@ const recentTransfers = computed(() => transfers.value.toReversed());
 const activeCount = computed(
   () => transfers.value.filter((t) => t.state === 'active' || t.state === 'queued').length,
 );
-const stateTone: Record<string, 'primary' | 'neutral' | 'success' | 'danger'> = {
+const stateTone: Record<string, 'primary' | 'neutral' | 'success' | 'warning' | 'danger'> = {
   active: 'primary',
   queued: 'neutral',
   done: 'success',
   failed: 'danger',
+  skipped: 'warning',
 };
 const stateLabel: Record<string, string> = {
   active: 'Active',
   queued: 'Queued',
   done: 'Done',
   failed: 'Failed',
+  skipped: 'Skipped',
 };
 
 function failure(reason: unknown): string {
@@ -223,6 +275,7 @@ const completeSignIn = () =>
     code.value = '';
     recoveryCodes.value = [];
     view.value = 'files';
+    await refreshBatches();
     files.value = (await TransferService.Files(parent.value)) ?? [];
   });
 
@@ -234,7 +287,11 @@ const refresh = () =>
 const upload = () =>
   attempt(async () => {
     uploadMenu.value = false;
-    await TransferService.ChooseAndUpload(parent.value);
+    try {
+      await TransferService.ChooseAndUpload(parent.value);
+    } finally {
+      await refreshBatches();
+    }
     files.value = (await TransferService.Files(parent.value)) ?? [];
   });
 
@@ -249,6 +306,8 @@ const signOut = () =>
     account.value = undefined;
     folders.value = [];
     files.value = [];
+    batches.value = [];
+    batchError.value = '';
     view.value = 'password';
   });
 
@@ -270,7 +329,7 @@ function size(bytes: number): string {
 }
 
 function status(item: Item): string {
-  if (item.state === 'failed') return item.error;
+  if (item.state === 'failed' || item.state === 'skipped') return item.error;
   if (item.state === 'queued') return 'Waiting';
   if (item.state === 'done') return `Done · ${size(item.total)}`;
   return `${size(item.done)} of ${size(item.total)} · ${size(item.speed ?? 0)}/s`;
@@ -282,6 +341,19 @@ function onTransfer(item: Item) {
     transfers.value.push(item);
     samples.set(item.id, { done: 0, time: performance.now(), direction: item.direction });
   } else transfers.value[index] = item;
+  // Keep all current work and only the latest 500 finished rows. Source scans
+  // may contain arbitrarily many files; the window need not retain them all.
+  let finished = transfers.value.filter(
+    (entry) => entry.state !== 'active' && entry.state !== 'queued',
+  ).length;
+  if (finished > 500) {
+    transfers.value = transfers.value.filter((entry) => {
+      if (finished <= 500 || entry.state === 'active' || entry.state === 'queued') return true;
+      finished -= 1;
+      samples.delete(entry.id);
+      return false;
+    });
+  }
   if (item.state === 'done' && item.direction === 'upload' && view.value === 'files') {
     void TransferService.Files(parent.value)
       .then((list) => {
@@ -313,11 +385,20 @@ onMounted(() => {
   }
   applyTheme(saved === 'light' || saved === 'dark' ? saved : 'system');
   rateTimer = setInterval(sampleRates, 1000);
+  batchTimer = setInterval(() => {
+    if (
+      busy.value ||
+      batches.value.some((batch) => batch.state === 'scanning' || batch.state === 'running')
+    ) {
+      void refreshBatches();
+    }
+  }, 1000);
   stopEvents = Events.On('transfer', (event: { data: Item }) => onTransfer(event.data));
 });
 onUnmounted(() => {
   stopEvents?.();
   clearInterval(rateTimer);
+  clearInterval(batchTimer);
 });
 </script>
 
@@ -841,6 +922,85 @@ onUnmounted(() => {
               Acknowledged/verified bytes per second; includes disk and verification time.
             </p>
           </div>
+          <section class="border-border mt-4 border-t px-5 py-4" aria-label="Upload selections">
+            <h3 class="m-0 text-sm font-semibold">Upload selections</h3>
+            <p class="text-muted-foreground m-0 mt-1 text-xs leading-5">
+              Links and unsupported files are skipped. Select a link's real target to upload its
+              contents. The latest 100 selections and up to 100 skipped paths per selection are
+              shown here.
+            </p>
+            <div v-if="batchError" class="mt-3" role="alert">
+              <p class="text-destructive m-0 text-xs">
+                Upload summaries unavailable: {{ batchError }}
+              </p>
+              <UiButton variant="ghost" size="sm" @click="refreshBatches">Retry summaries</UiButton>
+            </div>
+            <ul
+              v-if="batches.length"
+              class="m-0 mt-3 grid max-h-80 list-none gap-3 overflow-y-auto p-0"
+              tabindex="0"
+              aria-label="Recent upload selections"
+            >
+              <li
+                v-for="batch in recentBatches"
+                :key="batch.id"
+                class="border-border rounded-lg border p-3"
+              >
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="min-w-0 flex-1 wrap-anywhere text-sm font-medium">{{
+                    batch.name
+                  }}</span>
+                  <UiBadge :tone="batchStateTone[batch.state] ?? 'neutral'">{{
+                    batchStateLabel[batch.state] ?? batch.state
+                  }}</UiBadge>
+                </div>
+                <p class="text-muted-foreground m-0 mt-2 text-xs leading-5" role="status">
+                  {{ batch.completed }} of {{ batch.files }} files uploaded ·
+                  {{ batch.directories }} folders created · {{ batch.skipped }} skipped ·
+                  {{ batch.failed }} failed
+                </p>
+                <p
+                  v-if="batch.state === 'all_skipped'"
+                  class="text-warning m-0 mt-1 text-xs leading-5"
+                >
+                  Zero files uploaded. Every selected item was skipped.
+                </p>
+                <p
+                  v-if="batch.error"
+                  class="text-destructive m-0 mt-1 wrap-anywhere text-xs leading-5"
+                >
+                  {{ batch.error }}
+                </p>
+                <details v-if="batch.skipped > 0" class="mt-2 text-xs">
+                  <summary class="text-foreground cursor-pointer rounded-sm py-1 font-medium">
+                    Review skipped items ({{ batch.skipped }})
+                  </summary>
+                  <ul
+                    class="m-0 mt-1 grid list-none gap-2 p-0"
+                    aria-label="Skipped paths and reasons"
+                  >
+                    <li
+                      v-for="(skipped, index) in (batch.skippedItems ?? []).slice(0, 100)"
+                      :key="index"
+                      class="grid gap-0.5"
+                    >
+                      <span class="wrap-anywhere font-mono">{{ skipped.path }}</span>
+                      <span class="text-muted-foreground wrap-anywhere leading-5">{{
+                        skipped.reason
+                      }}</span>
+                    </li>
+                  </ul>
+                  <p
+                    v-if="batch.skipped > (batch.skippedItems?.length ?? 0)"
+                    class="text-muted-foreground m-0 mt-2 leading-5"
+                  >
+                    Showing {{ Math.min(100, batch.skippedItems?.length ?? 0) }} of
+                    {{ batch.skipped }} skipped paths. The total includes every skipped item.
+                  </p>
+                </details>
+              </li>
+            </ul>
+          </section>
           <UiEmpty v-if="transfers.length === 0" title="No transfers yet">
             <template #icon><ArrowLeftRight /></template>
             Uploads and downloads from this session appear here.

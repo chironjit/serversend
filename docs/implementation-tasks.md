@@ -1,387 +1,299 @@
-# ServerSend implementation tasks
+# ServerSend feature implementation tasks
 
-Implement the architecture in [Implementation plan](implementation-plan.md) in small reviewable changes. Dependencies indicate work that must be complete before a chunk can be accepted; interface exploration can happen earlier. Split an oversized chunk into smaller changes while retaining its acceptance tests.
+This is the active delivery roadmap, reorganized on 2026-11-17 around features in priority order. It supersedes the [historical chunk checklist](implementation-tasks-archive.md). The [implementation plan](implementation-plan.md) remains the full product specification. Earlier component documents and verification rows may still cite historical chunk numbers; the mapping below preserves their meaning.
 
-## Current progress
+## Current baseline
 
-| Chunk | Status | Implemented slice and remaining work |
-| --- | --- | --- |
-| 01 | In progress | Local workspace/layout checks, Oxc lint/check/format tools, Vue tests, Go tests, native Linux build, binding regeneration and live scaffold smoke checks pass, including a clean Git checkout of the source snapshot. The reviewed CI workflow is activated at `.github/workflows/check.yml` (2026-11-16); hosted Windows/macOS runs are pending the first push. Unused iOS/Android scaffold assets were removed. See [desktop development](desktop-development.md). |
-| 02 | Complete (contracts) | Versioned wire types, scoped identifiers, lifecycle validation, TLS-bound signed identity proofs, pagination, upload/manifest/catalog/event contracts, fifteen JSON fixtures and the requirement-to-test map are implemented and locally checked. Runtime handlers remain in their owning later chunks. See [protocol foundation](protocol-foundation.md). |
-| 03 | Platform verification pending | Initial server account/upload/storage and desktop profile/queue schemas and repositories, private opening policy, transaction helpers, metadata snapshots, deterministic fault fixtures and Linux acceptance checks are implemented. Windows/macOS native CGO qualification remains; the activated CI matrix covers it once hosted runs execute. See [SQLite foundation](sqlite-foundation.md). |
-| 04 | In progress | TLS-only process, automatic private IPv4 certificates/renewal, persistent Ed25519 identity, storage checks, health/readiness/capability endpoints, graceful shutdown and non-root container image/Compose example are implemented. An embedded Vue admin shell with readiness and persisted Light/Dark/System themes is implemented; its 24 UI tests pass. The user approved `@tailwindcss/vite` on 2026-11-16; production CSS and server checks now pass. Updated container validation remains. Full deployment qualification and the persistence dependency gates remain. See [server development](server-development.md). |
-| 05 | In progress | Receiver-based repositories, authentication state, account issuance/recovery/reset/disable services, persistent backoff, one-use scoped password challenges, atomic replacement and audit rollback are implemented and tested. Production Argon2id (`golang.org/x/crypto`, approved 2026-11-16) is the process hasher; the executable mounts the restricted password/TOTP onboarding endpoints and provides local `-bootstrap-admin` / `-recover-bootstrap-admin` operator commands. Remaining: administrator operations (create user, reset, disable) have no caller until Chunk 07 sessions produce a reauthenticated principal; Argon2id parameters are the RFC 9106 64 MiB profile and are not yet calibrated on target Unraid hardware. |
-| 06 | In progress | TOTP secret/QR generation, deterministic verification, server/account-bound AES-GCM secret protection, scoped recovery-code helpers and the durable configuration-key helper are implemented. Schema 4 and the account flow now persist encrypted provisional/confirmed secrets, consume TOTP time steps and recovery codes atomically with the one-use challenge, apply an independent persistent second-factor backoff, replace recovery codes and perform the audited administrator TOTP reset; restricted enroll/confirm HTTP endpoints exist. The process loads the durable protection key with the retained-secret guard. Remaining: the second-factor login endpoint and callers for recovery-code replacement/TOTP reset arrive with Chunk 07 sessions and Chunk 22. See [TOTP foundation](twofactor-foundation.md). |
-| 07–15 (slice) | Vertical slice only | An end-to-end path was pulled ahead of chunk order on 2026-11-16: 12-hour device sessions, flat catalog, verified chunk storage, the standard upload/finalize/download routes, a pinned-certificate `shared/client`, and a single desktop screen for onboarding, upload and download. It closes no chunk; see [vertical slice](vertical-slice.md) for scope, run instructions and the limits each chunk still owns. |
-| All others | Not started | Follow the dependencies and acceptance criteria below. |
+Already implemented: versioned contracts and identity-proof helpers; SQLite foundations and migrations; a TLS server with persistent identity and certificates; administrator bootstrap; Argon2id passwords, mandatory replacement, TOTP and recovery codes; temporary 12-hour sessions; browser user listing/creation; sequential standard uploads, recursive folders and empty directories; folder browsing/creation; verified whole-file downloads; confirmed permanent deletion with restartable deleted-object cleanup; Tailwind components and theme selection in both interfaces; desktop throughput display; component checks and release workflows.
 
-The other partial foundation slices do not complete their chunks or bypass integration dependencies. SQLite, OTP and `golang.org/x/crypto` dependencies were added with the user's explicit approval, recorded in root `AGENTS.md`.
+These are existing building blocks, not completed versions of the features below. The desktop queue and credentials remain in memory. There is no transfer resume, private mode, trash or complete version-management experience. Catalogs currently stop at 1000 entries per directory. Hosted CI results, actual Unraid qualification and complete native UI workflows must be verified, not inferred from workflow files. This roadmap records source review, not a fresh execution of the tests.
 
-## Completion rules for every chunk
+Current pending temporary passwords can be retrieved by administrators until replacement or one-hour expiry. The original specification calls for showing them once. Resolve that discrepancy in Complete account administration; do not silently treat the current behavior as the final security policy.
 
-- [ ] New dependencies follow `AGENTS.md`: prefer official/upstream modules, reuse recorded approvals, and obtain approval for unselected modules before adding them.
-- [ ] Every UI scenario supports light and dark modes with a persisted Light/Dark/System setting.
-- [ ] Code is in `apps/desktop`, `apps/server`, or `shared` according to ownership; project documentation is in root `docs`. Reserve `shared` for code and its tests.
-- [ ] Files have focused responsibilities and intuitive names; generated files are regenerated.
-- [ ] Normal, invalid, boundary, permission, and relevant failure/recovery scenarios have tests.
-- [ ] Tests use deterministic clocks/fixtures where possible; integration tests cover real persistence boundaries.
-- [ ] Formatting, static checks, type checks, and relevant tests pass; results are recorded in the change description.
-- [ ] No credentials, private metadata, or usable vault keys appear in logs or test artifacts.
-- [ ] User-visible errors explain the next useful action without exposing internal secrets.
-- [ ] Migrations, compatibility implications, and operational changes are documented.
+### Implementation in progress, 2026-11-17
 
-## Milestones and order
+The first parallel delivery includes consistent no-follow source opening and bounded skipped-item batch reports, desktop summaries, HTTP/3 evaluation with verified HTTP/2 fallback, [reproducible performance measurements](performance-baseline.md), deployment-directory instance locks, and a [stopped-server backup command](backup-restore.md). Connections try HTTP/3 first and use HTTP/2 only after QUIC fails; the local tmpfs results do not establish Unraid/tailnet performance. This is partial delivery of features 1–3, not acceptance of the complete roadmap. The [verification map](requirements-verification.md#feature-roadmap-execution-2026-11-17) records executed checks and remaining native/hardware gates.
 
-| Milestone | Chunks | Demonstration |
-| --- | --- | --- |
-| Foundation | 01–04 | Validated workspace, tested contracts, running persistent container |
-| Identity | 05–09 | Onboarding and independently authenticated server/device profiles |
-| Standard storage | 10–16 | Background backup and verified restore across reconnects |
-| Private storage | 17–20 | Encrypted uploads and clean-device recovery |
-| Administration | 21–22 | Accurate statistics, live activity, device/user management |
-| Performance and operations | 23–26 | QUIC fallback, Unraid deployment, upgrade and restore drills |
-| Release | 27–28 | Packaged clients and completed qualification matrix |
+## How to execute this plan
 
-Chunk 17's format prototype should run after chunks 02–03 and before chunk 11 freezes the production manifest. Its full integration follows the standard transfer implementation. The task numbers organize delivery; the explicit dependency list governs execution.
+Work down the user-selected feature order, taking prerequisite work earlier where stated. Where a feature starts before later integrations exist, deliver its current scope first and keep the later acceptance gates explicitly open. Deliver each feature through small reviewable changes covering persistence, server/client behavior, UI and tests as needed; do not create another numbered chunk sequence. Update the baseline and checkboxes only with implementation and acceptance evidence. No remaining feature is currently accepted as complete.
 
-### Reordered for an early end-to-end test
+For every feature:
 
-At the user's request (2026-11-16) a thin vertical slice through chunks 07–15 is built before those chunks are completed in order, so the server and desktop can be run together and problems in the contracts surface while they are cheap to change. The slice implements the published routes with reduced scope. Subsequent work deepens the slice toward each chunk's full acceptance list rather than starting those chunks from nothing; each chunk still closes only when its own tests and acceptance pass. The manifest and chunk API remain unfrozen until the spikes below are recorded.
+- Follow `AGENTS.md`; obtain explicit approval before adding any unapproved module or dependency. Planning a library is not approval to install it.
+- Keep existing repository ownership and regenerate bindings. Do not send file bytes through the frontend bridge.
+- Support persisted Light/Dark/System, keyboard interaction, useful loading/error states and bounded frontend state for every affected UI.
+- Test normal, invalid, authorization, boundary and relevant interruption/recovery behavior. Use real SQLite/filesystem/TLS integration where the boundary matters.
+- Run relevant component checks; record commands, environment, outcomes and outstanding native/hardware gates in the requirement-to-test map.
+- Document migrations, compatibility, operational changes and limitations. Preserve account/server scoping and keep credentials, keys and private metadata out of logs.
+- Acceptance requires observable end-to-end behavior, not only schemas, contracts or helper tests.
 
-### De-risking spikes before the manifest freeze
+## 1. Graceful cross-platform symlink handling
 
-Two disposable spikes run ahead of their milestone order, both before chunk 11 freezes the manifest and chunk API. Neither produces production code, ships features, or bypasses chunk acceptance; each records its findings in `docs` and may force contract revisions while they are still cheap.
+**Outcome:** encountering a link does not abort a folder upload or prevent unrelated files from being backed up. This is the critical first fix, independent of the later persistent queue work.
 
-- **Vertical transfer spike (implemented test rig).** `shared/tests/transfer_spike_test.go` exercises verified TLS 1.3/HTTP/2 create/replay, missing queries, reversed/duplicate/conflicting chunks, finalization/replay, immutable download and byte comparison for empty, multichunk and interrupted/retried fixtures. This bounded, test-local handler/client has no authentication or durability guarantees. Preserve exact manifest bytes (including JSON whitespace) before creation; an empty manifest uses `chunks:[]`, not `null`; structural validation must be combined with actual object validation; finalize replay must precede lifecycle validation. Creation currently needs finalized manifest hashes/length before chunk sending, implying an up-front hashing/encryption pass whose large/private-file staging cost remains unmeasured. No contract revision was required by this rig; it does not freeze the contracts or replace either the target-hardware overhead benchmark or production acceptance.
-- **Small-file overhead benchmark.** Measure raw per-file request/metadata overhead over HTTP/2 (and HTTP/3 where practical) on the target deployment hardware at a scale representative of 100,000 small files. The primary workload is many small files; if per-request overhead dominates, the fix changes the public API, so this must be known before the chunk 11 freeze, not at chunk 24.
+**Original defect:** `UploadFolder` used `Lstat` and returned an error for symlinks/special files, stopping the remaining traversal; direct file uploads could follow a file symlink. The implementation now applies one skip-and-report policy using the explicitly approved `golang.org/x/sys` filesystem APIs. Linux runtime/race and UI checks pass. Native Windows/macOS and picker qualification remain open, so the feature is not accepted as complete.
 
-## Chunk 01 Validate the workspace and establish checks
+**Approved policy (2026-11-17):** skip symbolic links and directory redirections, continue scanning, and report them visibly. The user selected skip-and-report for the initial implementation; this is no longer an open policy decision. Implementation and native-platform verification remain pending. Following targets is a possible later opt-in, not part of the immediate fix or an approved requirement. Skipped links are not backed up as link objects and are not recreated on restore.
 
-**Location:** `apps/desktop`, `apps/server`, `shared`; minimal root workspace/CI entries. **Dependencies:** None.
+- [x] Apply consistent no-follow classification to recursive entries, selected root folders and directly selected files. Report an explicitly selected link as skipped with guidance to select its real target if desired. Linux runtime coverage passes; native Windows/macOS qualification remains below.
+- [x] Continue past file/directory links, broken links and link cycles without resolving or reading their targets; retain normal files and empty directories before and after skipped entries. Linux scanner/source tests pass.
+- [ ] Verify Linux/macOS symbolic links and Windows file/directory symlinks, junctions and other name-surrogate reparse points. Classify by platform semantics, not file extensions or a blanket assumption that every Windows reparse point is a symlink. Define and test behavior for unsupported/cloud-placeholder cases separately.
+- [x] Skip unsupported special files with an explicit reason; distinguish policy skips from actual read/permission failures, cancellation and server errors. Linux FIFO, permission, cancellation and server-failure tests pass; genuine failures remain failures.
+- [x] Show skipped counts and a bounded, reviewable list of paths/reasons, including a clear “completed with skipped items” result and a zero-files-uploaded result for all-skipped selections. Linux manager and Vue tests pass. Preservation when the persistent queue arrives remains an explicit feature 5 integration gate.
+- [x] Guard source opening against a regular file/directory being replaced by a link after discovery; do not rely on a check-then-open sequence alone. Linux file/ancestor replacement races and worker rechecks pass. Link-bearing ancestors are refused; native picker resolution is documented as an outstanding platform qualification gate below.
+- [x] Treat ordinary hard-linked regular files as regular files at each selected path; Linux source/selection tests pass. Link-relationship preservation and deduplication are outside this fix.
+- [ ] Add scanner, direct-upload and UI coverage plus native Linux/Windows/macOS fixtures for nested links, broken links, outside-root targets, cycles, junctions, permission failures and replacement races. Record unavailable fixture privileges as an outstanding platform gate, not a passing test.
 
-- [x] Retain `apps/desktop`, `apps/server`, root `shared`, and root `docs`; verify the existing workspace layout and scaffold assets.
-- [x] Verify existing module names, imports, `go.work`, frontend bindings, Taskfiles and packaging paths; correct inconsistencies without renaming or relocating the application modules.
-- [x] Remove or relocate scaffold examples only after identifying their purpose. Desktop and server-mode scaffold roles are documented; the unused iOS/Android build scaffolding was removed on 2026-11-16 because mobile clients are explicitly deferred.
-- [ ] Add component-owned formatting, static-analysis, type-check, unit-test and integration-test commands; wire CI to them. Commands are implemented and the reviewed workflow is active at `.github/workflows/check.yml`; completion requires passing hosted Linux/Windows/macOS runs.
-- [x] Add frontend test tooling and establish the Go test harness without placeholder behaviour tests.
+**Accept when:** mixed selections upload all eligible ordinary files and preserve empty directories despite links anywhere in the traversal; skipped entries have accurate visible reasons/counts; default uploads neither traverse directory redirections nor read linked targets; native platform evidence covers the cases above. No dependency on refresh tokens, persistent queues or QUIC is required to deliver this fix.
 
-**Tests and acceptance:** Build all Go modules and desktop frontend; regenerate bindings; run scaffold smoke checks; verify workspace, build and packaging references resolve to the existing `apps/desktop` and `apps/server` paths. Demonstrate a fresh checkout following the documented commands.
+**Follow-target option: outside the approved scope.** A future proposal must decide separately whether to support files only or directories too. It must be explicit per selection, define outside-root/remote-target permission, detect cycles, bound traversal, handle changing targets and report duplicates. Store target contents as an ordinary file at the selected logical path, clearly explaining that this does not preserve the link. Users can explicitly select the real target meanwhile.
 
-**Verified locally:** `make check` passes with Oxfmt, Oxlint/tsgolint, Vue template checking, eight Vue tests, Go vet/tests (desktop with race detection), production frontend/native Linux builds, generated-binding comparison, layout checks and a real Go-process bridge/event smoke test. A disposable Git commit/clone of the current source snapshot restored dependencies with `npm ci`, passed the same checks and left tracked files unchanged. Installed native prerequisites and the existing Go module cache were reused; this is not a fresh-machine or hosted CI claim. The reviewed workflow is activated at `.github/workflows/check.yml`; hosted execution results are recorded once the first push runs it. No Playwright is used.
+Platform references: [Go filesystem inspection](https://pkg.go.dev/os#Lstat), [Windows hard links and junctions](https://learn.microsoft.com/en-us/windows/win32/fileio/hard-links-and-junctions), [Windows reparse points](https://learn.microsoft.com/en-us/windows/win32/fileio/reparse-points).
 
-## Chunk 02 Define contracts and identity boundaries
+## 2. Measured performance and QUIC
 
-**Location:** `shared/api`, `shared/protocol`, `docs`. **Dependencies:** 01.
+**Outcome:** many-small-file and large-file transfers use available bandwidth within explicit resource budgets.
 
-- [x] Specify version negotiation, capability limits, typed errors, identifiers and pagination.
-- [x] Specify account, upload, queue and catalog revision state transitions.
-- [x] Specify server identity authentication, endpoint pairing, certificate renewal and replacement behaviour.
-- [x] Define upload creation, missing-chunk queries, chunk PUT/GET, finalize, catalog and event contracts.
-- [x] Define standard/private manifest envelopes, leaving cryptographic internals gated by 17.
-- [x] Add a requirement-to-test mapping covering every section of the implementation plan.
+**Early prerequisite work:** measure HTTP/2 per-file request/metadata overhead and candidate chunk sizes before feature 3 freezes APIs. Record hardware and provisional budgets then, not only at release.
 
-**Tests and acceptance:** Serialization and compatibility fixtures; malformed/oversized inputs; unsupported versions; invalid state transitions; colliding IDs across servers; stable error decoding. Document examples sufficient to implement client and server independently.
+**Delivery approach:** begin benchmarking and QUIC against the existing standard-file workflow now. Extend measurements and transport recovery tests as resumable transfers (5–6), visibility (7), private storage (9) and multiple routes (10) arrive; these later integrations remain acceptance gates, not prerequisites to starting this feature after the critical link-handling fix.
 
-**Verified locally:** Full repository checks pass with the installed Wails v3.0.0 CLI, including the native Linux desktop build/binding comparison/smoke test and shared TLS channel-binding integration test. Shared race checks and a bounded parser fuzz run pass; see [requirement verification](requirements-verification.md). Hosted platform checks run through the activated CI workflow on push. No dependencies or workspace modules were added. This completes contract acceptance, not the account, pairing or transfer runtime; the vertical transfer spike above may still force contract revisions before chunk 11 freezes them.
+**Current implementation:** the user approved `quic-go` on 2026-11-17. The server serves the same API over TCP and UDP, with HTTP/3-first selection in the desktop/shared client. A credential-free same-origin probe is bounded to 500 ms on each connection establishment. HTTP/2 fallback lasts for that connection, with no timed upgrades; uncertain mutations are returned to the caller rather than blindly replayed. [The local baseline](performance-baseline.md) covers standard uploads, chunk sizes, hashing, directory enumeration and request reuse/batching candidates. Private mode, production batching, target-hardware limits, fairness and LAN/tailnet runs remain open.
 
-## Chunk 03 Establish persistence and fault injection
+- [ ] Benchmark scanning, hashing, encryption, network, metadata and finalization separately; test bounded batching/request reuse before increasing worker counts.
+- [ ] Set measured defaults and configurable limits for workers, buffers, files, KDF concurrency and client/server memory; revise provisional format limits where measurements require it.
+- [ ] Obtain approval before adding QUIC dependencies; implement HTTP/3 with verified HTTP/2 fallback, bounded probing/failure caching and no authentication/mutation 0-RTT.
+- [ ] Preserve TLS/identity checks, upload identity and progress across route/transport changes.
+- [ ] Measure LAN, direct tailnet and relayed tailnet with standard/private, small/large files and concurrent users.
 
-**Location:** `apps/server/internal/database`, `apps/desktop/internal/database`, `shared/testutil`. **Dependencies:** 01–02.
+**Accept when:** published results are reproducible, resource ceilings hold, fairness is demonstrated and blocked UDP falls back without lost work or weaker authentication. Choose transport defaults from results, not assumed speedups.
 
-- [x] Obtain approval and pin `github.com/mattn/go-sqlite3` for shared persistence.
-- [x] Define application-owned initial schemas and repositories using the shared migration helper.
-- [x] Add foreign-key enforcement, transaction helpers, busy-timeout policy and controlled writes.
-- [x] Add deterministic clocks, random-source test adapters, network interruption and filesystem-failure fixtures.
-- [x] Add upgrade compatibility guards and repository interfaces only where needed.
+## 3. Safe and recoverable storage
 
-**Tests and acceptance:** Fresh database, repeated startup, migration from each supported prior fixture, migration failure, newer-schema rejection, concurrent writes, transaction rollback, missing/read-only paths and restart persistence. Cross-platform driver builds pass.
+**Outcome:** an acknowledged file remains recoverable after crashes, storage exhaustion and ordinary restarts. This follows the performance baseline and protects files users can already put into the application.
 
-**Verified locally:** `make check-persistence` passes on Linux amd64 with CGO, including vet, race tests and explicit driver-consumer linking. `make check` passes, including the desktop build, binding regeneration and live scaffold smoke. Server migrations cover empty/v1 fixtures, failed upgrades and future-version rejection; repository tests cover ownership collisions, atomic writes, concurrent writers, queue CAS races and restart persistence. Consistent metadata snapshots are tested separately from the full deployment backup workflow in Chunk 26. **Remaining acceptance gate:** Windows/macOS native CGO builds/tests and platform permission qualification could not run on this Linux host. The activated CI workflow includes the native persistence check on all three platforms; this gate closes when those hosted runs pass. See [SQLite foundation](sqlite-foundation.md).
+**Existing:** verified chunks, flush/rename storage, metadata transactions, filesystem validation and restartable cleanup of explicitly deleted objects. General orphan recovery and capacity reservation are absent.
 
-## Chunk 04 Build the server process and container skeleton
+**Current incremental safety work:** native deployment locks fence config, data and staging before TLS/metadata/object initialization; a duplicate instance sharing any volume is refused. `serversend -backup DIR` uses that stopped-server barrier, a consistent SQLite snapshot and streamed config/data/staging copies; see [backup and isolated restore](backup-restore.md). This does not freeze upload/private contracts or implement general orphan recovery, quotas, live snapshots or clone identity migration.
 
-**Location:** `apps/server/cmd`, `apps/server/internal/config`, `apps/server/internal/identity`, `apps/server/deploy`. **Dependencies:** 02–03.
+**Prerequisites:** before freezing manifests or upload APIs, run the private-format prototype in feature 9 and the small-file overhead baseline in feature 2. Performance/QUIC follows the critical link-handling fix; the private-format prototype must also precede contract freeze, with full encryption integration later.
 
-- [x] Implement validated configuration, persistent server ID/key and graceful process lifecycle.
-- [x] Add health/readiness endpoints, TLS configuration and API capability endpoint.
-- [x] Build a non-root multi-stage image with explicit `/config`, `/data`, `/staging` mounts and TCP/UDP port declarations.
-- [x] Embed an initial admin shell without application credentials or open enrollment.
+- [ ] Define and test durable acknowledgement ordering for object writes, metadata and final publication; add recoverable pending transitions and idempotent startup reconciliation.
+- [ ] Enforce per-user/global limits, request bounds, capacity reservations and filesystem-aware free-space checks, including temporary overlap on separate staging/data filesystems.
+- [ ] Implement destination-side copy, verification, flush and rename for cross-filesystem staging; reject unsafe paths and symlink escapes.
+- [ ] Complete scoped idempotency, duplicate/conflicting chunk handling, manifest validation, upload expiry and cancellation/finalization race rules. Record byte-accounting transitions for feature 7.
+- [ ] Reconcile abandoned uploads and orphan objects without deleting referenced data or racing readers/writers; retain and test the existing deleted-object recovery path.
+- [ ] Provide an initial consistent standard-data backup and isolated restore procedure covering metadata, identity, configuration keys and referenced objects. Enforce one process per storage directory and prevent accidental concurrent replacement instances.
+- [ ] Add pre-migration backup/rollback guidance for changes introduced here; keep unsupported-schema rejection.
 
-**Tests and acceptance:** Container restart retains identity; invalid certificates/configuration fail clearly; SIGTERM drains requests; permissions and missing mounts fail predictably; no persistent application data lands only in the container layer.
+**Accept when:** injected crashes at each write/publication boundary, full/read-only disks, short writes and separate filesystems produce no acknowledged data loss or corrupt visible version; cleanup converges after repeated restarts; an isolated restored server downloads the original bytes. Record any hardware-dependent checks still needed for supported Unraid deployment.
 
-## Chunk 05 Bootstrap administrators and manage temporary passwords
+## 4. Stay signed in and control device access
 
-**Location:** `apps/server/internal/auth`, `apps/server/internal/users`, `apps/server/internal/httpapi`. **Dependencies:** 03–04.
+**Outcome:** users remain signed in across restarts and offline periods, while lost or revoked devices lose access promptly.
 
-- [x] Adopt the repository receiver convention from the implementation plan, converting the existing package-level account/upload/profile/queue database functions in the same change.
-- [x] Add expiring one-time bootstrap and admin/user roles. Bootstrap is a local operator command (`serversend -bootstrap-admin <username>`), never a network endpoint.
-- [ ] Implement user creation, random temporary passwords, Argon2id hashing and onboarding scopes. All implemented and tested; user creation has no HTTP caller until a session can prove a reauthenticated administrator (07, 22).
-- [ ] Implement password replacement, throttling and audited administrator resets. Implemented and tested; administrator resets await the same session-backed caller.
-- [x] Define account disablement and session invalidation hooks. Account-wide `auth_epoch` changes atomically invalidate restricted attempts; Chunk 07 must check this epoch on every access/refresh and cancel active streams.
+**Existing:** mandatory second-factor session issuance, hashed access credentials, 12-hour sessions, logout and live account-state checks. No refresh or OS credential storage.
 
-**Tests and acceptance:** Bootstrap reuse/expiry, duplicate accounts, weak/malformed input, wrong/expired temporary password, concurrent replacement, direct API onboarding bypass, cross-user access and non-admin administration attempts. Hashes and secrets are absent from API/log outputs.
+- [ ] Introduce stable installation/device registration, short-lived access tokens and rotating refresh credentials stored hashed on the server.
+- [ ] Define replay handling, family revocation, concurrent-worker serialization and interrupted rotation recovery without routine device authorization expiry.
+- [ ] Integrate native secure credential storage on Linux, Windows and macOS; test locked, unavailable and lost stores without plaintext fallback. Obtain dependency approval first if needed.
+- [ ] Persist credentials under server/account scope and verified trust only. Implement stable identity-key proof/CA validation and renewal safety needed before persisting credentials; feature 10 expands this into multiple profiles/routes.
+- [ ] Add self-service device listing/revocation and session controls; enforce revocation on every request and cancel active streams within five seconds.
+- [ ] Replace browser bearer-session handling with Secure/HttpOnly/SameSite cookies, CSRF/origin protections, browser expiry and sensitive-action reauthentication.
+- [ ] Migrate or explicitly invalidate legacy sessions safely; retain mandatory onboarding and recovery-code enforcement.
 
-## Chunk 06 Implement mandatory TOTP and recovery codes
+**Accept when:** app/OS/server restarts, long inactivity, offline periods and a lost refresh response do not require routine login; concurrent refresh and replay tests pass; revocation blocks new work and active streams within the bound; forged browser mutations fail. Record native secure-store results on all three platforms.
 
-**Location:** `apps/server/internal/auth`, `shared/api`. **Dependencies:** 05.
+## 5. Persistent, resumable uploads
 
-- [x] Resolve the `rsc.io/2fa` CLI mismatch: the user approved `github.com/pquerna/otp`.
-- [x] Implement and test TOTP enrollment material and deterministic verification helpers; persist replay consumption in the account flow before granting access.
-- [x] Add provisional enrollment, QR provisioning, code verification and encrypted secret storage. Service, schema 4 and restricted `POST /auth/totp/enroll` and `/auth/totp/confirm` endpoints are implemented; the executable mounts them.
-- [x] Add single-use hashed recovery codes and safe replacement. Consumption deletes the hash in the transaction that spends the challenge; replacement swaps the whole set and requires a reauthenticated principal, which only Chunk 07 sessions can produce.
-- [ ] Enforce password-change plus TOTP completion before full access. The account state machine enforces it and administrator actions recheck it live; completion requires Chunk 07 to issue sessions only from a verified second factor.
-- [ ] Add distinct lost-TOTP recovery and password-reset flows with admin reauthentication. Both services are implemented, audited and tested as distinct operations; the reauthenticating administrator session and endpoints remain (07, 22).
+**Outcome:** selected files survive application restarts in a durable queue and resume only missing work.
 
-**Tests and acceptance:** Correct/wrong codes, skew boundaries, replayed time steps, enrollment interruption, racing recovery-code use, expired onboarding session, rate limits, password reset preserving TOTP and TOTP reset forcing reenrollment. Admin onboarding has no exemption.
+**Existing:** sequential in-memory transfer manager, recursive scans and a server missing-chunk route; database queue foundations are not connected to this workflow.
 
-**Verified locally (2026-11-16):** `internal/auth/two_factor_test.go`, `internal/database/two_factor_test.go` and `internal/httpapi/two_factor_test.go` cover every scenario above against real SQLite with a manual clock, including restart mid-enrollment, future-skew replay, concurrent identical TOTP/recovery codes, challenge revocation after five wrong codes, backoff surviving a correct password and a restart, a missing or replaced protection key failing closed without backoff, and the frozen schema-3 upgrade. Recovery-code use is not written to the audit log because the shipped schema-3 action list does not include it; add it with the next audit schema change.
+**Depends on:** features 3, 4. Design server/account scoping for feature 10 now.
 
-## Chunk 07 Implement device sessions and revocation
+- [ ] Persist jobs before network work; stream discovered files/directories into SQLite and resume interrupted scans without unbounded batch buffering.
+- [ ] Persist upload IDs, source fingerprints, acknowledgements, retry schedules and explicit queue/wait states.
+- [ ] Reconcile missing chunks after reconnect, lost acknowledgements and restart; never mix source generations when files change, disappear or become unreadable.
+- [ ] Add bounded workers, fair scheduling, bandwidth controls and typed retry/backoff; one failing job/profile must not block other eligible work.
+- [ ] Implement durable pause/resume/cancel and retry-failed controls with race-safe server cancellation and reservation release.
+- [ ] Preserve hierarchy, empty files/directories and completed partial-batch work; report skipped links, special files, source changes and failure totals.
 
-**Location:** `apps/server/internal/auth`, `apps/server/internal/users`, `shared/client`. **Dependencies:** 06.
+**Accept when:** kill/restart both processes mid-batch and interrupt acknowledgements; completed files stay complete, missing work resumes, changed sources become fresh attempts and pause/cancel states survive restart. A large scan stays within recorded memory/handle budgets without an arbitrary file-count cap.
 
-- [ ] Register devices per account; issue short-lived access and rotating refresh credentials with silent renewal and persistent device authorization.
-- [ ] Avoid routine inactivity/absolute expiry for desktop device authorization; retain explicit logout, revocation, account reset and compromise handling.
-- [ ] Hash stored refresh tokens; specify replay detection and refresh-race recovery.
-- [ ] Add self-service device listing/revocation and administrator account/session controls.
-- [ ] Propagate session revocation to active streams and audit events.
+## 6. Reliable browsing and resumable restores
 
-**Tests and acceptance:** App/OS restart, long inactivity, offline recovery, access-token expiry and container upgrades cause no routine login prompt; revoked/lost credentials require login. Two devices remain independently signed in; revoking one leaves the other usable; refresh replay, concurrent refresh, interrupted refresh response, expired tokens, account disablement, password reset and revoked active requests behave according to contract.
+**Outcome:** users can browse large catalogs and safely restore selected files or folders across interruptions.
 
-## Chunk 08 Implement desktop profiles and secure credentials
+**Existing:** folder navigation and verified whole-file downloads; 1000-entry listing limit and no persisted download progress.
 
-**Location:** `apps/desktop/internal/profiles`, `apps/desktop/internal/identity`, `apps/desktop/frontend/src/features/servers`, `shared/client`. **Dependencies:** 02–04, 07.
+**Depends on:** features 3, 4, 5; version selection completes with feature 8.
 
-- [ ] Add/edit/remove profiles with multiple verified endpoints and independent accounts.
-- [ ] Implement server pairing, approved endpoint selection and identity mismatch repair.
-- [ ] Add OS credential-store adapters and clear unavailable/locked-store behaviour.
-- [ ] Keep tokens and client state scoped by server/account; serialize refresh.
+- [ ] Replace truncated catalogs with account/query/snapshot-bound pagination and bounded desktop lists.
+- [ ] Implement catalog revisions, reconnect reconciliation and full refresh after expired history; events are hints, not the source of truth.
+- [ ] Add recursive folder and multi-file download selection, persistent temporary destinations and chunk-boundary resume.
+- [ ] Verify complete content, flush and publish atomically; define explicit existing-file collision choices.
+- [ ] Enforce destination containment, symlink refusal, Unicode/case collisions, reserved names and platform path-length rules.
+- [ ] Handle disk-full, corruption, missing versions and interrupted publication without presenting partial files as complete.
 
-**Tests and acceptance:** Two servers with identical usernames and remote IDs remain isolated; LAN/tailnet routes resolve to one profile; wrong server identity, untrusted certificates, cross-origin redirects and endpoint replacement never receive credentials. Profile restart and credential-store failures are handled.
+**Accept when:** catalogs exceeding 1000 entries are fully reachable; concurrent catalog changes do not silently lose entries; interrupted folder restores resume and match source bytes; path attacks and corruption cannot overwrite unintended local files.
 
-## Chunk 09 Build desktop onboarding and account screens
+## 7. Accurate storage and transfer visibility
 
-**Location:** `apps/desktop/frontend/src/features/onboarding`, `apps/desktop/internal/app`. **Dependencies:** 06–08.
+**Outcome:** users and administrators can see actual capacity, retained data and active work without misleading totals.
 
-- [ ] Establish Tailwind CSS, accessible shared styling and persisted Light/Dark/System selection for desktop screens.
-- [ ] Build temporary-password login, password replacement, TOTP enrollment, recovery-code display and regular login; keep optional vault setup outside mandatory onboarding.
-- [ ] Add device list, logout, account state, and authentication-required queue signals.
-- [ ] Add accessible loading/errors and retry paths; keep cryptographic secrets out of frontend logging.
+**Existing:** local progress and throughput chart. Storage accounting is incomplete.
 
-**Tests and acceptance:** End-to-end onboarding, cancelled enrollment/restart, expired credentials, invalid codes, recovery-code login, revoked device and multiple profiles. User cannot enter file screens with an onboarding-only session. Test all onboarding states in both themes, persisted/system theme changes, and standard file access without a vault.
+**Depends on:** storage transitions from feature 3 and existing role enforcement. Deliver standard storage/transfer visibility now; extend accounting for retention in feature 8 and private overhead in feature 9, and integrate the completed administration UI in feature 11. Those later scenarios remain acceptance gates.
 
-## Chunk 10 Implement file catalogs and version conflicts
+- [ ] Reconcile committed, retained/trash, staged and reserved physical bytes per account/server; report logical standard bytes separately where useful.
+- [ ] Identify underlying filesystems and avoid summing duplicate free space across mounts.
+- [ ] Publish useful versus wire/retry rates, last-update times and stale/offline status.
+- [ ] Add bounded reconnectable events and dashboards with authorization, private-data redaction and slow-consumer isolation.
 
-**Location:** `apps/server/internal/catalog`, `shared/api`, `shared/protocol`. **Dependencies:** 03, 07.
+**Accept when:** known fixtures, retries, deletion, interrupted uploads and restarts converge to measured on-disk totals; duplicated mounts are not double-counted and slow dashboards do not stall transfers.
 
-- [ ] Add files, directories, immutable versions, storage mode and revision preconditions.
-- [ ] Implement paginated browsing, standard metadata queries and catalog revision feed.
-- [ ] Define opaque private catalog entries and conflict behaviour without plaintext name indexes.
-- [ ] Add authorization to every lookup, mutation and version reference.
+## 8. Versions, trash and retention
 
-**Tests and acceptance:** Nested/empty directories, pagination during concurrent changes, duplicate names, revision conflict, two-device updates, inaccessible foreign IDs and private metadata opacity. Concurrent uploads cannot silently replace each other.
+**Outcome:** overwrites and accidental deletions are recoverable, and concurrent devices preserve both edits.
 
-## Chunk 11 Implement durable chunk storage
+**Existing:** basic immutable version records and confirmed permanent deletion. No user-facing history, trash or retention policy.
 
-**Location:** `apps/server/internal/storage`, `apps/server/internal/uploads`, `shared/protocol`. **Dependencies:** 03–04, 10, 17 format decision, and the recorded results of both de-risking spikes above; the manifest and chunk API freeze here.
+**Depends on:** features 3, 5, 6. Define private opaque IDs compatibly with feature 9.
 
-- [ ] Implement immutable object paths, chunk validation and durable acknowledgements.
-- [ ] Implement reservations, body-size limits and incomplete-upload metadata.
-- [ ] Support destination-side temporary copies when staging and data are separate filesystems.
-- [ ] Implement startup reconciliation for pending writes and orphaned objects.
+- [ ] Publish new versions under stable file IDs with expected-revision checks; preserve both results of concurrent head updates and expose resolution.
+- [ ] Add history, version download and restore-as-current flows.
+- [ ] Replace ordinary permanent deletion with trash; add restore and explicit purge with clear confirmation. Document that previously deleted content cannot be recovered by this migration.
+- [ ] Add configurable version/trash retention, initially proposed at 30 days for trash, and administrator controls.
+- [ ] Coordinate reference-aware collection with active readers, uploads, reservations and backup snapshots; record retained/trash accounting and cleanup audit events.
 
-**Tests and acceptance:** Partial writes, disk full, read-only disk, short reads, checksum mismatch, identical/conflicting retry, path traversal, symlink escape, missing objects, duplicate chunk races and crash injection around data flush/metadata update. Repeated recovery converges without data loss.
+**Accept when:** two devices race updates without losing either version; trash restore works; purge/restore/finalize/reader races and repeated cleanup crashes never delete referenced objects; retention changes have tested boundary behavior.
 
-## Chunk 12 Implement upload lifecycle and finalization API
+## 9. Private encrypted storage and recovery
 
-**Location:** `apps/server/internal/uploads`, `apps/server/internal/httpapi`, `shared/client`. **Dependencies:** 07, 10–11.
+**Outcome:** optional private contents and names leave the desktop only as ciphertext, and a clean device can recover them.
 
-- [ ] Implement idempotent creation, chunk upload, missing-chunk reconciliation, cancellation and finalization.
-- [ ] Validate manifests and expected revision; publish only complete durable versions.
-- [ ] Enforce per-account ownership, capacity reservations, expiry and bounded concurrency.
-- [ ] Define cancellation/finalization races and client-visible progress states.
+**Existing:** outer contracts and explicit unsupported-format rejection; no production private encryption or vault workflow.
 
-**Tests and acceptance:** Empty file, out-of-order/missing/duplicate chunks, wrong length/hash, oversized manifest, uncertain finalization response, repeated finalize, expired upload, wrong owner and concurrent cancel/finalize. A successful acknowledgement survives container restart.
+**Early prerequisite work:** run the format/library evaluation, bounded-object prototype, test vectors and initial small-file impact review before feature 3 freezes contracts. Obtain approvals for new dependencies or new crypto usage. Full integration depends on features 4, 5, 6, 8. Use the server/account scope established by feature 4; extend to simultaneous profiles when feature 10 arrives.
 
-## Chunk 13 Implement persistent desktop scanning and queue
+- [ ] Specify and review authenticated, versioned objects/manifests, key hierarchy, associated data and nonce/randomness rules; test swaps, duplication, truncation, wrong keys and tampering.
+- [ ] Create optional per-account vaults with bounded KDF parameters, passphrase and recovery wrappers, creation races and revision-checked atomic rewrap.
+- [ ] Add setup/unlock/recovery export, explicit loss acknowledgement, optional remembered unlock and auto-lock policy separate from account login.
+- [ ] Integrate encryption/decryption with resumable queues: retransmit identical persisted ciphertext, use fresh randomness for fresh attempts and bound staging space.
+- [ ] Encrypt names, paths, sensitive metadata and the local private index; add client-assisted private-name conflict resolution and clear decrypted views on lock.
+- [ ] Support per-batch mode and per-profile defaults without rewriting existing versions; standard work must remain usable with the vault locked or absent.
+- [ ] Document rollback/freshness and device-revocation limits; extend backup/restore coverage to envelopes and recovery packages.
 
-**Location:** `apps/desktop/internal/queue`, `apps/desktop/internal/transfer`, `apps/desktop/internal/database`. **Dependencies:** 03, 08, 10.
+**Accept when:** clean-device recovery restores private files using exported recovery material; interrupted transfers and rewraps are safe; plaintext/key canaries never reach server disk/database/logs/API/telemetry; all format vectors and adversarial tests pass. Lost account credentials and lost vault keys remain distinct recovery cases.
 
-- [ ] Persist jobs and incrementally scan file/folder selections.
-- [ ] Add queue transitions, fair scheduling, bounded workers and retry policy.
-- [ ] Track source fingerprints, skipped items, partial batch success and per-server state.
-- [ ] Add pause/cancel and waiting states for network, authentication and vault unlock.
+## 10. Multiple servers and trusted routes
 
-**Tests and acceptance:** Large directory scan with bounded buffers, empty directories, symlink loops, unreadable/deleted files, Unicode/case collisions, restart mid-scan, queue-state races, cancelled jobs and one offline server alongside an active server. No whole-batch memory dependency.
+**Outcome:** multiple independent accounts/servers work simultaneously, with safe LAN/tailnet switching.
 
-## Chunk 14 Connect standard uploads to the queue
+**Existing:** single active desktop connection, certificate-fingerprint approval and shared identity-proof contracts. Feature 2 establishes persistent single-profile trust.
 
-**Location:** `apps/desktop/internal/transfer`, `shared/client`. **Dependencies:** 12–13.
+**Depends on:** features 4, 5, 6. Add combined/per-server queue views here; feature 13 later completes their background lifecycle and UI qualification.
 
-- [ ] Stream reads and checksums into bounded upload buffers; persist acknowledgements.
-- [ ] Reconcile server progress after restart or lost acknowledgements.
-- [ ] Detect source mutations and restart with a fresh upload generation.
-- [ ] Add bandwidth limits and typed retry/authentication/capacity handling.
+- [ ] Add/edit/remove persistent profiles containing scoped accounts, trusted identity, approved endpoints and preferences.
+- [ ] Complete pairing and explicit identity/CA repair; validate signed challenges against the actual TLS connection, consume nonces and reject redirects/unapproved origins before sending credentials.
+- [ ] Probe only configured routes with bounded timeouts/failure caching; retain upload identity when switching LAN/tailnet endpoints.
+- [ ] Support simultaneous sign-in, combined/per-server queues and separate catalogs; an offline server must not block another.
+- [ ] Document profile removal, credential deletion and local queue/data retention behavior.
 
-**Tests and acceptance:** Disconnect and process kill at each boundary, source replacement during transfer, source deletion before resume, server restart, token expiry, quota/disk exhaustion, retry backoff and duplicate-ack handling. Restored standard contents match the original stable source.
+**Accept when:** two servers with colliding usernames/file IDs remain isolated; route switches resume the same transfer; legitimate certificate renewal succeeds; replacement servers and relayed proofs receive no credentials.
 
-## Chunk 15 Implement browsing and resumable downloads
+## 11. Complete account administration
 
-**Location:** `apps/desktop/internal/catalog`, `apps/desktop/internal/transfer`, `apps/desktop/frontend/src/features/files`, server read handlers. **Dependencies:** 10–12, 14.
+**Outcome:** administrators can manage account recovery and access through the browser without operator intervention for routine tasks.
 
-- [ ] Build profile-specific browsing, version selection and file/folder download selection.
-- [ ] Stream selected chunks into temporary files with persisted download progress.
-- [ ] Add verification and safe destination publication, collision policy and path validation.
-- [ ] Refresh catalogs by revisions and recover from expired event history.
+**Existing:** user list/creation and backend password-reset, TOTP-reset and disablement services; complete runtime controls are missing.
 
-**Tests and acceptance:** Interrupted downloads, corrupt chunks, missing retained version, local disk full, Windows reserved names, case collisions, traversal, symlink destinations, Unicode names and existing local file conflicts. Two-device browsing sees committed versions only.
+**Depends on:** feature 4; retention controls integrate with feature 8 and capacity views with feature 7.
 
-## Chunk 16 Build background operation and transfer UI
+- [ ] Expose audited, role-checked password reset, distinct lost-TOTP recovery, account disable/enable and device/session revocation through API and UI.
+- [ ] Require fresh administrator reauthentication for sensitive actions; enforce invalidation and preserve the distinction between password and TOTP recovery.
+- [ ] Complete self-service recovery-code replacement and account/device screens.
+- [ ] Restore show-once temporary-password delivery, or obtain an explicit product decision to revise the specification; migrate away from retained pending-password material if show-once is retained.
+- [ ] Add paginated audit history, meaningful empty/error states and reset/recovery guidance; account recovery must never imply vault-key recovery.
+- [ ] Calibrate Argon2id costs on target hardware and verify bounded concurrent authentication resource use.
 
-**Location:** `apps/desktop/internal/app`, `apps/desktop/frontend/src/features/transfers`, desktop packaging. **Dependencies:** 09, 14–15.
+**Accept when:** every administration action is available to authorized callers, denied to other users and audited; recovery/revocation invalidates sessions as specified; temporary-password visibility matches the documented policy and expiry behavior.
 
-- [ ] Add combined and per-server queues with progress, speed, failures and pause/resume/cancel/retry.
-- [ ] Implement tray lifecycle, explicit quit, optional launch at login and sleep/wake recovery.
-- [ ] Throttle UI events and virtualize large lists.
+## 12. Supported deployment, backup and upgrades
 
-**Tests and acceptance:** Window close preserves transfers; explicit quit checkpoints them; app restart and sleep/wake resume; slow frontend cannot exhaust buffers; partial success is visible. Exercise native lifecycle on each supported desktop OS.
+**Outcome:** the server can be operated, upgraded and restored predictably on the actual Unraid host.
 
-## Chunk 17 Specify and prototype the private file format
+**Existing:** non-root Docker build, Compose examples, certificates, release workflow and deployment/update documentation. Feature 1 establishes an initial standard restore path.
 
-**Location:** `shared/fileformat`, `docs`. **Dependencies:** 02–03. **Timing:** Before freezing chunk 11's manifest/storage contract.
+**Depends on:** features 3, 4, 8 and 9; verify QUIC reachability after feature 2.
 
-- [ ] Evaluate maintained crypto APIs for independently resumable encrypted objects and authenticated manifests.
-- [ ] Specify serialization, encryption key hierarchy, nonce/randomness rules, associated data, encrypted names/paths and version compatibility.
-- [ ] Define bounded ciphertext staging, retransmission, fresh-attempt rules and recovery after lost state.
-- [ ] Add test vectors and document privacy/freshness limitations; review the format before production use.
+- [ ] Finish the versioned Unraid template and validate UID/GID, mounts, locking, resource guidance and pool/array/separate-staging layouts on actual hardware.
+- [ ] Validate existing host Tailscale TCP/UDP reachability, private IPv4 CA provisioning, browser/per-profile trust and certificate renewal without public exposure.
+- [ ] Complete consistent backup tooling using a maintenance barrier or reference snapshot with GC suspension; include identity, keys, envelopes and referenced blobs.
+- [ ] Implement isolated restore checks, replacement-versus-clone rules and identity migration; extend restore drills to standard and recovery-key private downloads.
+- [ ] Add pre-upgrade backups, migration compatibility checks and documented downgrade restore. Record tested client/server version compatibility and avoid overwriting release tags.
 
-**Tests and acceptance:** Empty and boundary-sized objects, wrong key, wrong associated data, modified/truncated/swapped/reordered/duplicated chunks, forged manifest lengths, unsupported format and interrupted encryption. Demonstrate retry/restart without unsafe key/nonce reuse and bounded disk/memory use. This chunk does not depend on private UI.
+**Accept when:** an actual Unraid deployment survives restart/update and restores from backup onto an isolated instance with both storage modes intact; tested TCP/UDP, filesystem and permission outcomes are recorded. A workflow file or instructions alone do not close this feature.
 
-## Chunk 18 Implement vault creation and device recovery
+## 13. Background desktop operation
 
-**Location:** `apps/desktop/internal/vault`, server vault-envelope endpoints, `shared/fileformat`. **Dependencies:** 07–09, 17.
+**Outcome:** backups continue while the app is in the tray, with clear controls and predictable lifecycle behavior.
 
-- [ ] Make vault creation optional and independent of account password/2FA and persistent device sign-in.
-- [ ] Generate account-specific vault keys, passphrase/recovery wrappers and versioned KDF parameters.
-- [ ] Store only authenticated encrypted envelopes server-side; scope them to server/account.
-- [ ] Implement vault creation races, local unlock, credential-store persistence and explicit recovery export.
-- [ ] Add passphrase rewrap with revision checks and interrupted-update recovery.
+**Existing:** transfer screen, themes and throughput chart; no qualified background lifecycle.
 
-**Tests and acceptance:** Clean second-device unlock, wrong passphrase/recovery key, damaged envelope, hostile KDF parameters, two-device creation/rewrap races, unavailable keychain, account password reset and recovery after local key deletion. Server never obtains a usable vault key.
+**Depends on:** features 4, 5, 6.
 
-## Chunk 19 Integrate private uploads and downloads
+- [ ] Add tray close behavior, explicit quit with durable checkpoints, optional launch at login and sleep/wake recovery.
+- [ ] Build complete queue controls and per-file/batch progress, skipped/failed counts, useful rates and retry actions without premature ETAs.
+- [ ] Bound/throttle progress events and virtualize large lists; a slow frontend must not stall transfers.
+- [ ] Complete keyboard/focus/contrast and both-theme checks for the real workflows; remove scaffold-only UI/services when their smoke coverage is replaced.
 
-**Location:** `apps/desktop/internal/vault`, `apps/desktop/internal/transfer`, `shared/fileformat`, server opaque object validation. **Dependencies:** 14–15, 18.
+**Accept when:** close-to-tray keeps work running; explicit quit/relaunch and sleep/wake resume safely; platform-native tests cover Linux, Windows and macOS and confirm transfers do not run while the app is exited or the device sleeps.
 
-- [ ] Add batch encryption choice and per-profile default without modifying existing versions.
-- [ ] Encrypt contents and metadata before transmission and decrypt authenticated downloads locally.
-- [ ] Persist safe ciphertext retry state and wrapped per-version keys.
-- [ ] Support authentication/unlock waits and interrupted private transfers.
+## 14. Desktop distribution and release qualification
 
-**Tests and acceptance:** Standard/private mixed queue, large private file, restart mid-encryption/upload/download, changed source, lost acknowledgement, wrong vault, corrupt ciphertext and second-device restore. Scan server disk/database/logs for plaintext canaries and key material.
+**Outcome:** installable, supported clients and evidence that the full intended product works under realistic failures and scale.
 
-## Chunk 20 Build private browsing and vault UX
+**Existing:** native build/check workflows; they do not constitute published, signed installers or proven platform support.
 
-**Location:** `apps/desktop/internal/catalog`, `apps/desktop/frontend/src/features/vault`, `apps/desktop/frontend/src/features/files`. **Dependencies:** 15, 18–19.
+**Depends on:** acceptance of all preceding features. Execute smaller platform/integration checks throughout development, not only here.
 
-- [ ] Add encrypted local metadata index, incremental refresh and client-assisted private-name conflicts.
-- [ ] Add vault setup/unlock/recovery/passphrase-change screens and auto-lock controls.
-- [ ] Explain secure recovery-key storage and unrecoverable loss of all unlock methods; require acknowledgement before the first private upload.
-- [ ] Offer separate remembered vault unlock on trusted devices; keep account sign-in usable when the vault is locked.
-- [ ] Explain recovery requirements and revocation limits at the relevant actions.
-- [ ] Clear decrypted views on lock and define active-job unlock retention.
+- [ ] Build and publish Linux packages first, then Windows and required macOS packages; verify native dialogs, secure storage, tray, startup, migration and uninstall/data-retention behavior.
+- [ ] Configure signing/notarization where credentials exist; clearly label unsigned development artifacts.
+- [ ] Record hosted Linux/Windows/macOS checks, native SQLite/CGO qualification and real UI walkthroughs; do not infer results from configured jobs.
+- [ ] Update every planned row in the requirement-to-test map with owning tests, execution evidence and remaining release blockers.
+- [ ] Run two-server/two-user/multiple-device isolation, concurrent updates and replacement-server scenarios.
+- [ ] Run a real non-sparse >100-GiB file and at least 100,000 small files, concurrent clients, process kills, network failures, full disks, corruption and revocation in standard/private modes.
+- [ ] Complete race/fuzz/dependency/format review, record hardware/resource measurements and demonstrate clean-device restores and operational recovery.
 
-**Tests and acceptance:** Private search across devices, locked vault, stale catalog refresh, equal path uploads from two devices, cancelled recovery setup, passphrase change, auto-lock during idle/transfer and loss of all local state with recovery package available. Persistent indexes contain no plaintext names. Test skipping/cancelling vault setup, standard transfers while locked, recovery acknowledgement, and remembered device sign-in with and without remembered vault unlock.
+**Accept when:** all intended features and platform gates have recorded passing evidence, with no unresolved data-loss, authorization-bypass, plaintext-leak or recovery defects. Until then, label releases experimental and describe specific limits.
 
-## Chunk 21 Implement accounting and live transfer observations
+## Historical requirement mapping
 
-**Location:** `apps/server/internal/metrics`, `apps/server/internal/audit`, event endpoints. **Dependencies:** 12, 19.
+This table preserves references in older documents; historical chunk numbers are not the work sequence.
 
-- [ ] Account for committed, retained, staged and reserved bytes with reconciliation.
-- [ ] Measure per-transfer/user/server upload/download rates and mark stale observations.
-- [ ] Add bounded reconnectable events and redact private data.
-- [ ] Report free space by underlying filesystem without double-counting mounts.
+| Original chunks | Current feature ownership |
+| --- | --- |
+| 01–04: workspace, contracts, persistence, process | Existing baseline; remaining gates in 3, 12, 14; checks apply to every feature |
+| 05–06: passwords and TOTP | 4, 11 |
+| 07: sessions | 4 |
+| 08: profiles/credentials | 4, 10 |
+| 09: onboarding UI | 4, 11, 13 |
+| 10: catalog/versions | 6, 8, 9 |
+| 11–12: storage/upload lifecycle | 3, 5 |
+| 13–14: scan/queue/uploads | 1, 5 |
+| 15: downloads | 6 |
+| 16: background/UI | 13 |
+| 17–20: private format/vault/transfers/UX | 9; format prototype precedes storage contract freeze in 3 |
+| 21: accounting/events | 6, 7 |
+| 22: administration | 4, 8, 11, 7 |
+| 23: retention/cleanup | 3, 8 |
+| 24: performance/QUIC | 2; baseline measurements precede contract freeze in 3 |
+| 25–26: deployment/backup/upgrades | 3, 12 |
+| 27–28: packaging/qualification | 14; relevant native/failure checks accompany each feature |
 
-**Tests and acceptance:** Concurrent transfer totals, retries without double-counting, cancelled/expired uploads, private overhead, multiple mount layouts, restart reconciliation, slow/disconnected event consumers and denied foreign-user subscriptions. Usage matches fixture storage.
+## Still outside scope
 
-## Chunk 22 Complete the admin interface
-
-**Location:** `apps/server/admin`, `apps/server/internal/httpapi`. **Dependencies:** 05–07, 21.
-
-- [ ] Use Tailwind CSS with persisted Light/Dark/System selection; test every admin state in both themes.
-- [ ] Add administrator login/2FA, user creation, temporary-password display, password reset and distinct TOTP recovery.
-- [ ] Add account disablement, device revocation, storage tables and live transfers.
-- [ ] Add audit history, retention configuration and meaningful empty/error states.
-- [ ] Implement cookie security, CSRF/origin checks, role enforcement and reauthentication for sensitive operations.
-
-**Tests and acceptance:** Full admin flows, non-admin access, forged cross-site mutation, expired session, reset/disable during active transfer, live statistics reconnect and private-name redaction. Browser UI and direct API enforce the same permissions.
-
-## Chunk 23 Implement versions retention and safe cleanup
-
-**Location:** `apps/server/internal/catalog`, `apps/server/internal/storage`, `apps/desktop/frontend/src/features/files`. **Dependencies:** 15, 19, 21–22.
-
-- [ ] Add trash, restore, explicit purge and configurable version/trash retention.
-- [ ] Expire abandoned uploads and release reservations.
-- [ ] Implement reference-aware garbage collection coordinated with readers and finalization.
-- [ ] Add cleanup reporting and audit records.
-
-**Tests and acceptance:** Trash restore, expiry boundary, concurrent download/purge, finalize/cleanup races, active versus abandoned uploads, crash during purge and repeat cleanup. Referenced data is never removed, and accounting converges.
-
-## Chunk 24 Add QUIC and benchmark transfer policies
-
-**Location:** `apps/server/internal/httpapi`, `shared/client`, `apps/desktop/internal/profiles`, benchmark fixtures. **Dependencies:** 14–16, 19, 21.
-
-- [ ] Add HTTP/3 listener/client with explicit HTTP/2 fallback, bounded probing and failure caching.
-- [ ] Keep TLS/identity validation identical and disable mutation/authentication 0-RTT.
-- [ ] Benchmark chunk sizes, concurrency, fairness, CPU, peak memory and useful throughput in both storage modes, prioritizing many small files and retaining large-file cases.
-- [ ] Measure request/metadata overhead, bounded batching and buffer reuse before increasing concurrency; enforce measured client/server memory budgets.
-- [ ] Record LAN, direct tailnet and relayed-tailnet conditions; select measured defaults and configurable limits.
-
-**Tests and acceptance:** UDP blocked, QUIC timeout, route change, TCP fallback, certificate failure, stream reset, server restart, large/small-file workloads and concurrent users. Fallback preserves upload identity and never duplicates committed versions.
-
-## Chunk 25 Finish Unraid deployment and network setup
-
-**Location:** `apps/server/deploy`, `apps/server/docs`, container integration tests. **Dependencies:** 04, 22–24.
-
-- [ ] Produce Unraid template, documented bind mounts, UID/GID settings and TCP/UDP port mappings.
-- [ ] Use the existing Unraid-host Tailscale installation; validate container TCP/UDP reachability without exposing the admin UI publicly.
-- [ ] Use a conventional minimal Docker runtime image compatible with the selected SQLite driver; Talos is a Kubernetes host OS and is not the base image for this deployment.
-- [ ] Add trusted certificates, renewal procedures, startup storage validation and resource guidance.
-- [ ] Validate pool/array paths and separate staging/data placement on an actual Unraid instance.
-
-**Tests and acceptance:** Install/restart/update with persistence; permissions; expired/renewed certificates; LAN and tailnet connectivity; blocked UDP fallback; staging/data on different filesystems; low-capacity behaviour. Record manual hardware checks separately from automated container tests.
-
-## Chunk 26 Implement backup restore and upgrade procedures
-
-**Location:** `apps/server/internal/storage`, maintenance commands, `apps/server/docs`. **Dependencies:** 23, 25.
-
-- [ ] Implement consistent metadata backup with reference snapshot/maintenance coordination and garbage-collection suspension.
-- [ ] Include server identity, configuration keys, encrypted vault envelopes and referenced objects.
-- [ ] Add restore validation and explicit replacement-versus-clone identity rules.
-- [ ] Add pre-migration backup, version checks and documented downgrade recovery.
-
-**Tests and acceptance:** Restore onto clean volumes, interrupted backup, missing object, incompatible schema, failed migration, retained server identity, rejected conflicting live identity and encrypted restore with recovery key. A live SQLite main-file copy alone is never treated as a valid backup.
-
-## Chunk 27 Package desktop applications
-
-**Location:** `apps/desktop/build`, `apps/desktop/docs`, platform CI entry points. **Dependencies:** 16, 20, 24.
-
-- [ ] Build and validate Linux installers/packages first, Windows second, and macOS as a required supported platform; include application icons/metadata.
-- [ ] Verify credential-store integration, tray operation, file dialogs and optional startup registration.
-- [ ] Document server pairing, recovery, uninstall/data retention and upgrade behaviour.
-- [ ] Add signing/notarization configuration where release credentials are available; document unsigned development builds accurately.
-
-**Tests and acceptance:** Clean install, upgrade preserving profiles/queues, uninstall retention policy, non-ASCII filesystem paths, OS login/keychain lock, tray lifecycle and resumed jobs on each supported platform. Missing signing credentials remain an explicit release dependency.
-
-## Chunk 28 Run release qualification
-
-**Location:** `shared/tests`, component regression suites, `docs`. **Dependencies:** All preceding chunks.
-
-- [ ] Execute the requirement-to-test mapping and close uncovered scenarios.
-- [ ] Run two-server/two-user/multiple-device isolation and concurrent-update suites.
-- [ ] Run 100 GiB-plus real-file and 100,000-small-file datasets with recorded resource budgets.
-- [ ] Run process kills, network interruptions, full disks, corrupted storage, token revocation and clean-machine recovery in both storage modes.
-- [ ] Run race detection, parser fuzzing, dependency checks and format/security review follow-ups.
-- [ ] Record throughput, memory, hardware, limitations, deployment instructions and restore evidence.
-
-**Tests and acceptance:** All mandatory automated checks pass; platform and Unraid checks have recorded outcomes; no unresolved data-loss, authorization-bypass, plaintext-leak or recovery defect remains. Performance claims match reproducible measurements. Implementation is complete only when a clean device restores the selected standard and private files correctly.
+Automatic folder watching, bidirectional synchronization, server replication, public sharing, shared identity across servers, cross-user deduplication, mobile clients and transfers while logged out of the OS remain deferred. Filesystem snapshot integration and emergency vault-key rotation remain separate designs. This reordering does not add them to the release or remove any original release requirement.

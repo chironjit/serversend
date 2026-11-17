@@ -7,6 +7,23 @@ export interface Account {
     "serverId": string;
 }
 
+/**
+ * Batch reports one file/folder selection. Skip details are bounded while the
+ * total remains exact. These in-memory outcomes will move to the durable queue.
+ */
+export interface Batch {
+    "id": number;
+    "name": string;
+    "state": string;
+    "files": number;
+    "completed": number;
+    "failed": number;
+    "directories": number;
+    "skipped": number;
+    "skippedItems": SkippedItem[] | null;
+    "error": string;
+}
+
 export interface Enrollment {
     "secret": string;
 
@@ -26,6 +43,7 @@ export interface File {
  * Item is one upload or download as shown in the transfer list.
  */
 export interface Item {
+    "batchId": number;
     "speed": number;
     "id": number;
     "name": string;
@@ -36,12 +54,17 @@ export interface Item {
     "direction": string;
 
     /**
-     * "queued", "active", "done" or "failed"
+     * "queued", "active", "done", "skipped" or "failed"
      */
     "state": string;
     "done": number;
     "total": number;
     "error": string;
+}
+
+export interface SkippedItem {
+    "path": string;
+    "reason": string;
 }
 
 /**
