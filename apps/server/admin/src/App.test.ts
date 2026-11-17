@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import App from './App.vue';
+vi.mock('./components/Accounts.vue', () => ({
+  default: { template: '<form><input type="password"/>Administrator sign-in</form>' },
+}));
 
 describe('public admin shell', () => {
   let wrapper: VueWrapper | undefined;

@@ -19,11 +19,13 @@ type TransferService struct {
 }
 
 func NewTransferService(ctx context.Context) *TransferService {
-	return &TransferService{manager: transfer.New(ctx, func(item transfer.Item) {
+	manager := transfer.New(ctx, func(item transfer.Item) {
 		if app := application.Get(); app != nil {
 			app.Event.Emit(TransferEvent, item)
 		}
-	})}
+	})
+	manager.SetAppVersion(currentVersion)
+	return &TransferService{manager: manager}
 }
 
 func (s *TransferService) Probe(ctx context.Context, address string) (client.ServerProbe, error) {
@@ -101,4 +103,18 @@ func (s *TransferService) ChooseAndUploadFolder(ctx context.Context, parent stri
 
 func (s *TransferService) DeleteEntry(ctx context.Context, id string) error {
 	return s.manager.DeleteEntry(ctx, id)
+}
+
+func (s *TransferService) Profiles() ([]transfer.Profile, error) { return s.manager.LoadProfiles() }
+func (s *TransferService) OpenProfile(ctx context.Context, origin string) (transfer.Account, error) {
+	return s.manager.OpenProfile(ctx, origin)
+}
+func (s *TransferService) RemoveProfile(origin string) error { return s.manager.RemoveProfile(origin) }
+func (s *TransferService) SetRemember(remember bool) error   { return s.manager.SetRemember(remember) }
+
+func (s *TransferService) SessionStatus(ctx context.Context) (transfer.Step, error) {
+	return s.manager.SessionStatus(ctx)
+}
+func (s *TransferService) CompleteReauthentication(ctx context.Context, code string) (transfer.Account, error) {
+	return s.manager.CompleteReauthentication(ctx, code)
 }

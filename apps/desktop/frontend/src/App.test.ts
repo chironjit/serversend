@@ -6,6 +6,12 @@ type Listener = (event: { data: unknown }) => void;
 const bridge = vi.hoisted(() => ({
   listener: undefined as Listener | undefined,
   service: {
+    SessionStatus: vi.fn<() => Promise<{ next: string }>>(),
+    CompleteReauthentication: vi.fn<(code: string) => Promise<unknown>>(),
+    Profiles: vi.fn<() => Promise<unknown[]>>(),
+    SetRemember: vi.fn<(remember: boolean) => Promise<void>>(),
+    OpenProfile: vi.fn<(origin: string) => Promise<unknown>>(),
+    RemoveProfile: vi.fn<(origin: string) => Promise<void>>(),
     Probe: vi.fn<(address: string) => Promise<unknown>>(),
     Approve: vi.fn<(fingerprint: string) => Promise<void>>(),
     SignIn: vi.fn<(username: string, password: string) => Promise<{ next: string }>>(),
@@ -45,8 +51,63 @@ async function submit(wrapper: ReturnType<typeof mount>) {
 }
 
 describe('desktop transfer slice', () => {
+  it('restores a saved server session without password or certificate approval', async () => {
+    bridge.service.Profiles.mockResolvedValue([
+      { origin: 'https://saved.test:58443', username: 'alice', fingerprint, remember: true },
+    ]);
+    bridge.service.OpenProfile.mockResolvedValue({
+      username: 'alice',
+      origin: 'https://saved.test:58443',
+      serverId: 's1',
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+    const saved = wrapper.findAll('button').find((button) => button.text().includes('saved.test'))!;
+    await saved.trigger('click');
+    await flushPromises();
+    expect(bridge.service.OpenProfile).toHaveBeenCalledWith('https://saved.test:58443');
+    expect(bridge.service.SignIn).not.toHaveBeenCalled();
+    expect(bridge.service.Approve).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain('report.txt');
+    expect(wrapper.text()).toContain('Switch server');
+    wrapper.unmount();
+  });
+  it('renews a remembered device with TOTP without asking for a password', async () => {
+    bridge.service.Profiles.mockResolvedValue([
+      { origin: 'https://saved.test:58443', username: 'alice', fingerprint, remember: true },
+    ]);
+    bridge.service.OpenProfile.mockResolvedValue({
+      username: 'alice',
+      origin: 'https://saved.test:58443',
+      serverId: 's1',
+      reauthenticationRequired: true,
+    });
+    bridge.service.CompleteReauthentication.mockResolvedValue({
+      username: 'alice',
+      origin: 'https://saved.test:58443',
+      serverId: 's1',
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('saved.test'))!
+      .trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).toContain('Verify this device');
+    expect(wrapper.find('input[type="password"]').exists()).toBe(false);
+    await wrapper.get('form input').setValue('123456');
+    await submit(wrapper);
+    expect(bridge.service.CompleteReauthentication).toHaveBeenCalledWith('123456');
+    expect(bridge.service.SignIn).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain('report.txt');
+    wrapper.unmount();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
+    bridge.service.SessionStatus.mockResolvedValue({ next: 'files' });
+    bridge.service.Profiles.mockResolvedValue([]);
+    bridge.service.SetRemember.mockResolvedValue();
     localStorage.clear();
     delete document.documentElement.dataset.theme;
     bridge.service.Probe.mockResolvedValue({

@@ -13,10 +13,8 @@ import (
 	"github.com/chironjit/serversend/shared/protocol"
 )
 
-// SessionLifetime is the vertical-slice device session. There is no refresh
-// yet: Chunk 07 replaces this with short-lived access tokens and rotating
-// refresh credentials, after which a device stays signed in.
-const SessionLifetime = 12 * time.Hour
+// SessionLifetime bounds browser administrator sessions. Desktop access grants last ten minutes.
+const SessionLifetime = 7 * 24 * time.Hour
 
 // Session is the authenticated caller of one request. It is derived from live
 // account state each time and must not be cached across requests.
@@ -34,11 +32,15 @@ func accessHash(token string) string {
 
 func (s *Service) ServerID() protocol.ID { return s.serverID }
 
-// CreateSession is the only way to obtain an access token: it consumes a
-// second-factor challenge with a valid TOTP or recovery code first.
-func (s *Service) CreateSession(ctx context.Context, challenge, code, deviceName string) (api.Session, error) {
+// CreateSession registers a new authorization after password and second-factor sign-in.
+// Refresh challenges cannot register another device.
+func (s *Service) CreateSession(ctx context.Context, challenge, code, deviceName string, metadata ...api.SessionRequest) (api.Session, error) {
 	if api.ValidateDeviceName(deviceName) != nil {
 		return api.Session{}, ErrInput
+	}
+	_, ch, err := s.repo.Challenge(ctx, tokenHash(challenge), s.now())
+	if err != nil || ch.DeviceID != "" {
+		return api.Session{}, ErrCredentials
 	}
 	verified, err := s.VerifySecondFactor(ctx, challenge, code)
 	if err != nil {
@@ -49,11 +51,21 @@ func (s *Service) CreateSession(ctx context.Context, challenge, code, deviceName
 		return api.Session{}, err
 	}
 	token, now := newSecret(), s.now().UTC()
-	session := database.DeviceSession{ID: newID(), AccountID: verified.AccountID, Name: deviceName, Epoch: verified.Epoch, ExpiresAt: now.Add(SessionLifetime)}
+	refresh := ""
+	lifetime := SessionLifetime
+	if account.Role == "user" {
+		refresh = newSecret()
+		lifetime = database.AccessLifetime
+	}
+	session := database.DeviceSession{ID: newID(), AccountID: verified.AccountID, Name: deviceName, Epoch: verified.Epoch, ExpiresAt: now.Add(lifetime), RefreshHash: refreshHash(refresh)}
+	if len(metadata) > 0 {
+		session.Platform = metadata[0].Platform
+		session.AppVersion = metadata[0].AppVersion
+	}
 	if err := s.repo.CreateSession(ctx, session, accessHash(token), now); err != nil {
 		return api.Session{}, conflictAsCredentials(err)
 	}
-	return api.Session{Role: account.Role, DeviceID: session.ID, ServerID: s.serverID, AccountID: account.ID, Username: account.Username, AccessToken: token, ExpiresAt: session.ExpiresAt}, nil
+	return api.Session{RefreshCredential: refresh, IdleExpiresAt: now.Add(database.RefreshIdleLifetime), ReauthenticateAt: now.Add(database.FactorLifetime), Role: account.Role, DeviceID: session.ID, ServerID: s.serverID, AccountID: account.ID, Username: account.Username, AccessToken: token, ExpiresAt: session.ExpiresAt}, nil
 }
 
 // Authorize resolves an access token against live state. Expired sessions and
@@ -77,5 +89,5 @@ func (s *Service) EndSession(ctx context.Context, token string) error {
 	if !validToken(token) {
 		return nil
 	}
-	return s.repo.DeleteSession(ctx, accessHash(token))
+	return s.repo.DeleteSession(ctx, accessHash(token), s.now().UTC())
 }

@@ -125,3 +125,13 @@ Executed on Linux amd64 / Go 1.26.3, using `GOCACHE=/tmp/serversend-go-cache`, `
 - Re-ran `BenchmarkStandardUpload -benchtime=20x`; results/limits are recorded in the performance baseline.
 
 Still required for the selected features: native Windows/macOS picker/link/junction/cloud/ACL/race workflows; intended-deployment useful throughput and separate client/server peak RSS to qualify worker/buffer/concurrency limits; actual full/read-only filesystem and power-loss durability tests. Unraid/tailnet/scale and later-feature integrations remain in their existing roadmap gates. No full feature acceptance is inferred from these local checks.
+
+## Desktop refresh and admin recovery (2026-11-17)
+
+Linux validation: `make check` passed (29 admin and 22 desktop UI tests, native desktop compilation, generated bindings and live bridge smoke). Targeted race suites passed for shared client, desktop transfers, server auth/database/HTTP and the real TLS server transfer/restore flow.
+
+- `auth/refresh_test.go`: exact 30-day inactivity and 60-day second-factor boundaries, capped access grants, exact retry versus conflicting reuse, concurrent rotations, revocation isolation, expired-access logout and concurrent recovery kinds.
+- `client/refresh_test.go`: lost response/restart recovery, locked stores, failed successor promotion, serialized workers, shared TOTP challenges and no usable access token/TOTP in persisted state.
+- Database/HTTP tests: upgrades from every prior schema through v8, recovery lock across restart/temporary expiry, role/origin/fresh-admin checks, per-device revocation, blocked mixed resets and active-request cancellation within five seconds. The real TLS transfer test restores a saved refresh credential and continues browsing/transfers.
+
+Remaining qualification: native Keychain/Credential Manager/Secret Service and single-instance behavior on all supported platforms. These tests use mocked credential stores; they do not establish native secure-store durability. Full-login installation deduplication, self-service device controls and resumable transfers remain roadmap work.

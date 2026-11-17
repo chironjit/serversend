@@ -7,6 +7,7 @@ export type {
     Enrollment,
     File,
     Item,
+    Profile,
     SkippedItem,
     Step
 } from "./models.js";

@@ -1,8 +1,4 @@
-// Package transfer holds the desktop's connection to one server for the
-// vertical slice: approve a server, sign in, upload, list and download.
-// Passwords, challenges and the access token stay in this Go process; the
-// frontend receives only display state. Nothing here is persisted yet, so the
-// user signs in again after restarting the application.
+// Package transfer manages trusted desktop connections and foreground transfers.
 package transfer
 
 import (
@@ -35,9 +31,10 @@ type Enrollment struct {
 }
 
 type Account struct {
-	Username string `json:"username"`
-	Origin   string `json:"origin"`
-	ServerID string `json:"serverId"`
+	ReauthenticationRequired bool   `json:"reauthenticationRequired"`
+	Username                 string `json:"username"`
+	Origin                   string `json:"origin"`
+	ServerID                 string `json:"serverId"`
 }
 
 type File struct {
@@ -68,19 +65,23 @@ type job struct {
 }
 
 type Manager struct {
-	emit func(Item)
+	connectionMu sync.Mutex
+	version      string
+	emit         func(Item)
 
-	mu        sync.Mutex
-	probe     client.ServerProbe
-	client    *client.Client
-	username  string
-	password  string
-	challenge string
-	catalog   map[string]api.CatalogEntry
-	items     []Item
-	queue     chan job
-	batches   map[int]*Batch
-	nextBatch int
+	mu          sync.Mutex
+	probe       client.ServerProbe
+	client      *client.Client
+	username    string
+	password    string
+	challenge   string
+	catalog     map[string]api.CatalogEntry
+	items       []Item
+	queue       chan job
+	batches     map[int]*Batch
+	nextBatch   int
+	profilePath string
+	profiles    []Profile
 }
 
 // New starts one worker, so transfers run in order and memory stays bounded
@@ -133,6 +134,8 @@ func (m *Manager) Probe(ctx context.Context, origin string) (client.ServerProbe,
 // Approve pins exactly the certificate the last Probe displayed. New clients
 // try HTTP/3 first on every connection, with HTTP/2 only as fallback.
 func (m *Manager) Approve(fingerprint string) error {
+	m.connectionMu.Lock()
+	defer m.connectionMu.Unlock()
 	if err := m.idle(); err != nil {
 		return err
 	}
@@ -145,10 +148,16 @@ func (m *Manager) Approve(fingerprint string) error {
 	if err != nil {
 		return err
 	}
+	if err := m.saveTrustLocked(m.probe); err != nil {
+		c.Close()
+		return err
+	}
 	if m.client != nil {
 		m.client.Close()
 	}
 	m.client, m.challenge, m.password = c, "", ""
+	c.SetAppVersion(m.version)
+	m.configureStoreLocked(c)
 	return nil
 }
 
@@ -164,6 +173,8 @@ func (m *Manager) current() (*client.Client, error) {
 // SignIn checks the password and reports the next required step. The password
 // is kept in memory only until sign-in completes, to continue onboarding.
 func (m *Manager) SignIn(ctx context.Context, username, password string) (Step, error) {
+	m.connectionMu.Lock()
+	defer m.connectionMu.Unlock()
 	if err := m.idle(); err != nil {
 		return Step{}, err
 	}
@@ -237,6 +248,8 @@ func (m *Manager) ConfirmEnrollment(ctx context.Context, code string) ([]string,
 
 // CompleteSignIn accepts an authenticator code or a recovery code.
 func (m *Manager) CompleteSignIn(ctx context.Context, code string) (Account, error) {
+	m.connectionMu.Lock()
+	defer m.connectionMu.Unlock()
 	c, _, _, challenge, err := m.pending()
 	if err != nil {
 		return Account{}, err
@@ -256,10 +269,15 @@ func (m *Manager) CompleteSignIn(ctx context.Context, code string) (Account, err
 	m.mu.Lock()
 	m.password, m.challenge = "", ""
 	m.mu.Unlock()
+	if err := m.saveLogin(c); err != nil {
+		return Account{}, err
+	}
 	return Account{Username: session.Username, Origin: c.Origin(), ServerID: string(session.ServerID)}, nil
 }
 
 func (m *Manager) SignOut(ctx context.Context) error {
+	m.connectionMu.Lock()
+	defer m.connectionMu.Unlock()
 	if err := m.idle(); err != nil {
 		return err
 	}
@@ -270,9 +288,10 @@ func (m *Manager) SignOut(ctx context.Context) error {
 	if c == nil {
 		return nil
 	}
+	credentialErr := m.forgetLogin(c.Origin())
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	return message(c.SignOut(ctx))
+	return errors.Join(credentialErr, message(c.SignOut(ctx)))
 }
 
 // Files lists the account's files sorted by name.
@@ -475,3 +494,5 @@ func (m *Manager) idle() error {
 	}
 	return nil
 }
+
+func (m *Manager) SetAppVersion(version string) { m.version = version }

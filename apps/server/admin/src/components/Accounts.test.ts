@@ -91,3 +91,90 @@ it('rejects user accounts in the admin interface and ends the issued session', a
   expect(request.mock.calls[2][1]?.method).toBe('DELETE');
   wrapper.unmount();
 });
+
+it('restores the browser cookie session after refresh and shows per-user storage', async () => {
+  const request = vi.fn<typeof fetch>();
+  vi.stubGlobal('fetch', request);
+  request
+    .mockResolvedValueOnce(reply({ role: 'admin' }))
+    .mockResolvedValueOnce(
+      reply([{ id: 'a', username: 'alice', state: 'active', disabled: false, storage_bytes: 128 }]),
+    )
+    .mockResolvedValueOnce(new Response(null, { status: 204 }));
+  const wrapper = mount(Accounts, { props: { restore: true } });
+  await flushPromises();
+  expect(wrapper.text()).toContain('alice');
+  expect(wrapper.text()).toContain('128 B');
+  expect(request.mock.calls[1][1]?.headers).toEqual({});
+  await wrapper.findAll('button').at(-1)!.trigger('click');
+  await flushPromises();
+  expect(request.mock.calls[2][0]).toBe('/api/v1/sessions/current');
+  expect(request.mock.calls[2][1]?.method).toBe('DELETE');
+  expect(wrapper.text()).toContain('Administrator sign-in');
+  wrapper.unmount();
+});
+
+it('lists offline devices, confirms revocation, and blocks mixed recovery controls', async () => {
+  const request = vi.fn<typeof fetch>();
+  vi.stubGlobal('fetch', request);
+  let recovery = '';
+  const devices = [
+    {
+      id: 'device-one',
+      name: 'Lost laptop',
+      platform: 'linux',
+      app_version: '0.1',
+      signed_in_at: '2026-01-01',
+      last_seen_at: '2026-01-02',
+      status: 'authorized',
+      recently_active: false,
+    },
+  ];
+  request.mockImplementation(async (input, options) => {
+    const path = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (path === '/api/v1/sessions/current') return reply({ role: 'admin' });
+    if (path === '/api/v1/admin/users')
+      return reply([
+        {
+          id: 'alice',
+          username: 'alice',
+          state: recovery ? 'password_required' : 'active',
+          disabled: false,
+          recovery_kind: recovery,
+        },
+      ]);
+    if (path.endsWith('/revoke')) return new Response(null, { status: 204 });
+    if (path.endsWith('/devices')) return reply(devices);
+    if (path.endsWith('/reset-password') && options?.method === 'POST') {
+      recovery = 'password';
+      return reply({ temporary_password: 'RESET-ONCE', expires_at: '2099-01-01' });
+    }
+    throw new Error('Unexpected request ' + path);
+  });
+  const wrapper = mount(Accounts, { props: { restore: true } });
+  await flushPromises();
+  const button = (label: string) =>
+    wrapper.findAll('button').find((value) => value.text() === label)!;
+  await button('Manage access').trigger('click');
+  await flushPromises();
+  expect(wrapper.text()).toContain('Lost laptop');
+  expect(wrapper.text()).toContain('Not recently seen');
+  await button('Revoke access').trigger('click');
+  expect(
+    request.mock.calls.some(([path]) => typeof path === 'string' && path.endsWith('/revoke')),
+  ).toBe(false);
+  await button('Confirm').trigger('click');
+  await flushPromises();
+  expect(request).toHaveBeenCalledWith(
+    '/api/v1/admin/users/alice/devices/device-one/revoke',
+    expect.objectContaining({ method: 'POST' }),
+  );
+  await button('Reset password').trigger('click');
+  await button('Confirm').trigger('click');
+  await flushPromises();
+  expect(wrapper.text()).toContain('RESET-ONCE');
+  expect(button('Reset TOTP').attributes('disabled')).toBeDefined();
+  await button('Dismiss password').trigger('click');
+  expect(wrapper.text()).not.toContain('RESET-ONCE');
+  wrapper.unmount();
+});

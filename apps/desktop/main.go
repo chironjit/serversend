@@ -38,8 +38,9 @@ func main() {
 	// 'Bind' is a list of Go struct instances. The frontend has access to the methods of these instances.
 	// 'Mac' options tailor the application when running an macOS.
 	app := application.New(application.Options{
-		Name:        "desktop",
-		Description: "ServerSend desktop client",
+		Name:           "desktop",
+		SingleInstance: &application.SingleInstanceOptions{UniqueID: "com.serversend.desktop"},
+		Description:    "ServerSend desktop client",
 		Services: []application.Service{
 			application.NewService(&GreetService{}),
 			application.NewService(NewTransferService(context.Background())),

@@ -113,7 +113,10 @@ func (r *Repository) ResetPassword(ctx context.Context, actor protocol.ID, epoch
 		if err := checkAdmin(ctx, tx, actor, epoch); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE accounts SET password_hash=?,temporary_expires_at=?,state='password_required',credential_revision=credential_revision+1,auth_epoch=auth_epoch+1,failed_attempts=0,blocked_until=0 WHERE id=?`, passwordHash, expires.UnixMilli(), target)
+		if err := checkRecovery(ctx, tx, target, "password"); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE accounts SET recovery_kind='password',temporary_password=NULL,password_hash=?,temporary_expires_at=?,state='password_required',credential_revision=credential_revision+1,auth_epoch=auth_epoch+1,failed_attempts=0,blocked_until=0 WHERE id=?`, passwordHash, expires.UnixMilli(), target)
 		if err != nil {
 			return err
 		}
@@ -144,7 +147,28 @@ func (r *Repository) SetDisabled(ctx context.Context, actor protocol.ID, epoch i
 	})
 }
 
+func checkRecovery(ctx context.Context, tx *sql.Tx, target protocol.ID, kind string) error {
+	var pending, state string
+	var enrolled bool
+	if err := tx.QueryRowContext(ctx, `SELECT recovery_kind,state,totp_enrolled FROM accounts WHERE id=?`, target).Scan(&pending, &state, &enrolled); err != nil {
+		return err
+	}
+	if pending != "" && pending != kind {
+		return ErrRecoveryPending
+	}
+	if kind == "totp" && state == "password_required" {
+		return ErrRecoveryPending
+	}
+	if kind == "password" && state == "totp_required" && !enrolled {
+		return ErrRecoveryPending
+	}
+	return nil
+}
+
 func invalidateAndAudit(ctx context.Context, tx *sql.Tx, actor, target protocol.ID, action string, now time.Time) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE device_sessions SET revoked_at=? WHERE account_id=? AND revoked_at IS NULL`, now.UnixMilli(), target); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM auth_challenges WHERE account_id=?`, target); err != nil {
 		return err
 	}

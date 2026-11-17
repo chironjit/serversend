@@ -348,3 +348,6 @@ func (s *Service) OpenChunk(ctx context.Context, account, file, version protocol
 	}
 	return object, protocol.Chunk{Index: index, Bytes: stored.Bytes, SHA256: stored.Digest}, nil
 }
+
+// Available reports usable free bytes on the object filesystem.
+func (s *Service) Available() (int64, error) { return s.store.Available() }

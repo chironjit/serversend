@@ -139,6 +139,27 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 		t.Fatalf("initial catalog: %+v %v", page, err)
 	}
 
+	// Relaunch restores the same device through real pinned TLS and refresh routes.
+	saved := admin.Credentials()
+	restoredClient, err := client.NewWithOptions(origin, probe.Fingerprint, client.TransportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(restoredClient.Close)
+	var durable client.CredentialState
+	restoredClient.SetCredentialStore(func(state client.CredentialState) error { durable = state; return nil })
+	if err = restoredClient.RestoreCredentials(t.Context(), saved); err != nil {
+		t.Fatal(err)
+	}
+	if durable.Pending != nil || durable.Session.AccessToken != "" || durable.Session.RefreshCredential == saved.Session.RefreshCredential {
+		t.Fatal("real rotation not persisted safely")
+	}
+	admin.Close()
+	admin = restoredClient
+	if _, err = admin.Catalog(t.Context()); err != nil {
+		t.Fatal("restoredClient device cannot browse", err)
+	}
+
 	source, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

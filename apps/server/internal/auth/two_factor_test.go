@@ -383,7 +383,7 @@ func TestPasswordResetPreservesTOTPAndTOTPResetForcesEnrollment(t *testing.T) {
 		t.Fatal(err)
 	}
 	token := login(t, s, "user", "another permanent password", "second_factor")
-	if _, err := s.VerifySecondFactor(t.Context(), token, codeAt(t, secret, clock.Now())); err != nil {
+	if _, err := s.CreateSession(t.Context(), token, codeAt(t, secret, clock.Now()), "Desktop"); err != nil {
 		t.Fatalf("password reset discarded TOTP: %v", err)
 	}
 
@@ -423,17 +423,22 @@ func TestPasswordResetPreservesTOTPAndTOTPResetForcesEnrollment(t *testing.T) {
 		t.Fatalf("TOTP reset not audited: %d %v", audits, err)
 	}
 
-	// A TOTP reset during a pending password reset keeps the password step.
+	// Enrollment alone does not release the recovery lock: full sign-in does.
+	if _, err := s.ResetPassword(t.Context(), admin, issued.AccountID); !errors.Is(err, database.ErrRecoveryPending) {
+		t.Fatalf("mixed reset accepted before login: %v", err)
+	}
 	clock.Advance(time.Minute)
+	token = login(t, s, "user", "another permanent password", "second_factor")
+	if _, err := s.CreateSession(t.Context(), token, codeAt(t, enrollment.Secret, clock.Now()), "Desktop"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.ResetPassword(t.Context(), admin, issued.AccountID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ResetTOTP(t.Context(), admin, issued.AccountID); err != nil {
-		t.Fatal(err)
+	if err := s.ResetTOTP(t.Context(), admin, issued.AccountID); !errors.Is(err, database.ErrRecoveryPending) {
+		t.Fatalf("mixed recovery accepted: %v", err)
 	}
-	if c, _ := s.repo.CredentialsByUsername(t.Context(), "user"); c.Status != (protocol.AccountStatus{State: protocol.PasswordRequired}) {
-		t.Fatalf("TOTP reset skipped the pending password replacement: %+v", c.Status)
-	}
+
 }
 
 func TestTwoFactorFailsClosedWithoutUsableProtectionKey(t *testing.T) {

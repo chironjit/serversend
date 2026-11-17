@@ -6,6 +6,12 @@
 
 ### Usability iteration
 
+- Rotating desktop refresh credentials with ten-minute access tokens, 30-day refresh inactivity expiry and second-factor-only verification every 60 days. Pending keychain rotations survive interrupted requests and failed successor saves; conflicting reuse revokes the affected device.
+- Admin per-user device history/revocation and separate password/TOTP reset controls, with fresh administrator authentication, confirmations, auditing, account-wide reset revocation and a transactional lock against mixed recovery.
+
+- Saved desktop servers and certificate pins, server switching, and optional sign-in persistence through the OS credential store. Passwords are not saved.
+- Seven-day browser admin cookies; separate Dashboard, Accounts, Logs and Settings views. Dashboard adds Linux host CPU/memory, stored bytes and available storage; accounts show committed file bytes per user.
+
 - Persistent application logs in the admin panel, with search, level filters, coloured Info/OK/Warning/Error indicators and older-entry navigation.
 - Fixed expired open uploads blocking recursive folder deletion indefinitely; active uploads remain protected.
 

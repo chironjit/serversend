@@ -21,6 +21,8 @@ Before adding any new module or third-party dependency, ask the user for approva
 
 Do not ask again for these approved uses; other new dependencies still require approval.
 
+- `github.com/zalando/go-keyring` and required transitive dependencies: desktop session storage in the native OS credential store (2026-11-17).
+
 ## Verbosity
 When planning, thinking, building, coding or implementing - ensure that you aim for simplicity and robustness. Be mindful of token usage on your side, and manage documentation generation to keep it minimal to what is needed for us to track the progress of the project.
 

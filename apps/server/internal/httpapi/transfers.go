@@ -1,12 +1,14 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"io"
 	"mime"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/chironjit/serversend/apps/server/internal/auth"
 	"github.com/chironjit/serversend/apps/server/internal/uploads"
@@ -29,6 +31,11 @@ const (
 func bearer(r *http.Request) string {
 	parts := strings.Split(r.Header.Get("Authorization"), " ")
 	if len(parts) != 2 || parts[0] != "Bearer" {
+		if r.Header.Get("Authorization") == "" {
+			if cookie, err := r.Cookie("__Host-serversend-admin"); err == nil {
+				return cookie.Value
+			}
+		}
 		return ""
 	}
 	return parts[1]
@@ -56,7 +63,20 @@ func writeFailure(w http.ResponseWriter, r *http.Request, err error) {
 // serveSessions turns a verified second factor into a device session, and
 // ends one. Sign-in uses the restricted challenge, never an existing session.
 func serveSessions(w http.ResponseWriter, r *http.Request, accounts *auth.Service) bool {
+	if r.URL.Path == currentSessionPath && r.Method != http.MethodGet {
+		if origin := r.Header.Get("Origin"); origin != "" && origin != "https://"+r.Host || r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+			writeError(w, r, 403, api.PermissionDenied, "Use the server's own secure origin")
+			return true
+		}
+	}
 	switch {
+	case r.URL.Path == currentSessionPath && r.Method == http.MethodGet:
+		session, err := accounts.Authorize(r.Context(), bearer(r))
+		if err != nil {
+			writeAuthenticationError(w, r, err)
+		} else {
+			writeJSON(w, r, 200, api.Session{AccountID: session.AccountID, ServerID: accounts.ServerID(), Role: session.Role, Username: session.Username, DeviceID: session.DeviceID})
+		}
 	case r.URL.Path == sessionsPath && r.Method == http.MethodPost:
 		contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if err != nil || contentType != "application/json" || r.Header.Get("Content-Encoding") != "" {
@@ -73,10 +93,14 @@ func serveSessions(w http.ResponseWriter, r *http.Request, accounts *auth.Servic
 			writeAuthenticationDecodeError(w, r, err)
 			return true
 		}
-		session, err := accounts.CreateSession(r.Context(), bearer(r), request.Code, request.DeviceName)
+		session, err := accounts.CreateSession(r.Context(), bearer(r), request.Code, request.DeviceName, request)
 		if err != nil {
 			writeAuthenticationError(w, r, err)
 			return true
+		}
+		if session.Role == "admin" && r.Header.Get("Origin") == "https://"+r.Host {
+			http.SetCookie(w, &http.Cookie{Name: "__Host-serversend-admin", Value: session.AccessToken, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, Expires: session.ExpiresAt, MaxAge: int(time.Until(session.ExpiresAt).Seconds())})
+			session.AccessToken = ""
 		}
 		writeJSON(w, r, 201, session)
 	case r.URL.Path == currentSessionPath && r.Method == http.MethodDelete:
@@ -84,6 +108,7 @@ func serveSessions(w http.ResponseWriter, r *http.Request, accounts *auth.Servic
 			writeFailure(w, r, err)
 			return true
 		}
+		http.SetCookie(w, &http.Cookie{Name: "__Host-serversend-admin", Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 		w.WriteHeader(http.StatusNoContent)
 	case r.URL.Path == sessionsPath || r.URL.Path == currentSessionPath:
 		w.Header().Set("Allow", map[string]string{sessionsPath: "POST", currentSessionPath: "DELETE"}[r.URL.Path])
@@ -128,6 +153,8 @@ func newTransferRoutes(accounts *auth.Service, service *uploads.Service) *transf
 				err = api.Error{Code: api.PermissionDenied, Message: "Administrators manage accounts in /admin/; sign in with a user account to transfer files"}
 			}
 			if err == nil {
+				stop := monitorSession(w, r, accounts, bearer(r))
+				defer stop()
 				err = handler(w, r, session.AccountID)
 			}
 			if err != nil {
@@ -269,6 +296,8 @@ func (t *transferRoutes) chunk(w http.ResponseWriter, r *http.Request, account p
 		return err
 	}
 	defer object.Close()
+	stopClose := context.AfterFunc(r.Context(), func() { _ = object.Close() })
+	defer stopClose()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.FormatInt(chunk.Bytes, 10))
 	w.Header().Set(api.ChunkDigestHeader, string(chunk.SHA256))
@@ -309,4 +338,34 @@ func (t *transferRoutes) cancel(w http.ResponseWriter, r *http.Request, account 
 	}
 	writeJSON(w, r, http.StatusOK, upload)
 	return nil
+}
+
+// monitorSession cancels in-flight work as well as rejecting its next request.
+func monitorSession(w http.ResponseWriter, r *http.Request, accounts *auth.Service, token string) func() {
+	ctx, cancel := context.WithCancel(r.Context())
+	*r = *r.WithContext(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if _, err := accounts.Authorize(ctx, token); err != nil {
+					cancel()
+					controller := http.NewResponseController(w)
+					_ = controller.SetReadDeadline(time.Now())
+					_ = controller.SetWriteDeadline(time.Now())
+					if r.Body != nil {
+						_ = r.Body.Close()
+					}
+					return
+				}
+			}
+		}
+	}()
+	return func() { cancel(); <-done }
 }

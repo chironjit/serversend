@@ -9,6 +9,7 @@ import (
 )
 
 type AuthChallenge struct {
+	DeviceID        protocol.ID
 	TokenHash       string
 	AccountID       protocol.ID
 	Scope           string
@@ -56,7 +57,7 @@ func (r *Repository) BeginChallenge(ctx context.Context, c Credentials, ch AuthC
 func (r *Repository) Challenge(ctx context.Context, tokenHash string, now time.Time) (Credentials, AuthChallenge, error) {
 	var ch AuthChallenge
 	var expires int64
-	err := r.db.QueryRowContext(ctx, `SELECT token_hash,account_id,scope,credential_revision,auth_epoch,expires_at FROM auth_challenges WHERE token_hash=? AND expires_at>?`, tokenHash, now.UnixMilli()).Scan(&ch.TokenHash, &ch.AccountID, &ch.Scope, &ch.Revision, &ch.Epoch, &expires)
+	err := r.db.QueryRowContext(ctx, `SELECT token_hash,account_id,scope,credential_revision,auth_epoch,expires_at,coalesce(device_id,'') FROM auth_challenges WHERE token_hash=? AND expires_at>?`, tokenHash, now.UnixMilli()).Scan(&ch.TokenHash, &ch.AccountID, &ch.Scope, &ch.Revision, &ch.Epoch, &expires, &ch.DeviceID)
 	if err != nil {
 		return Credentials{}, ch, err
 	}

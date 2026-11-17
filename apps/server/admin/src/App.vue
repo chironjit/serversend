@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
-import { Activity, RefreshCw, Users } from 'lucide-vue-next';
+import { RefreshCw } from 'lucide-vue-next';
 import Accounts from './components/Accounts.vue';
 import ThemePicker from './components/ThemePicker.vue';
 import BrandMark from './components/ui/BrandMark.vue';
@@ -9,6 +9,12 @@ import UiButton from './components/ui/UiButton.vue';
 import UiCard from './components/ui/UiCard.vue';
 import { checkReadiness } from './readiness';
 
+const pages = ['dashboard', 'accounts', 'logs', 'settings'];
+const page = ref('dashboard');
+function navigate() {
+  const value = location.hash.slice(1);
+  page.value = pages.includes(value) ? value : 'dashboard';
+}
 const status = ref<'checking' | 'ready' | 'unavailable'>('checking');
 let activeRequest: AbortController | undefined;
 let disposed = false;
@@ -31,9 +37,12 @@ async function refresh() {
 }
 
 onMounted(() => {
+  navigate();
+  window.addEventListener('hashchange', navigate);
   void refresh();
 });
 onUnmounted(() => {
+  window.removeEventListener('hashchange', navigate);
   disposed = true;
   activeRequest?.abort();
 });
@@ -58,25 +67,14 @@ onUnmounted(() => {
           Administration
         </p>
         <a
-          href="#accounts"
-          aria-current="page"
-          class="bg-accent text-accent-foreground flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium no-underline"
+          v-for="item in pages"
+          :key="item"
+          :href="'#' + item"
+          :aria-current="page === item ? 'page' : undefined"
+          class="rounded-md px-3 py-2 text-sm capitalize"
+          :class="page === item ? 'bg-accent text-accent-foreground' : 'text-muted-foreground'"
+          >{{ item }}</a
         >
-          <Users class="size-4" aria-hidden="true" />
-          User accounts
-        </a>
-        <a
-          href="#logs"
-          class="text-muted-foreground hover:bg-muted hover:text-foreground rounded-md px-3 py-2 text-sm no-underline"
-          >Application logs</a
-        >
-        <a
-          href="#status-heading"
-          class="text-muted-foreground hover:bg-muted hover:text-foreground flex items-center gap-2.5 rounded-md px-3 py-2 text-sm no-underline transition-colors"
-        >
-          <Activity class="size-4" aria-hidden="true" />
-          Server status
-        </a>
       </nav>
       <div class="border-border m-3 rounded-lg border p-3">
         <p class="m-0 text-xs font-medium">Server administration</p>
@@ -107,9 +105,24 @@ onUnmounted(() => {
           </p>
         </div>
 
-        <Accounts id="accounts" />
+        <nav class="mb-4 flex gap-4 lg:hidden">
+          <a
+            v-for="item in pages"
+            :key="item"
+            :href="'#' + item"
+            :aria-current="page === item ? 'page' : undefined"
+            class="capitalize"
+            >{{ item }}</a
+          >
+        </nav>
+        <Accounts :page="page" restore />
 
-        <UiCard as="section" aria-labelledby="status-heading" class="mt-5 p-5 sm:p-6">
+        <UiCard
+          v-if="page === 'dashboard'"
+          as="section"
+          aria-labelledby="status-heading"
+          class="mt-5 p-5 sm:p-6"
+        >
           <div class="flex flex-wrap items-start justify-between gap-4">
             <div>
               <h2 id="status-heading" class="m-0 text-base font-semibold tracking-tight">

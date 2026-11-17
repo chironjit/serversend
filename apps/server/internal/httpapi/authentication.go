@@ -134,8 +134,10 @@ func writeAuthenticationDecodeError(w http.ResponseWriter, r *http.Request, err 
 
 func writeAuthenticationError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, database.ErrRecoveryPending):
+		writeError(w, r, 409, api.Conflict, "Complete the pending recovery before resetting the other factor")
 	case errors.Is(err, auth.ErrForbidden), errors.Is(err, database.ErrAdminRequired):
-		writeError(w, r, 403, api.PermissionDenied, "Sign in as an administrator again; user creation requires authentication within five minutes")
+		writeError(w, r, 403, api.PermissionDenied, "Sign in as an administrator again; this action requires authentication within five minutes")
 	case errors.Is(err, auth.ErrInput):
 		writeError(w, r, 400, api.InvalidRequest, "Use a valid username")
 	case errors.Is(err, database.ErrUsernameExists):

@@ -21,5 +21,23 @@ func (s *Service) CreateUserFromSession(ctx context.Context, token, username str
 	if session.Role != "admin" {
 		return IssuedPassword{}, ErrForbidden
 	}
-	return s.CreateUser(ctx, Principal{accountID: session.AccountID, epoch: session.Epoch, reauthenticatedAt: session.ExpiresAt.Add(-SessionLifetime)}, username)
+	return s.CreateUser(ctx, Principal{accountID: session.AccountID, epoch: session.Epoch, reauthenticatedAt: session.CreatedAt}, username)
+}
+
+func (s *Service) adminPrincipal(ctx context.Context, token string) (Principal, error) {
+	if !validToken(token) {
+		return Principal{}, ErrCredentials
+	}
+	session, err := s.repo.SessionByToken(ctx, accessHash(token), s.now())
+	if err != nil {
+		return Principal{}, refreshError(err)
+	}
+	if session.Role != "admin" {
+		return Principal{}, ErrForbidden
+	}
+	actor := Principal{accountID: session.AccountID, epoch: session.Epoch, reauthenticatedAt: session.CreatedAt}
+	if !s.reauthenticated(actor) {
+		return Principal{}, ErrForbidden
+	}
+	return actor, nil
 }

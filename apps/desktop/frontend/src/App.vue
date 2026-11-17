@@ -28,6 +28,7 @@ import type {
   Batch,
   File,
   Item,
+  Profile,
 } from '../bindings/github.com/chironjit/serversend/apps/desktop/internal/transfer/models';
 import type { ServerProbe } from '../bindings/github.com/chironjit/serversend/shared/client/models';
 import BrandMark from './components/ui/BrandMark.vue';
@@ -51,6 +52,7 @@ type View =
   | 'enroll'
   | 'recovery'
   | 'code'
+  | 'reauth'
   | 'files';
 type Theme = 'system' | 'light' | 'dark';
 
@@ -59,6 +61,34 @@ const signingIn = computed(() => view.value !== 'files');
 const busy = ref(false);
 const error = ref('');
 
+const profiles = ref<Profile[]>([]);
+const remember = ref(false);
+async function loadProfiles() {
+  profiles.value = (await TransferService.Profiles()) ?? [];
+}
+const openProfile = (origin: string) =>
+  attempt(async () => {
+    address.value = origin;
+    const saved = profiles.value.find((p) => p.origin === origin);
+    remember.value = saved?.remember ?? false;
+    username.value = saved?.username ?? '';
+    account.value = undefined;
+    files.value = [];
+    folders.value = [];
+    view.value = 'password';
+    const restored = await TransferService.OpenProfile(origin);
+    if (restored.username) {
+      account.value = restored;
+      view.value = restored.reauthenticationRequired ? 'reauth' : 'files';
+      if (view.value === 'reauth') return;
+      files.value = (await TransferService.Files('')) ?? [];
+    }
+  });
+const removeProfile = (origin: string) =>
+  attempt(async () => {
+    await TransferService.RemoveProfile(origin);
+    await loadProfiles();
+  });
 const address = ref('');
 const probe = ref<ServerProbe>();
 const username = ref('');
@@ -269,9 +299,41 @@ const confirmEnrollment = () =>
     view.value = 'recovery';
   });
 
+const completeReauthentication = () =>
+  attempt(async () => {
+    account.value = await TransferService.CompleteReauthentication(code.value);
+    code.value = '';
+    view.value = 'files';
+    files.value = (await TransferService.Files(parent.value)) ?? [];
+  });
+let sessionTimer: ReturnType<typeof setInterval> | undefined;
+let sessionChecking = false;
+async function checkSession() {
+  if (view.value !== 'files' || busy.value || sessionChecking) return;
+  sessionChecking = true;
+  try {
+    const status = await TransferService.SessionStatus();
+    if (status.next === 'reauth') {
+      code.value = '';
+      view.value = 'reauth';
+    } else if (status.next === 'password') {
+      account.value = undefined;
+      files.value = [];
+      folders.value = [];
+      view.value = 'password';
+      error.value = 'Device authorization expired or was revoked. Sign in again.';
+    }
+  } catch {
+    error.value = 'Could not check the device connection. Retrying shortly.';
+  } finally {
+    sessionChecking = false;
+  }
+}
 const completeSignIn = () =>
   attempt(async () => {
+    await TransferService.SetRemember(remember.value);
     account.value = await TransferService.CompleteSignIn(code.value);
+    await loadProfiles();
     code.value = '';
     recoveryCodes.value = [];
     view.value = 'files';
@@ -302,13 +364,16 @@ const download = (file: File) =>
 
 const signOut = () =>
   attempt(async () => {
-    await TransferService.SignOut();
-    account.value = undefined;
-    folders.value = [];
-    files.value = [];
-    batches.value = [];
-    batchError.value = '';
-    view.value = 'password';
+    try {
+      await TransferService.SignOut();
+    } finally {
+      account.value = undefined;
+      folders.value = [];
+      files.value = [];
+      batches.value = [];
+      batchError.value = '';
+      view.value = 'password';
+    }
   });
 
 function percent(item: Item): number {
@@ -377,6 +442,9 @@ function applyTheme(next: Theme) {
 }
 
 onMounted(() => {
+  void loadProfiles().catch(() => {
+    error.value = 'Could not load saved servers';
+  });
   let saved: string | null = null;
   try {
     saved = localStorage.getItem('serversend-theme');
@@ -385,6 +453,7 @@ onMounted(() => {
   }
   applyTheme(saved === 'light' || saved === 'dark' ? saved : 'system');
   rateTimer = setInterval(sampleRates, 1000);
+  sessionTimer = setInterval(() => void checkSession(), 30000);
   batchTimer = setInterval(() => {
     if (
       busy.value ||
@@ -396,6 +465,7 @@ onMounted(() => {
   stopEvents = Events.On('transfer', (event: { data: Item }) => onTransfer(event.data));
 });
 onUnmounted(() => {
+  clearInterval(sessionTimer);
   stopEvents?.();
   clearInterval(rateTimer);
   clearInterval(batchTimer);
@@ -422,6 +492,22 @@ onUnmounted(() => {
           title="Connect to a server"
           description="Enter the address your server operator gave you."
         />
+        <div v-for="saved in profiles" :key="saved.origin" class="flex gap-2">
+          <UiButton
+            type="button"
+            variant="outline"
+            :disabled="busy"
+            @click="openProfile(saved.origin)"
+            >{{ saved.username ? saved.username + ' · ' : '' }}{{ saved.origin }}</UiButton
+          >
+          <UiButton
+            type="button"
+            variant="ghost"
+            :disabled="busy"
+            @click="removeProfile(saved.origin)"
+            >Remove</UiButton
+          >
+        </div>
         <UiField label="Server address">
           <UiInput
             v-model="address"
@@ -480,6 +566,9 @@ onUnmounted(() => {
         >
           <UiInput v-model="password" type="password" required autocomplete="current-password" />
         </UiField>
+        <label class="flex items-center gap-2 text-sm"
+          ><input v-model="remember" type="checkbox" />Remember sign-in on this device</label
+        >
         <div class="flex flex-wrap gap-2">
           <UiButton type="submit" :disabled="busy">
             <Loader2 v-if="busy" class="animate-spin" aria-hidden="true" />
@@ -562,10 +651,18 @@ onUnmounted(() => {
         <UiButton class="w-full" @click="view = 'code'">I saved them — continue</UiButton>
       </section>
 
-      <form v-else-if="view === 'code'" class="grid gap-5" @submit.prevent="completeSignIn">
+      <form
+        v-else-if="view === 'code' || view === 'reauth'"
+        class="grid gap-5"
+        @submit.prevent="view === 'reauth' ? completeReauthentication() : completeSignIn()"
+      >
         <UiCardHeader
-          title="Enter your code"
-          description="Enter the current code from your authenticator app, or a recovery code. If you have just set up your authenticator, wait for it to show a new code."
+          :title="view === 'reauth' ? 'Verify this device' : 'Enter your code'"
+          :description="
+            view === 'reauth'
+              ? 'This device needs authenticator verification every 60 days. Your password is not required.'
+              : 'Enter the current code from your authenticator app, or a recovery code. If you have just set up your authenticator, wait for it to show a new code.'
+          "
         />
         <UiField label="Code">
           <UiInput
@@ -652,6 +749,17 @@ onUnmounted(() => {
             {{ account.username }} · {{ account.origin }}
           </span>
           <ThemeSwitch :model-value="theme" @update:model-value="applyTheme" />
+          <UiButton
+            variant="outline"
+            :disabled="busy"
+            @click="
+              attempt(async () => {
+                await loadProfiles();
+                view = 'connect';
+              })
+            "
+            >Switch server / add server</UiButton
+          >
           <UiButton
             v-if="account"
             variant="ghost"

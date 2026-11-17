@@ -4,9 +4,9 @@ This is the active delivery roadmap, reorganized on 2026-11-17 around features i
 
 ## Current baseline
 
-Already implemented: versioned contracts and identity-proof helpers; SQLite foundations and migrations; a TLS server with persistent identity and certificates; administrator bootstrap; Argon2id passwords, mandatory replacement, TOTP and recovery codes; temporary 12-hour sessions; browser user listing/creation; sequential standard uploads, recursive folders and empty directories; folder browsing/creation; verified whole-file downloads; confirmed permanent deletion with restartable deleted-object cleanup; Tailwind components and theme selection in both interfaces; desktop throughput display; component checks and release workflows.
+Already implemented: versioned contracts and identity-proof helpers; SQLite foundations and migrations; a TLS server with persistent identity and certificates; administrator bootstrap; Argon2id passwords, mandatory replacement, TOTP and recovery codes; seven-day admin cookies, rotating desktop refresh credentials with 30-day inactivity/60-day second-factor limits, desktop profiles and optional OS-keychain persistence; browser user listing/creation; sequential standard uploads, recursive folders and empty directories; folder browsing/creation; verified whole-file downloads; confirmed permanent deletion with restartable deleted-object cleanup; Tailwind components and theme selection in both interfaces; desktop throughput display; component checks and release workflows.
 
-These are existing building blocks, not completed versions of the features below. The desktop queue and credentials remain in memory. There is no transfer resume, private mode, trash or complete version-management experience. Catalogs currently stop at 1000 entries per directory. Hosted CI results, actual Unraid qualification and complete native UI workflows must be verified, not inferred from workflow files. This status review uses the current implementation and previously executed checks recorded in the verification map; it does not represent a fresh test run.
+These are existing building blocks, not completed versions of the features below. The desktop queue remains in memory; remembered session credentials use the OS credential store. There is no transfer resume, private mode, trash or complete version-management experience. Catalogs currently stop at 1000 entries per directory. Hosted CI results, actual Unraid qualification and complete native UI workflows must be verified, not inferred from workflow files. This status review uses the current implementation and previously executed checks recorded in the verification map; it does not represent a fresh test run.
 
 Current pending temporary passwords can be retrieved by administrators until replacement or one-hour expiry. The original specification calls for showing them once. Resolve that discrepancy in Complete account administration; do not silently treat the current behavior as the final security policy.
 
@@ -21,13 +21,13 @@ Checked items mean the stated scope is implemented with recorded evidence. Compo
 | 1. Symlink handling | Partial | Skip/report, safe source opening and desktop summaries delivered; native Windows/macOS and picker qualification open |
 | 2. Performance and QUIC | Partial | QUIC-first transport complete; deployment resource/performance validation open; later integrations tracked in features 5, 9, 10, 12 and 14 |
 | 3. Recoverable storage | Partial | Instance locks, offline backup/restore, startup reconciliation, quota reservations and upload retirement delivered; actual filesystem/power-loss qualification open |
-| 4. Persistent sign-in/devices | Pending | Existing access sessions only; refresh, secure stores and device controls open |
+| 4. Persistent sign-in/devices | Partial | Desktop refresh, expiry/TOTP gates, admin device history/revocation delivered; native qualification and self-service controls open |
 | 5. Resumable uploads | Pending | Existing in-memory queue only; persistence and resume open |
 | 6. Browsing/restores | Pending | Existing folder browsing and whole-file downloads only; pagination and resumable folder restores open |
 | 7. Storage visibility | Pending | Existing local throughput display only; accounting and dashboards open |
 | 8. Versions/trash | Pending | Existing version records and permanent deletion only; history, trash and retention open |
 | 9. Private storage | Pending | Contracts only; format prototype, encryption and recovery open |
-| 10. Multiple servers/routes | Pending | Existing single connection only; persistent profiles and route switching open |
+| 10. Multiple servers/routes | Pending | Saved profiles with one active connection; simultaneous connections and routes open |
 | 11. Account administration | Pending | Existing user creation/listing and backend foundations only; complete controls and security policy open |
 | 12. Deployment/backup/upgrades | Partial | Initial standard backup/restore and operator guidance delivered; actual Unraid, private recovery and version compatibility open |
 | 13. Background desktop | Partial | Bounded batch summaries and skip/failure counts delivered; durable controls, tray and native lifecycle open |
@@ -95,17 +95,19 @@ For every feature:
 
 **Outcome:** users remain signed in across restarts and offline periods, while lost or revoked devices lose access promptly.
 
-**Existing:** mandatory second-factor session issuance, hashed access credentials, 12-hour sessions, logout and live account-state checks. No refresh or OS credential storage.
+**Existing:** mandatory second-factor issuance, ten-minute desktop access, rotating refresh credentials, 30-day inactivity and 60-day TOTP gates, optional OS-keychain persistence, seven-day browser cookies, device history/revocation and active-request cancellation. Native keychain qualification, stable installation registration across full logins and self-service controls remain open.
 
-- [ ] Introduce stable installation/device registration, short-lived access tokens and rotating refresh credentials stored hashed on the server.
-- [ ] Define replay handling, family revocation, concurrent-worker serialization and interrupted rotation recovery without routine device authorization expiry.
+- [x] Issue per-login device authorization, short-lived access tokens and rotating refresh credentials stored hashed on the server.
+- [ ] Add stable installation identity/deduplication across new full logins; current refresh/TOTP renewal already preserves the device ID.
+- [x] Implement bounded current/previous refresh tuples, conflicting-reuse revocation, serialized workers and interrupted rotation recovery, with 30-day refresh inactivity and 60-day second-factor verification. Full password plus TOTP login is required after inactivity expiry. Fake-clock and race tests cover the boundaries and replay handling.
 - [ ] Integrate native secure credential storage on Linux, Windows and macOS; test locked, unavailable and lost stores without plaintext fallback. Obtain dependency approval first if needed.
 - [ ] Persist credentials under server/account scope and verified trust only. Implement stable identity-key proof/CA validation and renewal safety needed before persisting credentials; feature 10 expands this into multiple profiles/routes.
+- [x] Add admin per-user device history (including offline devices), last-seen/recent-activity indication and individual audited revocation with recent admin reauthentication. Heartbeat activity stays separate from refresh/TOTP deadlines.
 - [ ] Add self-service device listing/revocation and session controls; enforce revocation on every request and cancel active streams within five seconds.
 - [ ] Replace browser bearer-session handling with Secure/HttpOnly/SameSite cookies, CSRF/origin protections, browser expiry and sensitive-action reauthentication.
 - [ ] Migrate or explicitly invalidate legacy sessions safely; retain mandatory onboarding and recovery-code enforcement.
 
-**Accept when:** app/OS/server restarts, long inactivity, offline periods and a lost refresh response do not require routine login; concurrent refresh and replay tests pass; revocation blocks new work and active streams within the bound; forged browser mutations fail. Record native secure-store results on all three platforms.
+**Accept when:** app/OS/server restarts, offline periods and a lost refresh response restore silently within policy limits; exact 30-day inactivity/60-day TOTP boundaries are tested; concurrent refresh and replay tests pass; revocation blocks new work and active streams within the bound; forged browser mutations fail. Record native secure-store results on all three platforms.
 
 ## 5. Persistent, resumable uploads
 
@@ -194,7 +196,7 @@ For every feature:
 
 **Outcome:** multiple independent accounts/servers work simultaneously, with safe LAN/tailnet switching.
 
-**Existing:** single active desktop connection, certificate-fingerprint approval and shared identity-proof contracts. Feature 2 preserves transport pinning; feature 4 establishes persistent single-profile trust.
+**Existing:** saved server profiles and certificate fingerprints, optional OS-keychain sessions, single active desktop connection and shared identity-proof contracts. Feature 2 preserves transport pinning; feature 4 establishes persistent single-profile trust.
 
 **Depends on:** features 4, 5, 6. Add combined/per-server queue views here; feature 13 later completes their background lifecycle and UI qualification.
 
@@ -210,11 +212,13 @@ For every feature:
 
 **Outcome:** administrators can manage account recovery and access through the browser without operator intervention for routine tasks.
 
-**Existing:** user list/creation and backend password-reset, TOTP-reset and disablement services; complete runtime controls are missing.
+**Existing:** user list/creation, admin device history/revocation and separate password/TOTP reset UI/API with recovery locking. Disablement services exist; UI, self-service recovery and remaining administration gates are open.
 
 **Depends on:** feature 4; retention controls integrate with feature 8 and capacity views with feature 7.
 
-- [ ] Expose audited, role-checked password reset, distinct lost-TOTP recovery, account disable/enable and device/session revocation through API and UI.
+- [x] Expose audited, role-checked password reset, distinct lost-TOTP recovery and individual device revocation through admin API and UI.
+- [ ] Expose account disable/enable and remaining self-service session controls.
+- [x] Prevent mixed password/TOTP resets with a transactional account recovery lock until full recovery login; allow same-kind retry. Both reset types revoke every device while preserving the other factor. Auth/database/HTTP and UI checks cover conflicting administrators and completion rules.
 - [ ] Require fresh administrator reauthentication for sensitive actions; enforce invalidation and preserve the distinction between password and TOTP recovery.
 - [ ] Complete self-service recovery-code replacement and account/device screens.
 - [ ] Restore show-once temporary-password delivery, or obtain an explicit product decision to revise the specification; migrate away from retained pending-password material if show-once is retained.

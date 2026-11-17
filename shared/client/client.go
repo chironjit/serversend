@@ -17,6 +17,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -97,12 +99,18 @@ func Probe(ctx context.Context, origin string) (ServerProbe, error) {
 }
 
 type Client struct {
-	origin string
-	http   *http.Client
+	appVersion string
+	origin     string
+	http       *http.Client
 
-	mu      sync.Mutex
-	session api.Session
-	limits  protocol.TransferLimits
+	mu                      sync.Mutex
+	session                 api.Session
+	refreshMu               sync.Mutex
+	pending                 *api.RefreshRequest
+	refreshChallenge        string
+	refreshChallengeExpires time.Time
+	store                   func(CredentialState) error
+	limits                  protocol.TransferLimits
 }
 
 // New returns a client that accepts exactly the approved certificate. Every
@@ -152,6 +160,7 @@ func (c *Client) Account() (api.Session, bool) {
 	defer c.mu.Unlock()
 	public := c.session
 	public.AccessToken = ""
+	public.RefreshCredential = ""
 	return public, c.session.AccessToken != ""
 }
 
@@ -171,6 +180,13 @@ type call struct {
 
 // do returns the response for a 2xx status and a typed api.Error otherwise.
 func (c *Client) do(ctx context.Context, request call) (*http.Response, error) {
+	if request.token != "" && c.token() != "" && !strings.HasPrefix(request.path, "/auth/") && request.path != "/sessions" {
+		if err := c.EnsureSession(ctx); err != nil {
+			return nil, err
+		}
+		request.token = c.token()
+	}
+
 	r, err := http.NewRequestWithContext(ctx, request.method, c.origin+api.BasePath+request.path, bytes.NewReader(request.body))
 	if err != nil {
 		return nil, err
@@ -254,29 +270,42 @@ func (c *Client) ConfirmTOTP(ctx context.Context, challenge, code string) ([]str
 // memory only; it is gone when the process exits.
 func (c *Client) SignIn(ctx context.Context, challenge, code, deviceName string) (api.Session, error) {
 	var session api.Session
-	if err := c.exchange(ctx, call{method: "POST", path: "/sessions", token: challenge}, api.SessionRequest{Code: code, DeviceName: deviceName}, &session); err != nil {
+	if err := c.exchange(ctx, call{method: "POST", path: "/sessions", token: challenge}, api.SessionRequest{Code: code, DeviceName: deviceName, Platform: runtime.GOOS, AppVersion: c.appVersion}, &session); err != nil {
 		return api.Session{}, err
 	}
 	if session.AccessToken == "" || (protocol.Scope{ServerID: session.ServerID, AccountID: session.AccountID}).Validate() != nil {
 		return api.Session{}, errors.New("the server sent an incomplete session")
 	}
+	c.refreshMu.Lock()
+	c.pending = nil
+	c.refreshChallenge = ""
+	c.refreshChallengeExpires = time.Time{}
 	c.mu.Lock()
 	c.session = session
 	c.mu.Unlock()
+	c.refreshMu.Unlock()
 	account, _ := c.Account()
 	return account, nil
 }
 
 // SignOut always forgets the local session, even if the server is unreachable.
 func (c *Client) SignOut(ctx context.Context) error {
-	token := c.token()
+	c.refreshMu.Lock()
+	defer c.refreshMu.Unlock()
 	c.mu.Lock()
+	session := c.session
 	c.session = api.Session{}
 	c.mu.Unlock()
-	if token == "" {
+	c.pending = nil
+	c.refreshChallenge = ""
+	c.refreshChallengeExpires = time.Time{}
+	if session.RefreshCredential != "" {
+		return c.exchange(ctx, call{method: "POST", path: "/sessions/revoke"}, api.RefreshRequest{DeviceID: session.DeviceID, RefreshCredential: session.RefreshCredential}, nil)
+	}
+	if session.AccessToken == "" {
 		return nil
 	}
-	return c.exchange(ctx, call{method: "DELETE", path: "/sessions/current", token: token}, nil, nil)
+	return c.exchange(ctx, call{method: "DELETE", path: "/sessions/current", token: session.AccessToken}, nil, nil)
 }
 
 func (c *Client) transferLimits(ctx context.Context) (protocol.TransferLimits, error) {
@@ -320,4 +349,29 @@ func (c *Client) CatalogFolder(ctx context.Context, parent protocol.ID) (api.Cat
 		return api.CatalogPage{}, errors.New("the server sent a file list this version cannot read")
 	}
 	return page, nil
+}
+
+// SavedSession returns credentials for the native OS credential store only.
+func (c *Client) SavedSession() api.Session {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.session
+}
+
+// RestoreSession validates the stored token against live server state over pinned TLS.
+func (c *Client) RestoreSession(ctx context.Context, session api.Session) error {
+	var current api.Session
+	if session.AccessToken == "" {
+		return errors.New("sign in again")
+	}
+	if err := c.exchange(ctx, call{method: "GET", path: "/sessions/current", token: session.AccessToken}, nil, &current); err != nil {
+		return err
+	}
+	if current.AccountID != session.AccountID || current.ServerID != session.ServerID || current.Role != "user" {
+		return errors.New("saved account does not match server")
+	}
+	c.mu.Lock()
+	c.session = session
+	c.mu.Unlock()
+	return nil
 }

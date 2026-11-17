@@ -26,7 +26,7 @@ async function load(older = false) {
     const params = new URLSearchParams({ level: level.value, q: query.value });
     if (older && entries.value.length) params.set('before', String(entries.value.at(-1)!.id));
     const response = await fetch('/api/v1/admin/logs?' + params, {
-      headers: { Authorization: 'Bearer ' + props.token },
+      headers: props.token ? { Authorization: 'Bearer ' + props.token } : {},
       cache: 'no-store',
       redirect: 'error',
       signal: active.signal,

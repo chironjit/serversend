@@ -54,6 +54,10 @@ export function ChooseAndUploadFolder(parent: string): $CancellablePromise<void>
     return $Call.ByID(1602388781, parent);
 }
 
+export function CompleteReauthentication(code: string): $CancellablePromise<transfer$0.Account> {
+    return $Call.ByID(701885792, code);
+}
+
 export function CompleteSignIn(code: string): $CancellablePromise<transfer$0.Account> {
     return $Call.ByID(622641127, code);
 }
@@ -74,12 +78,32 @@ export function Files(parent: string): $CancellablePromise<transfer$0.File[] | n
     return $Call.ByID(3648180037, parent);
 }
 
+export function OpenProfile(origin: string): $CancellablePromise<transfer$0.Account> {
+    return $Call.ByID(1263544311, origin);
+}
+
 export function Probe(address: string): $CancellablePromise<client$0.ServerProbe> {
     return $Call.ByID(2321160668, address);
 }
 
+export function Profiles(): $CancellablePromise<transfer$0.Profile[] | null> {
+    return $Call.ByID(3376120596);
+}
+
+export function RemoveProfile(origin: string): $CancellablePromise<void> {
+    return $Call.ByID(225644507, origin);
+}
+
 export function ReplacePassword(password: string): $CancellablePromise<transfer$0.Step> {
     return $Call.ByID(699289139, password);
+}
+
+export function SessionStatus(): $CancellablePromise<transfer$0.Step> {
+    return $Call.ByID(2415278904);
+}
+
+export function SetRemember(remember: boolean): $CancellablePromise<void> {
+    return $Call.ByID(1707932493, remember);
 }
 
 export function SignIn(username: string, password: string): $CancellablePromise<transfer$0.Step> {

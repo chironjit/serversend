@@ -214,7 +214,10 @@ func (r *Repository) ResetTOTP(ctx context.Context, actor protocol.ID, epoch int
 		if err := checkAdmin(ctx, tx, actor, epoch); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE accounts SET totp_enrolled=0,state=CASE WHEN state='password_required' THEN state ELSE 'totp_required' END,auth_epoch=auth_epoch+1,second_factor_failures=0,second_factor_blocked_until=0 WHERE id=?`, target)
+		if err := checkRecovery(ctx, tx, target, "totp"); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE accounts SET recovery_kind='totp',totp_enrolled=0,state=CASE WHEN state='password_required' THEN state ELSE 'totp_required' END,auth_epoch=auth_epoch+1,second_factor_failures=0,second_factor_blocked_until=0 WHERE id=?`, target)
 		if err != nil {
 			return err
 		}

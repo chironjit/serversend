@@ -7,6 +7,8 @@ import (
 )
 
 type UserSummary struct {
+	RecoveryKind      string      `json:"recovery_kind"`
+	StorageBytes      int64       `json:"storage_bytes"`
 	ID                protocol.ID `json:"id"`
 	Username          string      `json:"username"`
 	State             string      `json:"state"`
@@ -21,7 +23,7 @@ func (r *Repository) Users(ctx context.Context, now time.Time) ([]UserSummary, e
 	if _, err := r.db.ExecContext(ctx, `UPDATE accounts SET temporary_password=NULL WHERE temporary_expires_at<=? AND temporary_password IS NOT NULL`, now.UnixMilli()); err != nil {
 		return nil, err
 	}
-	rows, err := r.db.QueryContext(ctx, `SELECT id,username,state,disabled,coalesce(temporary_expires_at,0),temporary_password FROM accounts WHERE role='user' ORDER BY created_at,id`)
+	rows, err := r.db.QueryContext(ctx, `SELECT recovery_kind,id,username,state,disabled,coalesce(temporary_expires_at,0),temporary_password,(SELECT coalesce(sum(total_bytes),0) FROM versions WHERE account_id=accounts.id) FROM accounts WHERE role='user' ORDER BY created_at,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +32,7 @@ func (r *Repository) Users(ctx context.Context, now time.Time) ([]UserSummary, e
 	for rows.Next() {
 		var u UserSummary
 		var expires int64
-		if err := rows.Scan(&u.ID, &u.Username, &u.State, &u.Disabled, &expires, &u.Protected); err != nil {
+		if err := rows.Scan(&u.RecoveryKind, &u.ID, &u.Username, &u.State, &u.Disabled, &expires, &u.Protected, &u.StorageBytes); err != nil {
 			return nil, err
 		}
 		if expires > 0 {
