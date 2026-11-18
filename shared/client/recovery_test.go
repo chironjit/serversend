@@ -50,6 +50,8 @@ func TestUploadRetriesKeepIntentAndChunkBytes(t *testing.T) {
 			t.Fatalf("replay changed intent: %s", route)
 		}
 		switch {
+		case route == api.BasePath+"/catalog/target":
+			return recoveryResponse(api.CatalogPage{Page: api.Page{Snapshot: "44444444444444444444444444444444"}, CatalogRevision: "0", Entries: []api.CatalogEntry{}}), nil
 		case route == api.BasePath+"/uploads":
 			if err := json.Unmarshal(body, &intent); err != nil {
 				t.Fatal(err)
@@ -67,7 +69,7 @@ func TestUploadRetriesKeepIntentAndChunkBytes(t *testing.T) {
 	if _, err := c.Upload(t.Context(), path, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(counts) != 4 {
+	if len(counts) != 5 {
 		t.Fatalf("requests: %v", counts)
 	}
 	for route, n := range counts {
@@ -268,6 +270,11 @@ func TestBatchRetriesKeepPreparedBytes(t *testing.T) {
 	var original []byte
 	attempts := 0
 	c := recoveryClient(sourceTestTransport(func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.URL.Path, "/catalog/target") {
+			return recoveryResponse(struct {
+				Entry *api.CatalogEntry `json:"entry"`
+			}{nil}), nil
+		}
 		attempts++
 		body, _ := io.ReadAll(r.Body)
 		if attempts == 1 {

@@ -32,7 +32,7 @@ func (s *Store) Breakdown(ctx context.Context) (map[string]int64, error) {
 			category = "retained"
 		case strings.HasPrefix(name, layout.Uploads+"/"), strings.HasPrefix(name, layout.Tmp+"/"):
 			category = "staged"
-		case strings.HasPrefix(name, layout.Trash+"/"):
+		case strings.HasPrefix(name, layout.Trash+"/"), strings.HasPrefix(name, ".serversend/recoverable/"):
 			category = "trash"
 		}
 		result[category] += n

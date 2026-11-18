@@ -22,7 +22,7 @@ func visibility(accounts *auth.Service, transfers *uploads.Service) func(http.Re
 	sequence := func() int64 { return epoch + int64(time.Since(started)/(2*time.Second)) }
 	return func(w http.ResponseWriter, r *http.Request) bool {
 		path := r.URL.Path
-		admin := path == api.BasePath+"/admin/statistics" || path == api.BasePath+"/admin/events"
+		admin := path == api.BasePath+"/admin/retention" || path == api.BasePath+"/admin/statistics" || path == api.BasePath+"/admin/events"
 		stream := path == api.BasePath+"/events" || path == api.BasePath+"/admin/events"
 		if !admin && !stream && path != api.BasePath+"/statistics" {
 			return false
@@ -34,6 +34,29 @@ func visibility(accounts *auth.Service, transfers *uploads.Service) func(http.Re
 		}
 		if (admin && session.Role != "admin") || (!admin && session.Role != "user") {
 			writeAuthenticationError(w, r, auth.ErrForbidden)
+			return true
+		}
+		if path == api.BasePath+"/admin/retention" {
+			var policy api.RetentionPolicy
+			var err error
+			switch r.Method {
+			case http.MethodGet:
+				policy, err = transfers.Retention(r.Context())
+			case http.MethodPut:
+				if e := json.NewDecoder(http.MaxBytesReader(w, r.Body, api.MaxControlBytes)).Decode(&policy); e != nil {
+					writeError(w, r, 400, api.InvalidRequest, "Invalid retention policy")
+					return true
+				}
+				err = transfers.SetRetention(r.Context(), policy)
+			default:
+				writeError(w, r, 405, api.InvalidRequest, "Use GET or PUT")
+				return true
+			}
+			if err != nil {
+				writeFailure(w, r, err)
+			} else {
+				writeJSON(w, r, 200, policy)
+			}
 			return true
 		}
 		if r.Method != http.MethodGet {

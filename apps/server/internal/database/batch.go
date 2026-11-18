@@ -102,7 +102,7 @@ func commitBatchFile(ctx context.Context, tx *sql.Tx, account protocol.ID, file 
 	}
 	t := file.Transfer
 	t.AccountID, t.CreatedAt, t.ExpiresAt = account, now, now
-	if err := publish(ctx, tx, &t, file.Name, file.Source); err != nil {
+	if err := publish(ctx, tx, &t, file.Name, file.Source, now); err != nil {
 		return Transfer{}, false, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO uploads(account_id,id,state,mode,idempotency_key,expected_bytes,created_at,file_id,version_id,chunk_count,manifest_bytes,expected_head,expires_at,parent_id,result_catalog_revision,result_head_revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,

@@ -35,6 +35,8 @@ import type { ServerProbe } from '../bindings/github.com/chironjit/serversend/sh
 import BrandMark from './components/ui/BrandMark.vue';
 import ThemeSwitch from './components/ui/ThemeSwitch.vue';
 import StorageDashboard from './components/StorageDashboard.vue';
+import RecoveryPanel from './components/RecoveryPanel.vue';
+const recovery = ref<{ id?: string; name?: string }>();
 import UiAlert from './components/ui/UiAlert.vue';
 import UiBadge from './components/ui/UiBadge.vue';
 import UiButton from './components/ui/UiButton.vue';
@@ -1216,6 +1218,16 @@ onUnmounted(() => {
             </template>
           </nav>
 
+          <UiButton variant="outline" class="m-4" :disabled="busy" @click="recovery = {}"
+            >Trash</UiButton
+          >
+          <RecoveryPanel
+            v-if="recovery"
+            :file-id="recovery.id"
+            :name="recovery.name"
+            @close="recovery = undefined"
+            @changed="refresh"
+          />
           <section
             v-if="pendingDelete"
             class="delete-confirm border-destructive/30 bg-destructive/5 m-4 rounded-lg border p-4"
@@ -1229,8 +1241,8 @@ onUnmounted(() => {
                 <p class="text-muted-foreground m-0 text-sm leading-6">
                   {{
                     pendingDelete.directory
-                      ? 'This folder and everything inside it will be permanently deleted.'
-                      : 'This file and all its versions will be permanently deleted.'
+                      ? 'This folder and everything inside it will move to trash.'
+                      : 'This file and all its versions will move to trash.'
                   }}
                   This cannot be undone.
                 </p>
@@ -1242,7 +1254,7 @@ onUnmounted(() => {
                     :disabled="busy"
                     @click="deleteEntry"
                   >
-                    Delete permanently
+                    Move to trash
                   </UiButton>
                   <UiButton
                     variant="ghost"
@@ -1382,6 +1394,14 @@ onUnmounted(() => {
                 @click="restoreSelection([file.id])"
                 ><Download aria-hidden="true"
               /></UiButton>
+              <UiButton
+                v-if="!file.directory"
+                variant="ghost"
+                size="sm"
+                :disabled="busy"
+                @click="recovery = { id: file.id, name: file.name }"
+                >Versions</UiButton
+              >
               <UiButton
                 variant="ghost"
                 size="icon-sm"

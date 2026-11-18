@@ -2,6 +2,8 @@ package uploads
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
@@ -25,8 +27,7 @@ func (s *Service) CreateDirectory(ctx context.Context, account protocol.ID, requ
 	return entry, s.applyJournal(ctx)
 }
 
-// DeleteEntry permanently removes a file or folder tree, its retained
-// versions and unfinished uploads into it.
+// DeleteEntry moves a file or folder tree into recoverable trash.
 func (s *Service) DeleteEntry(ctx context.Context, account, id protocol.ID) error {
 	if id.Validate() != nil {
 		return api.Error{Code: api.InvalidRequest, Message: "Invalid file or folder ID"}
@@ -36,7 +37,10 @@ func (s *Service) DeleteEntry(ctx context.Context, account, id protocol.ID) erro
 	if err := s.applyJournal(ctx); err != nil {
 		return err
 	}
-	if err := s.repo.DeleteEntry(ctx, account, id); err != nil {
+	if err := s.repo.TrashEntry(ctx, account, id, s.now()); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errNotFound
+		}
 		return err
 	}
 	if err := s.applyJournal(ctx); err != nil {

@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref } from 'vue';
 import { Loader2, LogOut } from 'lucide-vue-next';
 import Logs from './Logs.vue';
 import Dashboard from './Dashboard.vue';
+import RetentionSettings from './RetentionSettings.vue';
 const props = withDefaults(defineProps<{ page?: string; restore?: boolean }>(), {
   page: 'accounts',
   restore: false,
@@ -553,6 +554,7 @@ async function signOut() {
   <Dashboard v-if="step === 'users' && page === 'dashboard'" />
   <UiCard v-if="step === 'users' && page === 'settings'" class="p-6">
     <h2>Server settings</h2>
+    <RetentionSettings :csrf="csrf" />
     <p>
       Administration uses HTTPS. Sessions last seven days; sensitive account changes require a
       sign-in within five minutes.

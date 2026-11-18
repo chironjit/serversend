@@ -299,7 +299,7 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 		t.Fatalf("replacement not visible: %q %v", stored, err)
 	}
 	var retained int
-	if err := s.db.QueryRow(`SELECT count(*) FROM files WHERE hidden=1`).Scan(&retained); err != nil || retained != 1 {
+	if err := s.db.QueryRow(`SELECT count(*) FROM versions v JOIN files f ON f.account_id=v.account_id AND f.id=v.file_id WHERE v.id<>f.head_version_id`).Scan(&retained); err != nil || retained != 1 {
 		t.Fatalf("replaced file not retained: %d %v", retained, err)
 	}
 	contents, err := admin.CatalogFolder(t.Context(), folder.ID)
@@ -329,6 +329,23 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 		t.Fatalf("admin delete: %v", err)
 	}
 	if err := admin.DeleteEntry(t.Context(), folder.ID); err != nil {
+		t.Fatal(err)
+	}
+	trash, err := admin.TrashPage(t.Context(), "")
+	if err != nil || len(trash.Entries) != 1 || trash.Entries[0].ID != folder.ID {
+		t.Fatalf("trash: %+v %v", trash, err)
+	}
+	history, err := admin.History(t.Context(), replacement.FileID, "")
+	if err != nil || len(history.Versions) != 2 {
+		t.Fatalf("history: %+v %v", history, err)
+	}
+	if err = admin.RestoreTrash(t.Context(), folder.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = admin.DeleteEntry(t.Context(), folder.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = admin.PurgeTrash(t.Context(), folder.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := admin.DeleteEntry(t.Context(), folder.ID); !errors.As(err, &failure) || failure.Code != api.NotFound {

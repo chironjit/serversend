@@ -110,7 +110,7 @@ func TestBatchUploadEndToEnd(t *testing.T) {
 	})
 	outcomes, err = c.UploadBatch(t.Context(), files[:1])
 	var refused api.Error
-	if err != nil || !errors.As(outcomes[0].Err, &refused) || refused.Code != api.NotFound {
+	if !errors.As(err, &refused) || refused.Code != api.Conflict {
 		t.Fatalf("upload into deleted folder: %v %v", outcomes, err)
 	}
 }

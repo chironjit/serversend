@@ -90,7 +90,7 @@ func TestCommittedRetainedDeletionAndAccountIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.LogicalBytes != 10 || stats.CommittedBytes < 5 || stats.RetainedBytes < 5 || stats.StagedBytes != 0 || stats.ReservedBytes != 0 {
+	if stats.LogicalBytes != 10 || stats.CommittedBytes < 5 || stats.TrashBytes < 5 || stats.StagedBytes != 0 || stats.ReservedBytes != 0 {
 		t.Fatalf("published: %+v", stats)
 	}
 	global, err := s.measureStatistics(ctx, "")
@@ -112,7 +112,7 @@ func TestCommittedRetainedDeletionAndAccountIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.CommittedBytes != 0 || stats.LogicalBytes != 5 || stats.RetainedBytes == 0 {
+	if stats.CommittedBytes != 0 || stats.LogicalBytes != 10 || stats.TrashBytes == 0 {
 		t.Fatalf("delete: %+v", stats)
 	}
 }

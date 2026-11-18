@@ -53,6 +53,10 @@ func (f *durableUploadFixture) handler(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	switch {
+	case path == "/catalog/target":
+		reply(struct {
+			Entry *api.CatalogEntry `json:"entry"`
+		}{nil})
 	case path == "/uploads" && r.Method == "POST":
 		var intent api.CreateUploadRequest
 		if json.NewDecoder(r.Body).Decode(&intent) != nil {

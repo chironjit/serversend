@@ -150,6 +150,9 @@ func (s *Service) measureStatistics(ctx context.Context, account protocol.ID) (a
 		if e = scan(layout.Tree(a.Username), &result.CommittedBytes); e != nil {
 			return result, e
 		}
+		if e = scan(".serversend/recoverable/"+string(account), &result.TrashBytes); e != nil {
+			return result, e
+		}
 		if e = scan(layout.Versions+"/"+string(account), &result.RetainedBytes); e != nil {
 			return result, e
 		}

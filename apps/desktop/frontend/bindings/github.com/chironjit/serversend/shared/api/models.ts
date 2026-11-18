@@ -5,6 +5,31 @@
 // @ts-ignore: Unused imports
 import * as protocol$0 from "../protocol/models.js";
 
+export interface CatalogEntry {
+    "id": protocol$0.ID;
+    "parent_id"?: protocol$0.ID;
+    "kind": EntryKind;
+    "mode": protocol$0.StorageMode;
+    "head_version_id"?: protocol$0.ID;
+    "head_revision": protocol$0.Revision;
+    "trashed": boolean;
+    "standard"?: protocol$0.StandardMetadata | null;
+    "private"?: protocol$0.PrivateEnvelope | null;
+}
+
+export interface CatalogPage {
+    "snapshot": protocol$0.ID;
+    "next_cursor"?: Cursor;
+    "catalog_revision": protocol$0.Revision;
+    "entries": CatalogEntry[] | null;
+}
+
+/**
+ * Cursor is unpadded base64url, opaque to clients. Servers authenticate and
+ * scope it to the account, query and snapshot; syntax validation is not trust.
+ */
+export type Cursor = string;
+
 export interface DeviceInfo {
     "current": boolean;
     "id": protocol$0.ID;
@@ -20,6 +45,16 @@ export interface DeviceInfo {
     "status": string;
     "recently_active": boolean;
 }
+
+export enum EntryKind {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    File = "file",
+    Directory = "directory",
+};
 
 export interface FilesystemCapacity {
     "id": string;
@@ -61,4 +96,21 @@ export interface TransferStatistics {
     "useful_rate": number;
     "retry_rate": number;
     "updated_at": string;
+}
+
+export interface VersionInfo {
+    "id": protocol$0.ID;
+    "file_id": protocol$0.ID;
+    "mode": protocol$0.StorageMode;
+    "transmitted_bytes": number;
+    "manifest_sha256": protocol$0.Digest;
+    "created_at": string;
+    "conflicted": boolean;
+}
+
+export interface VersionPage {
+    "snapshot": protocol$0.ID;
+    "next_cursor"?: Cursor;
+    "file_id": protocol$0.ID;
+    "versions": VersionInfo[] | null;
 }

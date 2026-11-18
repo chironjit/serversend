@@ -39,6 +39,8 @@ var (
 type StoragePolicy struct{ GlobalBytes, UserBytes, MinFreeBytes int64 }
 
 type Service struct {
+	readers int // open version streams; protected by mu
+
 	statsGate       chan struct{}
 	statsCache      map[protocol.ID]api.StorageStatistics
 	stageMu         sync.Mutex
@@ -478,6 +480,9 @@ func (s *Service) OpenChunk(ctx context.Context, account, file, version protocol
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.applyJournal(ctx); err != nil {
+		return nil, protocol.Chunk{}, err
+	}
 	location, err := s.repo.VersionLocation(ctx, account, file, version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, protocol.Chunk{}, errNotFound
@@ -496,8 +501,18 @@ func (s *Service) OpenChunk(ctx context.Context, account, file, version protocol
 	if err != nil {
 		return nil, protocol.Chunk{}, api.Error{Code: api.SourceMissing, Message: "Stored data for this file is missing on the server; contact the server operator"}
 	}
-	return chunkReader{io.NewSectionReader(f, stored.Offset, stored.Bytes), f}, protocol.Chunk{Index: index, Bytes: stored.Bytes, SHA256: stored.Digest}, nil
+	s.readers++
+	return chunkReader{io.NewSectionReader(f, stored.Offset, stored.Bytes), &versionReaderCloser{close: func() error { err := f.Close(); s.mu.Lock(); s.readers--; s.mu.Unlock(); return err }}}, protocol.Chunk{Index: index, Bytes: stored.Bytes, SHA256: stored.Digest}, nil
 }
 
 // Available reports usable free bytes on the object filesystem.
 func (s *Service) Available() (int64, error) { return s.store.Available() }
+
+// Keep collection away from open streams on every supported filesystem.
+type versionReaderCloser struct {
+	once  sync.Once
+	close func() error
+	err   error
+}
+
+func (c *versionReaderCloser) Close() error { c.once.Do(func() { c.err = c.close() }); return c.err }

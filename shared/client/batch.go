@@ -72,6 +72,21 @@ func (c *Client) UploadBatch(ctx context.Context, files []BatchFile) ([]BatchOut
 			outcomes[i].Err = err
 			continue
 		}
+		var manifest protocol.Manifest
+		if err = json.Unmarshal(entry.Manifest, &manifest); err != nil {
+			return nil, err
+		}
+		target, err := c.findUploadTarget(ctx, file.Parent, manifest.Standard.Name)
+		if err != nil {
+			return nil, err
+		}
+		if target != nil {
+			manifest.FileID = target.ID
+			entry.FileID = target.ID
+			entry.ExpectedHead = target.HeadRevision
+			entry.Manifest, _ = json.Marshal(manifest)
+			entry.ManifestBytes = int64(len(entry.Manifest))
+		}
 		request.Files = append(request.Files, entry)
 		body = append(body, data...)
 		sent = append(sent, i)

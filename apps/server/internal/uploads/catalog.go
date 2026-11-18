@@ -15,6 +15,7 @@ import (
 const catalogSnapshotLifetime = 5 * time.Minute
 
 type catalogCursor struct {
+	Kind     string      `json:"kind,omitempty"`
 	Instance protocol.ID `json:"instance"`
 	Account  protocol.ID `json:"account"`
 	Parent   protocol.ID `json:"parent"`
@@ -81,6 +82,9 @@ func (s *Service) CatalogPage(ctx context.Context, account, parent protocol.ID, 
 		cursor, err = s.openCatalogCursor(request.Cursor, account, parent, request.Limit)
 		if err != nil {
 			return api.CatalogPage{}, err
+		}
+		if cursor.Kind != "" {
+			return api.CatalogPage{}, api.Error{Code: api.InvalidRequest, Message: "Wrong continuation type"}
 		}
 		expected = &cursor.Revision
 	}

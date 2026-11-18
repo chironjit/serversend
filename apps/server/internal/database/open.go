@@ -35,7 +35,7 @@ func Open(ctx context.Context, configDir string) (*sql.DB, error) {
 // carried over because the change was made before release.
 const fileTreeVersion = 11
 
-var fileTables = []string{"chunks", "reservations", "deleted_objects", "versions", "files", "uploads", "directories", "storage_journal"}
+var fileTables = []string{"trash_entries", "storage_audit", "chunks", "reservations", "deleted_objects", "versions", "files", "uploads", "directories", "storage_journal"}
 
 func refuseLegacyFiles(ctx context.Context, db *sql.DB) error {
 	var version int

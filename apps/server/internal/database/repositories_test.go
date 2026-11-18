@@ -179,7 +179,7 @@ func TestServerUpgradeEveryPriorSchema(t *testing.T) {
 			}
 
 			db.Close()
-			db = openAfterReset(t, dir, prior >= 2)
+			db = openAfterReset(t, dir, prior >= 2 && prior < fileTreeVersion)
 			defer db.Close()
 			if prior < 2 {
 				mustAccount(t, db, ownerA)

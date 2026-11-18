@@ -67,6 +67,10 @@ export function ChooseAndDownload(fileID: string): $CancellablePromise<boolean> 
     return $Call.ByID(3318539324, fileID);
 }
 
+export function ChooseAndDownloadVersion(id: string, version: string): $CancellablePromise<boolean> {
+    return $Call.ByID(2935206160, id, version);
+}
+
 export function ChooseAndRestore(ids: string[] | null, policy: string): $CancellablePromise<boolean> {
     return $Call.ByID(1764753598, ids, policy);
 }
@@ -123,6 +127,10 @@ export function FilesPage(parent: string, cursor: string): $CancellablePromise<t
     return $Call.ByID(2116377366, parent, cursor);
 }
 
+export function History(id: string, cursor: string): $CancellablePromise<api$0.VersionPage> {
+    return $Call.ByID(398689074, id, cursor);
+}
+
 export function OpenProfile(origin: string): $CancellablePromise<transfer$0.Account> {
     return $Call.ByID(1263544311, origin);
 }
@@ -133,6 +141,10 @@ export function Probe(address: string): $CancellablePromise<client$0.ServerProbe
 
 export function Profiles(): $CancellablePromise<transfer$0.Profile[] | null> {
     return $Call.ByID(3376120596);
+}
+
+export function PurgeTrash(id: string): $CancellablePromise<void> {
+    return $Call.ByID(1313227189, id);
 }
 
 export function QueueAction(id: number, batch: boolean, action: string): $CancellablePromise<void> {
@@ -151,8 +163,16 @@ export function ReplacePassword(password: string): $CancellablePromise<transfer$
     return $Call.ByID(699289139, password);
 }
 
+export function RestoreTrash(id: string): $CancellablePromise<void> {
+    return $Call.ByID(277329122, id);
+}
+
 export function RevokeDevice(id: string): $CancellablePromise<void> {
     return $Call.ByID(446332298, id);
+}
+
+export function SelectVersion(id: string, version: string): $CancellablePromise<void> {
+    return $Call.ByID(2299457142, id, version);
 }
 
 export function SessionStatus(): $CancellablePromise<transfer$0.Step> {
@@ -181,4 +201,8 @@ export function StorageStatistics(): $CancellablePromise<api$0.StorageStatistics
 
 export function Transfers(): $CancellablePromise<transfer$0.Item[] | null> {
     return $Call.ByID(178489758);
+}
+
+export function TrashPage(cursor: string): $CancellablePromise<api$0.CatalogPage> {
+    return $Call.ByID(3796950147, cursor);
 }

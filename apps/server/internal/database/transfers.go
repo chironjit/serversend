@@ -62,6 +62,12 @@ func (r *Repository) CreateTransfer(ctx context.Context, t Transfer, capacity ..
 	var recorded Transfer
 	created := false
 	err := r.write(ctx, func(tx *sql.Tx) error {
+		if err := activeEntry(ctx, tx, t.AccountID, t.ParentID); err != nil {
+			return err
+		}
+		if err := activeEntry(ctx, tx, t.AccountID, t.FileID); err != nil {
+			return err
+		}
 		if t.ParentID != "" {
 			var found int
 			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM directories WHERE account_id=? AND id=?`, t.AccountID, t.ParentID).Scan(&found); err != nil {
@@ -196,6 +202,9 @@ func (r *Repository) CommitUpload(ctx context.Context, account, upload protocol.
 		if t.State == protocol.UploadCommitted || t.State == protocol.UploadConflicted {
 			var recorded []byte
 			if err := tx.QueryRowContext(ctx, `SELECT manifest FROM versions WHERE account_id=? AND file_id=? AND id=?`, account, t.FileID, t.VersionID).Scan(&recorded); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return api.Error{Code: api.UploadGone, Message: "This retained version has expired"}
+				}
 				return err
 			}
 			if string(recorded) != string(manifest) {
@@ -214,7 +223,7 @@ func (r *Repository) CommitUpload(ctx context.Context, account, upload protocol.
 		if stored != t.ChunkCount {
 			return ErrUploadConflict
 		}
-		if err := publish(ctx, tx, &t, name, layout.Upload(upload)); err != nil {
+		if err := publish(ctx, tx, &t, name, layout.Upload(upload), now); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO versions(account_id,file_id,id,upload_id,manifest,total_bytes,created_at) VALUES(?,?,?,?,?,?,?)`, account, t.FileID, t.VersionID, upload, manifest, t.TransmittedBytes, now.UnixMilli()); err != nil {
@@ -254,6 +263,9 @@ func (r *Repository) CatalogWindow(ctx context.Context, account, parent, after p
 	if expected != nil && *expected != revision {
 		return 0, nil, api.Error{Code: api.SnapshotExpired, Message: "The catalog changed; refresh this folder"}
 	}
+	if err := activeEntry(ctx, tx, account, parent); err != nil {
+		return 0, nil, err
+	}
 	if parent != "" {
 		var exists int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM directories WHERE account_id=? AND id=?`, account, parent).Scan(&exists); err != nil {
@@ -263,7 +275,7 @@ func (r *Repository) CatalogWindow(ctx context.Context, account, parent, after p
 			return 0, nil, api.Error{Code: api.NotFound, Message: "Destination folder does not exist for this account"}
 		}
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,head_version_id,name,head_revision,parent_id,0 FROM files WHERE account_id=? AND parent_id=? AND hidden=0 AND id>? UNION ALL SELECT id,'',name,revision,parent_id,1 FROM directories WHERE account_id=? AND parent_id=? AND id>? ORDER BY id LIMIT ?`, account, parent, after, account, parent, after, limit)
+	rows, err := tx.QueryContext(ctx, `SELECT id,head_version_id,name,head_revision,parent_id,0 FROM files WHERE account_id=? AND parent_id=? AND hidden=0 AND id NOT IN (SELECT id FROM trash_entries WHERE account_id=files.account_id) AND id>? UNION ALL SELECT id,'',name,revision,parent_id,1 FROM directories WHERE account_id=? AND parent_id=? AND id NOT IN (SELECT id FROM trash_entries WHERE account_id=directories.account_id) AND id>? ORDER BY id LIMIT ?`, account, parent, after, account, parent, after, limit)
 	if err != nil {
 		return 0, nil, err
 	}

@@ -187,3 +187,30 @@ func (s *TransferService) QueueHealth() string { return s.manager.QueueHealth() 
 func (s *TransferService) StorageStatistics(ctx context.Context) (api.StorageStatistics, error) {
 	return s.manager.StorageStatistics(ctx)
 }
+
+func (s *TransferService) History(ctx context.Context, id, cursor string) (api.VersionPage, error) {
+	return s.manager.History(ctx, id, cursor)
+}
+func (s *TransferService) TrashPage(ctx context.Context, cursor string) (api.CatalogPage, error) {
+	return s.manager.TrashPage(ctx, cursor)
+}
+func (s *TransferService) RestoreTrash(ctx context.Context, id string) error {
+	return s.manager.RestoreTrash(ctx, id)
+}
+func (s *TransferService) PurgeTrash(ctx context.Context, id string) error {
+	return s.manager.PurgeTrash(ctx, id)
+}
+func (s *TransferService) SelectVersion(ctx context.Context, id, version string) error {
+	return s.manager.SelectVersion(ctx, id, version)
+}
+func (s *TransferService) ChooseAndDownloadVersion(id, version string) (bool, error) {
+	name, ok := s.manager.FileName(id)
+	if !ok {
+		return false, errors.New("refresh the file list first")
+	}
+	destination, err := application.Get().Dialog.SaveFile().SetFilename(name).PromptForSingleSelection()
+	if err != nil || destination == "" {
+		return false, err
+	}
+	return true, s.manager.DownloadVersion(id, version, destination)
+}

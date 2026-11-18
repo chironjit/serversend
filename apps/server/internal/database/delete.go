@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/chironjit/serversend/apps/server/internal/layout"
 	"github.com/chironjit/serversend/apps/server/internal/storage"
@@ -19,11 +20,24 @@ import (
 // until expiry. Their reservations cascade. The visible tree and every
 // file's retained versions are journaled for removal through the trash, so
 // removal is a single rename for anyone browsing the data directory.
-func (r *Repository) DeleteEntry(ctx context.Context, account, id protocol.ID) error {
+func (r *Repository) DeleteEntry(ctx context.Context, account, id protocol.ID, purgeAt ...time.Time) error {
 	return r.write(ctx, func(tx *sql.Tx) error {
+		if len(purgeAt) > 0 {
+			var found int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM trash_entries WHERE account_id=? AND id=?`, account, id).Scan(&found); err != nil {
+				return err
+			}
+			if found == 0 {
+				return api.Error{Code: api.Conflict, Message: "Only items in trash can be purged"}
+			}
+			if err := lifecycleAudit(ctx, tx, account, "trash_purge", purgeAt[0]); err != nil {
+				return err
+			}
+		}
 		var parent protocol.ID
 		var name string
-		err := tx.QueryRowContext(ctx, `SELECT parent_id,name FROM files WHERE account_id=?1 AND id=?2 AND hidden=0 UNION ALL SELECT parent_id,name FROM directories WHERE account_id=?1 AND id=?2`, account, id).Scan(&parent, &name)
+		var directory bool
+		err := tx.QueryRowContext(ctx, `SELECT parent_id,name,0 FROM files WHERE account_id=?1 AND id=?2 AND hidden=0 UNION ALL SELECT parent_id,name,1 FROM directories WHERE account_id=?1 AND id=?2`, account, id).Scan(&parent, &name, &directory)
 		if errors.Is(err, sql.ErrNoRows) {
 			return api.Error{Code: api.NotFound, Message: "File or folder no longer exists"}
 		}
@@ -31,6 +45,9 @@ func (r *Repository) DeleteEntry(ctx context.Context, account, id protocol.ID) e
 			return err
 		}
 		visible, err := filePath(ctx, tx, account, parent, name)
+		if directory {
+			visible, err = dirPath(ctx, tx, account, id)
+		}
 		if err != nil {
 			return err
 		}
@@ -71,6 +88,7 @@ func (r *Repository) DeleteEntry(ctx context.Context, account, id protocol.ID) e
 			return err
 		}
 		for _, query := range []string{
+			`DELETE FROM trash_entries WHERE account_id=? AND id IN deletion_ids`,
 			`DELETE FROM versions WHERE account_id=? AND file_id IN deletion_ids`,
 			`DELETE FROM chunks WHERE account_id=? AND upload_id IN (SELECT id FROM uploads WHERE account_id=? AND (file_id IN deletion_ids OR parent_id IN deletion_ids))`,
 			`DELETE FROM uploads WHERE account_id=? AND (file_id IN deletion_ids OR parent_id IN deletion_ids)`,

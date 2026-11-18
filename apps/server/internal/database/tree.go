@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/chironjit/serversend/apps/server/internal/layout"
 	"github.com/chironjit/serversend/apps/server/internal/storage"
@@ -29,34 +30,38 @@ func dirPath(ctx context.Context, q querier, account, dir protocol.ID) (string, 
 	if dir == "" {
 		return layout.Tree(username), nil
 	}
-	rows, err := q.QueryContext(ctx, `WITH RECURSIVE chain(id,parent_id,name,depth) AS (
-		SELECT id,parent_id,name,0 FROM directories WHERE account_id=?1 AND id=?2
-		UNION ALL SELECT d.id,d.parent_id,d.name,c.depth+1 FROM directories d JOIN chain c ON d.account_id=?1 AND d.id=c.parent_id WHERE c.depth<4096)
-		SELECT name,parent_id FROM chain ORDER BY depth DESC`, account, dir)
-	if err != nil {
-		return "", err
-	}
-	defer rows.Close()
 	names := []string{}
-	first := true
-	for rows.Next() {
-		var name, parent string
-		if err := rows.Scan(&name, &parent); err != nil {
+	for depth := 0; depth < 4096; depth++ {
+		var name string
+		var parent protocol.ID
+		var directory bool
+		err := q.QueryRowContext(ctx, `SELECT name,directory FROM trash_entries WHERE account_id=? AND id=?`, account, dir).Scan(&name, &directory)
+		if err == nil {
+			base := ".serversend/recoverable/" + string(account) + "/" + string(dir)
+			if directory {
+				base += "/" + name
+			}
+			for i := len(names) - 1; i >= 0; i-- {
+				base += "/" + names[i]
+			}
+			return base, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
 			return "", err
 		}
-		if first && parent != "" {
-			return "", fmt.Errorf("folder %s has a missing ancestor", dir)
+		if err = q.QueryRowContext(ctx, `SELECT name,parent_id FROM directories WHERE account_id=? AND id=?`, account, dir).Scan(&name, &parent); err != nil {
+			return "", api.Error{Code: api.NotFound, Message: "Folder no longer exists"}
 		}
-		first = false
 		names = append(names, name)
+		dir = parent
+		if dir == "" {
+			for i := len(names) - 1; i >= 0; i-- {
+				username += "/" + names[i]
+			}
+			return layout.Tree(username), nil
+		}
 	}
-	if err := rows.Err(); err != nil {
-		return "", err
-	}
-	if len(names) == 0 {
-		return "", api.Error{Code: api.NotFound, Message: "Destination folder no longer exists"}
-	}
-	return layout.Tree(username, names...), nil
+	return "", fmt.Errorf("folder nesting exceeds limit")
 }
 
 func filePath(ctx context.Context, q querier, account, parent protocol.ID, name string) (string, error) {
@@ -113,10 +118,16 @@ func (r *Repository) ClearJournal(ctx context.Context) error {
 
 // publish makes a version whose bytes are at source the current version of
 // its file at parent/name, or retains it as a conflicted version when the
-// head moved. The previous head and any other visible file of that name are
-// retained under the versions area; the other file leaves the catalog.
-func publish(ctx context.Context, tx *sql.Tx, t *Transfer, name, source string) error {
+// head moved. The previous head is retained under versions; a different
+// visible file of that name moves to recoverable trash.
+func publish(ctx context.Context, tx *sql.Tx, t *Transfer, name, source string, now time.Time) error {
 	account := t.AccountID
+	if err := activeEntry(ctx, tx, account, t.FileID); err != nil {
+		return err
+	}
+	if err := activeEntry(ctx, tx, account, t.ParentID); err != nil {
+		return err
+	}
 	var oldParent protocol.ID
 	var oldName string
 	var oldHead protocol.ID
@@ -156,10 +167,16 @@ func publish(ctx context.Context, tx *sql.Tx, t *Transfer, name, source string) 
 	var displaced, displacedHead protocol.ID
 	err = tx.QueryRowContext(ctx, `SELECT id,head_version_id FROM files WHERE account_id=? AND parent_id=? AND name=? AND hidden=0 AND id<>?`, account, t.ParentID, name, t.FileID).Scan(&displaced, &displacedHead)
 	if err == nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE files SET hidden=1 WHERE account_id=? AND id=?`, account, displaced); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE files SET parent_id=id WHERE account_id=? AND id=?`, account, displaced); err != nil {
 			return err
 		}
-		ops = append(ops, storage.Op{Kind: "move", Source: target, Target: layout.Version(account, displaced, displacedHead)})
+		if _, err := tx.ExecContext(ctx, `INSERT INTO trash_entries(account_id,id,parent_id,name,directory,deleted_at) VALUES(?,?,?,?,0,?)`, account, displaced, t.ParentID, name, now.UnixMilli()); err != nil {
+			return err
+		}
+		if err := lifecycleAudit(ctx, tx, account, "displaced_to_trash", now); err != nil {
+			return err
+		}
+		ops = append(ops, storage.Op{Kind: "move", Source: target, Target: ".serversend/recoverable/" + string(account) + "/" + string(displaced) + "/" + name})
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}

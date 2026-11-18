@@ -135,6 +135,12 @@ type accountHandler func(w http.ResponseWriter, r *http.Request, account protoco
 func newTransferRoutes(accounts *auth.Service, service *uploads.Service) *transferRoutes {
 	t := &transferRoutes{accounts: accounts, service: service, mux: http.NewServeMux()}
 	for pattern, handler := range map[string]accountHandler{
+		"GET " + api.BasePath + "/catalog/target":                                 t.uploadTarget,
+		"GET " + api.BasePath + "/trash":                                          t.trash,
+		"POST " + api.BasePath + "/trash/{entry}/restore":                         t.restoreTrash,
+		"DELETE " + api.BasePath + "/trash/{entry}":                               t.purgeTrash,
+		"GET " + api.BasePath + "/files/{file}/versions":                          t.history,
+		"POST " + api.BasePath + "/files/{file}/versions/{version}/restore":       t.selectVersion,
 		"POST " + api.BasePath + "/uploads":                                       t.create,
 		"POST " + api.BasePath + api.BatchUploadPath:                              t.batch,
 		"DELETE " + api.BasePath + "/uploads/{upload}":                            t.cancel,
@@ -176,7 +182,7 @@ func newTransferRoutes(accounts *auth.Service, service *uploads.Service) *transf
 // typed errors instead of the mux's plain-text defaults.
 func (t *transferRoutes) serve(w http.ResponseWriter, r *http.Request) bool {
 	inside := false
-	for _, prefix := range []string{"/uploads", "/catalog", "/files", "/directories"} {
+	for _, prefix := range []string{"/trash", "/uploads", "/catalog", "/files", "/directories"} {
 		inside = inside || r.URL.Path == api.BasePath+prefix || strings.HasPrefix(r.URL.Path, api.BasePath+prefix+"/")
 	}
 	if !inside {

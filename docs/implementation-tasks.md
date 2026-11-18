@@ -4,9 +4,9 @@ This is the active delivery roadmap, reorganized on 2026-11-17 around features i
 
 ## Current baseline
 
-Already implemented: versioned contracts and identity-proof helpers; SQLite foundations and migrations; a TLS server with persistent identity and certificates; administrator bootstrap; Argon2id passwords, mandatory replacement, TOTP and recovery codes; seven-day admin cookies, rotating desktop refresh credentials with 30-day inactivity/60-day second-factor limits, desktop profiles and optional OS-keychain persistence; browser user listing/creation; concurrent standard uploads (eight desktop workers), recursive folders and empty directories; folder browsing/creation; verified whole-file downloads; confirmed permanent deletion with restartable deleted-object cleanup; Tailwind components and theme selection in both interfaces; desktop throughput display; component checks and release workflows.
+Already implemented: versioned contracts and identity-proof helpers; SQLite foundations and migrations; a TLS server with persistent identity and certificates; administrator bootstrap; Argon2id passwords, mandatory replacement, TOTP and recovery codes; seven-day admin cookies, rotating desktop refresh credentials with 30-day inactivity/60-day second-factor limits, desktop profiles and optional OS-keychain persistence; browser user listing/creation; concurrent standard uploads (eight desktop workers), recursive folders and empty directories; folder browsing/creation; verified whole-file downloads; recoverable trash and explicit purge with journaled cleanup; Tailwind components and theme selection in both interfaces; desktop throughput display; component checks and release workflows.
 
-These are existing building blocks, not completed versions of the features below. The desktop queue now persists standard-mode uploads/restores in SQLite; remembered session credentials use the OS credential store. Upload identities, discovered work, retry schedules and controls survive desktop restart. Catalogs use bounded revision-bound pages, and selected files/folders restore from verified checkpoints. Private mode, trash and complete version management remain open. Hosted CI results, actual Unraid qualification and complete native UI workflows must be verified, not inferred from workflow files. This status review uses the current implementation and previously executed checks recorded in the verification map; it does not represent a fresh test run.
+These are existing building blocks, not completed versions of the features below. The desktop queue now persists standard-mode uploads/restores in SQLite; remembered session credentials use the OS credential store. Upload identities, discovered work, retry schedules and controls survive desktop restart. Catalogs use bounded revision-bound pages, and selected files/folders restore from verified checkpoints. Private mode remains open; standard version history, conflict resolution and recoverable trash are implemented. Hosted CI results, actual Unraid qualification and complete native UI workflows must be verified, not inferred from workflow files. This status review uses the current implementation and previously executed checks recorded in the verification map; it does not represent a fresh test run.
 
 Current pending temporary passwords can be retrieved by administrators until replacement or one-hour expiry. The original specification calls for showing them once. Resolve that discrepancy in Complete account administration; do not silently treat the current behavior as the final security policy.
 
@@ -25,7 +25,7 @@ Checked items mean the stated scope is implemented with recorded evidence. Compo
 | 5. Resumable uploads | Partial | Durable queue/scans, checkpoint reconciliation, controls and bandwidth implemented; native/deployment qualification open |
 | 6. Browsing/restores | Partial | Revision-bound paging, durable file/folder restores and collision/path checks implemented; native/deployment qualification open |
 | 7. Storage visibility | Pending | Existing local throughput display only; accounting and dashboards open |
-| 8. Versions/trash | Pending | Existing version records and permanent deletion only; history, trash and retention open |
+| 8. Versions/trash | Implemented | Standard history/conflict resolution, trash/restore/purge and retention delivered; native filesystem and deployment qualification remain open |
 | 9. Private storage | Pending | Contracts only; format prototype, encryption and recovery open |
 | 10. Multiple servers/routes | Pending | Saved profiles with one active connection; simultaneous connections and routes open |
 | 11. Account administration | Pending | Existing user creation/listing and backend foundations only; complete controls and security policy open |
@@ -171,15 +171,15 @@ For every feature:
 
 **Outcome:** overwrites and accidental deletions are recoverable, and concurrent devices preserve both edits.
 
-**Existing:** basic immutable version records and confirmed permanent deletion. No user-facing history, trash or retention policy.
+**Implemented:** standard-mode stable overwrite IDs, revision-checked head selection, bounded history/version downloads, recoverable file/folder trash and administrator retention controls. Schema 12 preserves existing versions and exposes earlier displaced files in trash. Native Windows/macOS filesystem and actual Unraid/power-loss qualification remain open.
 
 **Depends on:** features 3, 5, 6. Define private opaque IDs compatibly with feature 9.
 
-- [ ] Publish new versions under stable file IDs with expected-revision checks; preserve both results of concurrent head updates and expose resolution.
-- [ ] Add history, version download and restore-as-current flows.
-- [ ] Replace ordinary permanent deletion with trash; add restore and explicit purge with clear confirmation. Document that previously deleted content cannot be recovered by this migration.
-- [ ] Add configurable version/trash retention, initially proposed at 30 days for trash, and administrator controls.
-- [ ] Coordinate reference-aware collection with active readers, uploads, reservations and backup snapshots; record retained/trash accounting and cleanup audit events.
+- [x] Publish new versions under stable file IDs with expected-revision checks; preserve both results of concurrent head updates and expose resolution.
+- [x] Add history, version download and restore-as-current flows.
+- [x] Replace ordinary permanent deletion with trash; add restore and explicit purge with clear confirmation. Document that previously deleted content cannot be recovered by this migration.
+- [x] Add configurable version/trash retention, initially proposed at 30 days for trash, and administrator controls.
+- [x] Coordinate reference-aware collection with active readers, uploads, reservations and backup snapshots; record retained/trash accounting and cleanup audit events.
 
 **Accept when:** two devices race updates without losing either version; trash restore works; purge/restore/finalize/reader races and repeated cleanup crashes never delete referenced objects; retention changes have tested boundary behavior.
 

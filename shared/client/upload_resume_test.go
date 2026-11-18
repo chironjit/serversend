@@ -50,6 +50,11 @@ func (f *resumeFixture) client() *Client { return recoveryClient(sourceTestTrans
 func (f *resumeFixture) request(r *http.Request) (*http.Response, error) {
 	f.t.Helper()
 	route := strings.TrimPrefix(r.URL.Path, api.BasePath)
+	if route == "/catalog/target" {
+		return recoveryResponse(struct {
+			Entry *api.CatalogEntry `json:"entry"`
+		}{nil}), nil
+	}
 	if route == "/uploads" && r.Method == "POST" {
 		if len(f.saved) == 0 {
 			f.t.Fatal("admission before persistence")

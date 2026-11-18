@@ -12,6 +12,11 @@ func (s *Service) maintain(ctx context.Context) error {
 	if err := s.repo.RetireUploads(ctx, s.now(), "", ""); err != nil {
 		return err
 	}
+	if s.readers == 0 {
+		if err := s.repo.Collect(ctx, s.now()); err != nil {
+			return err
+		}
+	}
 	return s.applyJournal(ctx)
 }
 

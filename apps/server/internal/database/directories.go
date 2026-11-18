@@ -28,6 +28,9 @@ func (r *Repository) CheckDirectory(ctx context.Context, account, parent protoco
 func (r *Repository) CreateDirectory(ctx context.Context, account protocol.ID, request api.CreateDirectoryRequest) (api.CatalogEntry, error) {
 	entry := api.CatalogEntry{ID: request.ID, ParentID: request.ParentID, Mode: protocol.Standard, Kind: api.Directory, Standard: request.Standard}
 	err := r.write(ctx, func(tx *sql.Tx) error {
+		if err := activeEntry(ctx, tx, account, request.ParentID); err != nil {
+			return err
+		}
 		if request.ParentID != "" {
 			var id string
 			if err := tx.QueryRowContext(ctx, `SELECT id FROM directories WHERE account_id=? AND id=?`, account, request.ParentID).Scan(&id); err != nil {

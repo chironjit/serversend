@@ -140,6 +140,19 @@ func (c *Client) UploadResumable(ctx context.Context, path string, parent protoc
 	if err != nil {
 		return api.FinalizeResult{}, err
 	}
+	if !resumed || prepared.SourceFingerprint != checkpoint.SourceFingerprint {
+		target, err := c.findUploadTarget(ctx, parent, filepath.Base(path))
+		if err != nil {
+			return api.FinalizeResult{}, err
+		}
+		if target != nil {
+			prepared.Manifest.FileID = target.ID
+			prepared.Intent.FileID = target.ID
+			prepared.Intent.ExpectedHead = target.HeadRevision
+			body, _ := json.Marshal(prepared.Manifest)
+			prepared.Intent.ManifestBytes = int64(len(body))
+		}
+	}
 	if resumed && prepared.SourceFingerprint != checkpoint.SourceFingerprint {
 		if checkpoint.UploadID != "" {
 			if err = c.CancelUpload(ctx, checkpoint.UploadID); err != nil {

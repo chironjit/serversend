@@ -53,6 +53,10 @@ func (f *fakeServer) handler(t *testing.T) http.HandlerFunc {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		switch {
+		case path == "/catalog/target":
+			reply(200, struct {
+				Entry *api.CatalogEntry `json:"entry"`
+			}{nil})
 		case path == "/sessions":
 			reply(201, api.Session{ServerID: "11111111111111111111111111111111", AccountID: "22222222222222222222222222222222", AccessToken: "memory-session"})
 		case path == "/capabilities":
