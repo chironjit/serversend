@@ -39,6 +39,12 @@ var (
 type StoragePolicy struct{ GlobalBytes, UserBytes, MinFreeBytes int64 }
 
 type Service struct {
+	statsGate       chan struct{}
+	statsCache      map[protocol.ID]api.StorageStatistics
+	stageMu         sync.Mutex
+	stages          map[string]protocol.ID
+	traffic         trafficCounters
+	capacityPaths   map[string]string
 	catalogKey      [32]byte
 	catalogInstance protocol.ID
 	mu              sync.Mutex
@@ -59,7 +65,7 @@ func New(repo *database.Repository, store *storage.Store, serverID protocol.ID, 
 	if now == nil {
 		now = time.Now
 	}
-	s := &Service{repo: repo, store: store, serverID: serverID, limits: limits, now: now}
+	s := &Service{statsGate: make(chan struct{}, 1), statsCache: map[protocol.ID]api.StorageStatistics{}, stages: map[string]protocol.ID{}, repo: repo, store: store, serverID: serverID, limits: limits, now: now}
 	if _, err := rand.Read(s.catalogKey[:]); err != nil {
 		return nil, err
 	}
@@ -249,6 +255,10 @@ func (s *Service) Missing(ctx context.Context, account, upload protocol.ID) (api
 // Concurrent chunks may pass the free-space pre-check together; upload
 // reservations already cover their bytes.
 func (s *Service) PutChunk(ctx context.Context, account, upload protocol.ID, index, length int64, digest protocol.Digest, body io.Reader) (api.ChunkAcknowledgement, bool, error) {
+	counter := &countedReader{Reader: body}
+	body = counter
+	var useful int64
+	defer func() { s.RecordTraffic(account, counter.n, useful, max(0, counter.n-useful)) }()
 	t, err := s.transfer(ctx, account, upload)
 	if err != nil {
 		return api.ChunkAcknowledgement{}, false, err
@@ -309,8 +319,16 @@ func (s *Service) PutChunk(ctx context.Context, account, upload protocol.ID, ind
 	if err != nil {
 		return api.ChunkAcknowledgement{}, false, err
 	}
+	if !created && err == nil {
+		if _, readErr := io.Copy(io.Discard, io.LimitReader(body, length)); readErr != nil {
+			return api.ChunkAcknowledgement{}, false, readErr
+		}
+	}
 	if existing.Bytes != length || subtle.ConstantTimeCompare([]byte(existing.Digest), []byte(digest)) != 1 {
 		return api.ChunkAcknowledgement{}, false, api.Error{Code: api.Conflict, Message: "A different chunk was already stored at this index"}
+	}
+	if created {
+		useful = length
 	}
 	return api.ChunkAcknowledgement{UploadID: upload, Chunk: protocol.Chunk{Index: index, Bytes: length, SHA256: digest}}, created, nil
 }

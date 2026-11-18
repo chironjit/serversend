@@ -366,7 +366,8 @@ func (t *transferRoutes) chunk(w http.ResponseWriter, r *http.Request, account p
 	w.Header().Set(api.ChunkDigestHeader, string(chunk.SHA256))
 	w.WriteHeader(200)
 	// The client verifies the digest; a short copy surfaces there as a mismatch.
-	_, _ = io.Copy(w, io.LimitReader(object, chunk.Bytes))
+	n, _ := io.Copy(w, io.LimitReader(object, chunk.Bytes))
+	t.service.RecordTraffic(account, n, 0, 0)
 	return nil
 }
 

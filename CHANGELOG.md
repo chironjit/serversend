@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added standard account/server storage allocation and reservation dashboards, deduplicated filesystem capacity, useful upload/payload/retry rates and bounded replayable events with stale/offline indicators. See [visibility semantics](docs/protocol-transfers.md#implemented-standard-visibility).
+
 - Added storage quotas and free-space reservations, expired-upload cleanup and account-scoped cancellation. Startup reconciles orphan objects and rejects missing/truncated acknowledged data. Strengthened directory flush ordering; schema 8 adds recovery indexes. See [storage settings](docs/server-development.md#storage-capacity-and-recovery).
 
 ### Usability iteration

@@ -34,6 +34,7 @@ import type { DeviceInfo } from '../bindings/github.com/chironjit/serversend/sha
 import type { ServerProbe } from '../bindings/github.com/chironjit/serversend/shared/client/models';
 import BrandMark from './components/ui/BrandMark.vue';
 import ThemeSwitch from './components/ui/ThemeSwitch.vue';
+import StorageDashboard from './components/StorageDashboard.vue';
 import UiAlert from './components/ui/UiAlert.vue';
 import UiBadge from './components/ui/UiBadge.vue';
 import UiButton from './components/ui/UiButton.vue';
@@ -1443,6 +1444,7 @@ onUnmounted(() => {
               >Apply limit</UiButton
             >
           </form>
+          <StorageDashboard :key="account?.scope" />
           <div class="grid grid-cols-2 gap-3 p-5 pb-3">
             <div class="bg-muted/60 min-w-0 rounded-lg p-3">
               <p class="text-muted-foreground m-0 flex items-center gap-1.5 text-xs">

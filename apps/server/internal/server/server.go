@@ -93,6 +93,7 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 		db.Close()
 		return nil, err
 	}
+	transfers.SetCapacityPaths(map[string]string{"data": c.DataDir, "config": c.ConfigDir, "staging": c.StagingDir})
 	logs, err := applog.Open(c.ConfigDir)
 	if err != nil {
 		store.Close()

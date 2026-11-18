@@ -183,3 +183,7 @@ func (s *TransferService) ChooseAndRestore(ids []string, policy string) (bool, e
 func (s *TransferService) Bandwidth() int64 { return s.manager.Bandwidth() }
 
 func (s *TransferService) QueueHealth() string { return s.manager.QueueHealth() }
+
+func (s *TransferService) StorageStatistics(ctx context.Context) (api.StorageStatistics, error) {
+	return s.manager.StorageStatistics(ctx)
+}

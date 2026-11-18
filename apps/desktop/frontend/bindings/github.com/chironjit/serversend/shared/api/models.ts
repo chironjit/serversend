@@ -20,3 +20,45 @@ export interface DeviceInfo {
     "status": string;
     "recently_active": boolean;
 }
+
+export interface FilesystemCapacity {
+    "id": string;
+    "roles": string[] | null;
+    "available_bytes": number;
+    "total_bytes": number;
+}
+
+/**
+ * StorageStatistics separates file allocations from logical content and promises.
+ * ReservedBytes are not allocated bytes and must not be added to disk usage.
+ */
+export interface StorageStatistics {
+    "available_bytes": number;
+    "updated_at": string;
+    "logical_bytes": number;
+    "committed_bytes": number;
+    "retained_bytes": number;
+    "staged_bytes": number;
+    "trash_bytes": number;
+    "other_bytes": number;
+    "reserved_bytes": number;
+    "unwritten_bytes": number;
+    "quota_bytes": number;
+    "active_uploads": number;
+    "filesystems"?: FilesystemCapacity[] | null;
+    "transfer": TransferStatistics;
+}
+
+/**
+ * Wire counts application payload, excluding TLS/HTTP framing. Useful upload
+ * bytes count first durable acknowledgements; retries include rejected payload.
+ */
+export interface TransferStatistics {
+    "wire_bytes": number;
+    "useful_bytes": number;
+    "retry_bytes": number;
+    "wire_rate": number;
+    "useful_rate": number;
+    "retry_rate": number;
+    "updated_at": string;
+}

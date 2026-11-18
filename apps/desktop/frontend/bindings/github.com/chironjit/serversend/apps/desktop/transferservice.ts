@@ -175,6 +175,10 @@ export function SignOut(): $CancellablePromise<void> {
     return $Call.ByID(3419249233);
 }
 
+export function StorageStatistics(): $CancellablePromise<api$0.StorageStatistics> {
+    return $Call.ByID(3886812404);
+}
+
 export function Transfers(): $CancellablePromise<transfer$0.Item[] | null> {
     return $Call.ByID(178489758);
 }

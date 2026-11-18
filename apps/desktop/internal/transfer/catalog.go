@@ -55,3 +55,12 @@ func (m *Manager) CatalogChanged(ctx context.Context, revision string) (bool, er
 	}
 	return false, err
 }
+
+// StorageStatistics is scoped by the live client session, never a frontend ID.
+func (m *Manager) StorageStatistics(ctx context.Context) (api.StorageStatistics, error) {
+	c, err := m.current()
+	if err != nil {
+		return api.StorageStatistics{}, err
+	}
+	return c.StorageStatistics(ctx)
+}

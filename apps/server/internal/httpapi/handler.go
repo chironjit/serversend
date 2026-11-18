@@ -40,6 +40,10 @@ func New(ready func(context.Context) error, settings ...Option) http.Handler {
 	if opts.authentication != nil && opts.transfers != nil {
 		transfers = newTransferRoutes(opts.authentication, opts.transfers)
 	}
+	var visible func(http.ResponseWriter, *http.Request) bool
+	if opts.authentication != nil && opts.transfers != nil {
+		visible = visibility(opts.authentication, opts.transfers)
+	}
 	return requestLogs(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
@@ -50,6 +54,9 @@ func New(ready func(context.Context) error, settings ...Option) http.Handler {
 			return
 		}
 		if !browserProtection(w, r) {
+			return
+		}
+		if visible != nil && visible(w, r) {
 			return
 		}
 		if opts.authentication != nil && (serveOwnDevices(w, r, opts.authentication) || serveDeviceSessions(w, r, opts.authentication) || serveDeviceAdmin(w, r, opts.authentication) || serveStats(w, r, opts.authentication, opts.transfers) || serveSessions(w, r, opts.authentication) || serveLogs(w, r, opts.authentication, opts.logs) || serveAuthentication(w, r, opts.authentication) || serveUsers(w, r, opts.authentication)) {

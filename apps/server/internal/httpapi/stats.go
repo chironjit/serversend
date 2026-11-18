@@ -89,15 +89,7 @@ func serveStats(w http.ResponseWriter, r *http.Request, accounts *auth.Service, 
 		writeError(w, r, 405, api.InvalidRequest, "Use GET")
 		return true
 	}
-	users, err := accounts.Users(r.Context(), bearer(r))
-	if err != nil {
-		writeAuthenticationError(w, r, err)
-		return true
-	}
 	var stored int64
-	for _, user := range users {
-		stored += user.StorageBytes
-	}
 	cpu, used, total := hostStats()
 	var available *int64
 	if transfers != nil {
@@ -105,13 +97,24 @@ func serveStats(w http.ResponseWriter, r *http.Request, accounts *auth.Service, 
 			available = &n
 		}
 	}
+	var storageStats *api.StorageStatistics
+	if transfers != nil {
+		value, err := transfers.Statistics(r.Context(), "")
+		if err != nil {
+			writeFailure(w, r, err)
+			return true
+		}
+		storageStats = &value
+		stored = value.LogicalBytes
+	}
 	writeJSON(w, r, 200, struct {
-		Status      string   `json:"status"`
-		CPU         *float64 `json:"cpu_percent"`
-		MemoryUsed  *uint64  `json:"memory_used_bytes"`
-		MemoryTotal *uint64  `json:"memory_total_bytes"`
-		Storage     int64    `json:"storage_bytes"`
-		Available   *int64   `json:"storage_available_bytes"`
-	}{"Operational", cpu, used, total, stored, available})
+		StorageDetails *api.StorageStatistics `json:"storage"`
+		Status         string                 `json:"status"`
+		CPU            *float64               `json:"cpu_percent"`
+		MemoryUsed     *uint64                `json:"memory_used_bytes"`
+		MemoryTotal    *uint64                `json:"memory_total_bytes"`
+		Storage        int64                  `json:"storage_bytes"`
+		Available      *int64                 `json:"storage_available_bytes"`
+	}{storageStats, "Operational", cpu, used, total, stored, available})
 	return true
 }

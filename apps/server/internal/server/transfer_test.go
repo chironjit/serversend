@@ -204,6 +204,14 @@ func TestClientUploadsAndRestoresFilesEndToEnd(t *testing.T) {
 		t.Fatal("directory uploaded as a file")
 	}
 
+	statistics, err := admin.StorageStatistics(t.Context())
+	var expectedBytes int64
+	for _, data := range fixtures {
+		expectedBytes += int64(len(data))
+	}
+	if err != nil || statistics.LogicalBytes != expectedBytes || statistics.CommittedBytes < expectedBytes || statistics.ReservedBytes != 0 || statistics.UpdatedAt.IsZero() {
+		t.Fatalf("storage statistics: %+v %v", statistics, err)
+	}
 	page, err := admin.Catalog(t.Context())
 	if err != nil || len(page.Entries) != len(fixtures) || page.CatalogRevision != "4" {
 		t.Fatalf("catalog: %d entries at %s: %v", len(page.Entries), page.CatalogRevision, err)

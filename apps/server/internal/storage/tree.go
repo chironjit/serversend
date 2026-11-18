@@ -173,7 +173,7 @@ func (st *Staged) Discard(s *Store) {
 
 // Stage reads exactly length bytes into the temporary area and verifies them.
 // It consumes length bytes from body even when verification fails.
-func (s *Store) Stage(body io.Reader, length int64, digest protocol.Digest) (staged *Staged, err error) {
+func (s *Store) Stage(body io.Reader, length int64, digest protocol.Digest, observe ...func(string)) (staged *Staged, err error) {
 	name := layout.Tmp + "/" + randomName()
 	create := s.createTemporary
 	if create == nil {
@@ -186,6 +186,9 @@ func (s *Store) Stage(body io.Reader, length int64, digest protocol.Digest) (sta
 		return nil, err
 	}
 	staged = &Staged{file: file, Path: name}
+	if len(observe) > 0 {
+		observe[0](name)
+	}
 	defer func() {
 		if err != nil {
 			staged.Discard(s)

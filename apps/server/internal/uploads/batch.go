@@ -19,6 +19,24 @@ import (
 // Each file is validated exactly as Create and Finalize would; refusals are
 // reported per file in request order. body holds the files' bytes in order.
 func (s *Service) UploadBatch(ctx context.Context, account protocol.ID, request api.BatchUploadRequest, body io.Reader) ([]api.BatchUploadResult, error) {
+	counter := &countedReader{Reader: body}
+	body = counter
+	var useful int64
+	defer func() { s.RecordTraffic(account, counter.n, useful, max(0, counter.n-useful)) }()
+	paths := []string{}
+	defer func() {
+		s.stageMu.Lock()
+		for _, p := range paths {
+			delete(s.stages, p)
+		}
+		s.stageMu.Unlock()
+	}()
+	observe := func(name string) {
+		s.stageMu.Lock()
+		s.stages[name] = account
+		s.stageMu.Unlock()
+		paths = append(paths, name)
+	}
 	var total int64
 	for _, file := range request.Files {
 		total += file.TransmittedBytes
@@ -67,7 +85,7 @@ func (s *Service) UploadBatch(ctx context.Context, account protocol.ID, request 
 			entry.Chunk = &database.StoredChunk{Bytes: chunk.Bytes, Digest: chunk.SHA256}
 		}
 		// Stage consumes exactly this file's bytes, even on a mismatch.
-		st, err := s.store.Stage(io.LimitReader(body, file.TransmittedBytes), file.TransmittedBytes, digest)
+		st, err := s.store.Stage(io.LimitReader(body, file.TransmittedBytes), file.TransmittedBytes, digest, observe)
 		if errors.Is(err, storage.ErrMismatch) {
 			refuse(i, api.Error{Code: api.InvalidRequest, Message: "File bytes do not match the declared length and SHA-256; send the file again"})
 			continue
@@ -108,6 +126,9 @@ func (s *Service) UploadBatch(ctx context.Context, account protocol.ID, request 
 			errors.As(outcome.Err, &refused)
 			refuse(i, refused)
 			continue
+		}
+		if outcome.Inserted {
+			useful += request.Files[i].TransmittedBytes
 		}
 		t := outcome.Result
 		results[i].Result = &api.FinalizeResult{UploadID: t.ID, FileID: t.FileID, VersionID: t.VersionID, State: t.State, CatalogRevision: revision(t.CatalogRevision), HeadRevision: revision(t.HeadRevision)}

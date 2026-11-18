@@ -154,14 +154,16 @@ For every feature:
 
 **Outcome:** users and administrators can see actual capacity, retained data and active work without misleading totals.
 
-**Existing:** local progress and throughput chart. Storage accounting is incomplete.
+**Implemented:** standard-mode account/server allocation and reservation snapshots, deduplicated filesystem capacity, ten-second payload/useful-upload/retry rates, redacted replayable SSE and desktop/admin dashboards. See [wire semantics and limits](protocol-transfers.md#implemented-standard-visibility).
 
 **Depends on:** storage transitions from feature 3 and existing role enforcement. Deliver standard storage/transfer visibility now; extend accounting for retention in feature 8 and private overhead in feature 9, and integrate the completed administration UI in feature 11. Those later scenarios remain acceptance gates.
 
-- [ ] Reconcile committed, retained/trash, staged and reserved physical bytes per account/server; report logical standard bytes separately where useful.
-- [ ] Identify underlying filesystems and avoid summing duplicate free space across mounts.
-- [ ] Publish useful versus wire/retry rates, last-update times and stale/offline status.
-- [ ] Add bounded reconnectable events and dashboards with authorization, private-data redaction and slow-consumer isolation.
+- [x] Reconcile committed, retained/trash, staged and reserved physical bytes per account/server; report logical standard bytes separately where useful.
+- [x] Identify underlying filesystems and avoid summing duplicate free space across mounts.
+- [x] Publish useful versus wire/retry rates, last-update times and stale/offline status.
+- [x] Add bounded reconnectable events and dashboards with authorization, private-data redaction and slow-consumer isolation.
+
+**Evidence:** fixtures cover reservation/chunk retry/cancel/restart, current/retained/deleted data, filesystem deduplication, account/role isolation, event replay/restart and slow-consumer isolation. Native Windows/macOS, real Unraid storage, recoverable trash and private overhead remain later acceptance gates.
 
 **Accept when:** known fixtures, retries, deletion, interrupted uploads and restarts converge to measured on-disk totals; duplicated mounts are not double-counted and slow dashboards do not stall transfers.
 
