@@ -114,7 +114,8 @@ function status(item: Item): string {
   if (item.state === 'queued') return 'Waiting';
   if (canResume(item.state) || item.state === 'cancel_pending')
     return item.error || stateLabel[item.state] || item.state;
-  if (item.state === 'done') return size(item.total);
+  if (item.state === 'done')
+    return item.error ? `${size(item.total)} · ${item.error}` : size(item.total);
   return `${size(item.done)} of ${size(item.total)} · ${size(item.speed ?? 0)}/s`;
 }
 // Elapsed wall time for a selection, including scanning and waiting.

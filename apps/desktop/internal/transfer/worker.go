@@ -127,9 +127,13 @@ func (m *Manager) finish(j job, err error) {
 	m.update(j.item.ID, func(item *Item) {
 		item.Speed = 0
 		switch _, skipped := source.Skipped(err); {
-		case err == nil:
-			item.State, item.Done = "done", item.Total
+		case err == nil || errors.Is(err, client.ErrContentMismatch):
+			item.State, item.Done, item.Error = "done", item.Total, ""
 			bytes = item.Total
+			if err != nil {
+				item.Error = err.Error()
+				err = nil
+			}
 		case errors.Is(err, context.Canceled):
 			item.State, item.Error = "cancelled", "Cancelled"
 		case skipped:

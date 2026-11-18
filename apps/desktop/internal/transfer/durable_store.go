@@ -390,6 +390,9 @@ func (s *durableStore) batches(ctx context.Context, scope protocol.Scope) ([]Bat
 				} else {
 					b.Completed += n
 					b.Bytes += bytes
+					if msg != "" && b.Error == "" {
+						b.Error = msg // completed with a warning; failures take precedence
+					}
 				}
 			case "skipped":
 				b.Skipped += n

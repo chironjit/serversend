@@ -281,6 +281,7 @@ func (q *durableQueue) run(ctx context.Context, c *client.Client, t durableTask)
 		}
 	}
 	var err error
+	warning := "" // a completed task's note, such as a server copy mismatch
 	switch t.Kind {
 	case "upload":
 		if t.Payload.Upload == nil {
@@ -347,6 +348,9 @@ func (q *durableQueue) run(ctx context.Context, c *client.Client, t durableTask)
 			break
 		}
 		err = c.DownloadWithPolicy(requestCtx, t.Payload.Entry, t.Payload.Path, t.Payload.Policy, progress)
+		if errors.Is(err, client.ErrContentMismatch) {
+			warning, err = err.Error(), nil
+		}
 	case "scan_restore":
 		err = q.scanRestore(requestCtx, c, &t)
 	default:
@@ -358,7 +362,7 @@ func (q *durableQueue) run(ctx context.Context, c *client.Client, t durableTask)
 	if e := q.store.save(q.manager.base(), t); e != nil && err == nil {
 		err = e
 	}
-	state, msg, retry := "done", "", int64(0)
+	state, msg, retry := "done", warning, int64(0)
 	if err != nil {
 		msg = message(err).Error()
 		var typed api.Error
