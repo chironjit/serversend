@@ -20,9 +20,10 @@ func main() {
 	if len(os.Args) == 1 {
 		path, err := base64.RawURLEncoding.DecodeString(report)
 		must(err)
-		if err := os.WriteFile(string(path), []byte(version), 0600); err != nil {
-			panic(err)
-		}
+		// Publish the completed report so the polling test can only read a full version.
+		pending := string(path) + ".tmp"
+		must(os.WriteFile(pending, []byte(version), 0600))
+		must(os.Rename(pending, string(path)))
 		return
 	}
 	p := &provider{path: os.Args[1]}
