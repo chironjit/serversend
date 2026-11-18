@@ -52,5 +52,8 @@ jobs:
         run: |
           (cd shared && GOPROXY=off GOSUMDB=off go test -mod=readonly -race ./...)
           (cd apps/server && GOPROXY=off GOSUMDB=off go test -mod=readonly -race ./...)
+      - name: Build linux/amd64 server image
+        if: github.ref_type != 'tag'
+        run: docker build --platform linux/amd64 -f apps/server/deploy/Dockerfile .
       - name: Verify checks did not change tracked files
         run: git diff --exit-code

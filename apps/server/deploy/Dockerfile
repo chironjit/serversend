@@ -19,9 +19,7 @@ COPY apps/server/go.mod apps/server/go.sum ./apps/server/
 WORKDIR /src/apps/server
 RUN go mod download
 WORKDIR /src
-COPY shared/api ./shared/api
-COPY shared/protocol ./shared/protocol
-COPY shared/sqlite ./shared/sqlite
+COPY shared ./shared
 COPY apps/server/cmd ./apps/server/cmd
 COPY apps/server/internal ./apps/server/internal
 COPY apps/server/admin/assets.go ./apps/server/admin/assets.go

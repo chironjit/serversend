@@ -21,7 +21,7 @@ The build embeds the tag version and GitHub repository with `-ldflags`. The upda
 
 A draft GitHub Release holds downloads until all checks, packaging and container checks pass and the image is pushed. It uses GitHub's built-in `GITHUB_TOKEN`; no PAT is needed. Release notes are generated from GitHub changes and include the image/update channels. Maintain `CHANGELOG.md` for human-curated changes. This product remains experimental. Patch versions should preserve compatibility; use a new minor version for a new feature series or breaking pre-1.0 changes. Database schema versions remain separate.
 
-Never move/reuse a published tag or overwrite an exact image version. Protect release tags in repository rulesets. Failed runs can leave a draft and, if publishing partially succeeds, image tags. Inspect the failed step first: rerun a failed job only before image publication; after any image push, use a fresh version rather than rebuilding an exact published version. A failed local tag push retains the local tag; inspect remote state before retrying. Publishing to GHCR and GitHub Releases is not atomic.
+Never move/reuse a published tag or overwrite an exact image version. Protect release tags in repository rulesets. Failed runs can leave a draft and, if publishing partially succeeds, image tags. Inspect the failed step first. A rerun uses the original tagged commit. Use a fresh version if the fix requires a new commit or if the failed run pushed any image tag. A failed local tag push retains the local tag; inspect remote state before retrying. Publishing to GHCR and GitHub Releases is not atomic.
 
 | Image tag | Meaning |
 | --- | --- |
@@ -106,4 +106,4 @@ docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revisi
 
 ## Build checks without releasing
 
-Normal pushes and pull requests run the combined **Check** workflow. Use **Actions → Check → Run workflow** to check both components on demand. The reusable component workflows remain available for troubleshooting; component-prefixed tags no longer trigger them. A shared release version identifies a tested source revision, but CI does not test compatibility against historical desktop/server binaries. Keep API additions compatible with deployed clients; breaking protocols need an explicit migration window.
+Branch pushes and pull requests run the combined **Check** workflow, which builds the Linux amd64 server image using the release Dockerfile. Tagged releases build and smoke-test the image in the **publish** job. Use **Actions → Check → Run workflow** to check both components on demand. The reusable component workflows remain available for troubleshooting; component-prefixed tags no longer trigger them. A shared release version identifies a tested source revision, but CI does not test compatibility against historical desktop/server binaries. Keep API additions compatible with deployed clients; breaking protocols need an explicit migration window.
