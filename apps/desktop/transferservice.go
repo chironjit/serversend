@@ -253,3 +253,13 @@ func (s *TransferService) ConfigureVault(minutes int, remember bool) error {
 func (s *TransferService) UnlockRememberedVault() error { return s.manager.UnlockRememberedVault() }
 
 func (s *TransferService) PrivateMode() bool { return s.manager.PrivateMode() }
+
+func (s *TransferService) EditProfile(origin, name string, endpoints []string) error {
+	return s.manager.EditProfile(origin, name, endpoints)
+}
+func (s *TransferService) CombinedTransfers() []transfer.Item { return s.manager.CombinedTransfers() }
+
+func (s *TransferService) CombinedBatches() []transfer.Batch { return s.manager.CombinedBatches() }
+func (s *TransferService) QueueActionScoped(scope string, id int, batch bool, action string) error {
+	return s.manager.QueueActionScoped(scope, id, batch, action)
+}

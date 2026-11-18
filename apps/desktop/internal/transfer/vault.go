@@ -13,16 +13,17 @@ import (
 )
 
 func (m *Manager) privateKey(scope protocol.Scope) (vault.Key, error) {
-	c, err := m.current()
-	if err != nil {
-		return vault.Key{}, vault.ErrLocked
+	for _, c := range m.connectedClients() {
+		a, ok := c.Account()
+		if ok && scope == (protocol.Scope{ServerID: a.ServerID, AccountID: a.AccountID}) {
+			if key, err := c.VaultKey(); err == nil {
+				return key, nil
+			}
+		}
 	}
-	a, ok := c.Account()
-	if !ok || scope != (protocol.Scope{ServerID: a.ServerID, AccountID: a.AccountID}) {
-		return vault.Key{}, vault.ErrLocked
-	}
-	return c.VaultKey()
+	return vault.Key{}, vault.ErrLocked
 }
+
 func (m *Manager) SetupVault(ctx context.Context, pass string, acknowledged bool) (string, error) {
 	if !acknowledged {
 		return "", errors.New("acknowledge that lost vault keys cannot be recovered by an administrator")

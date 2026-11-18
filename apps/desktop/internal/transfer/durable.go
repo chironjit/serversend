@@ -23,11 +23,13 @@ import (
 )
 
 type activeDurable struct {
+	scope   protocol.Scope
 	private bool
 	batch   int
 	cancel  context.CancelFunc
 }
 type durableQueue struct {
+	cursor       int
 	privateGate  sync.Mutex
 	closed       chan struct{}
 	storageError string
@@ -78,7 +80,19 @@ func (m *Manager) enableDurable(dir string) error {
 		q.wg.Add(1)
 		go q.work()
 	}
-	go func() { <-m.base().Done(); q.wg.Wait(); store.db.Close(); lock.Close(); close(q.closed) }()
+	go func() {
+		<-m.base().Done()
+		q.wg.Wait()
+		m.mu.Lock()
+		m.retainClientLocked()
+		for _, c := range m.clients {
+			c.Close()
+		}
+		m.mu.Unlock()
+		store.db.Close()
+		lock.Close()
+		close(q.closed)
+	}()
 	return nil
 }
 func (q *durableQueue) notify() {
@@ -107,41 +121,61 @@ func (q *durableQueue) work() {
 		if q.manager.base().Err() != nil {
 			return
 		}
-		if q.manager.connectionMu.TryLock() {
-			scope, c, err := q.manager.durableScope()
+		q.mu.Lock()
+		clients := q.manager.connectedClients()
+		var task durableTask
+		var chosen *client.Client
+		for offset := range clients {
+			i := (q.cursor + offset) % len(clients)
+			c := clients[i]
 			q.manager.mu.Lock()
-			pendingLogin := q.manager.challenge != ""
+			blocked := q.manager.blocked[c]
 			q.manager.mu.Unlock()
-			if err == nil && !pendingLogin {
-				q.mu.Lock()
-				allowPrivate := true
-				exclude := make([]int, 0, len(q.active))
-				for id, a := range q.active {
-					if a.private {
-						allowPrivate = false
-					}
-					exclude = append(exclude, id)
-				}
-				t, e := q.store.claimWithPrivate(q.manager.base(), scope, allowPrivate, exclude...)
-				if e == nil {
-					ctx, cancel := context.WithCancel(q.manager.base())
-					q.active[t.ID] = activeDurable{private: t.Payload.Private, batch: t.BatchID, cancel: cancel}
-					q.mu.Unlock()
-					q.manager.connectionMu.Unlock()
-					q.run(ctx, c, t)
-					cancel()
-					q.mu.Lock()
-					delete(q.active, t.ID)
-					q.mu.Unlock()
-					continue
-				}
-				if !errors.Is(e, sql.ErrNoRows) {
-					q.storageError = e.Error()
-				}
-				q.mu.Unlock()
+			if blocked {
+				continue
 			}
-			q.manager.connectionMu.Unlock()
+			a, ok := c.Account()
+			if !ok {
+				continue
+			}
+			scope := protocol.Scope{ServerID: a.ServerID, AccountID: a.AccountID}
+			count := 0
+			allowPrivate := true
+			exclude := make([]int, 0, len(q.active))
+			for id, active := range q.active {
+				exclude = append(exclude, id)
+				if active.scope == scope {
+					count++
+				}
+				if active.private {
+					allowPrivate = false
+				}
+			}
+			if len(clients) > 1 && count >= workers/2 {
+				continue
+			}
+			t, err := q.store.claimWithPrivate(q.manager.base(), scope, allowPrivate, exclude...)
+			if err == nil {
+				task, chosen = t, c
+				q.cursor = (i + 1) % len(clients)
+				break
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				q.storageError = err.Error()
+			}
 		}
+		if chosen != nil {
+			ctx, cancel := context.WithCancel(q.manager.base())
+			q.active[task.ID] = activeDurable{scope: task.Scope, private: task.Payload.Private, batch: task.BatchID, cancel: cancel}
+			q.mu.Unlock()
+			q.run(ctx, chosen, task)
+			cancel()
+			q.mu.Lock()
+			delete(q.active, task.ID)
+			q.mu.Unlock()
+			continue
+		}
+		q.mu.Unlock()
 		select {
 		case <-q.manager.base().Done():
 			return
@@ -614,9 +648,12 @@ func (m *Manager) QueueAction(id int, batch bool, action string) error {
 	if err != nil {
 		return err
 	}
+	return m.queueAction(scope, id, batch, action)
+}
+func (m *Manager) queueAction(scope protocol.Scope, id int, batch bool, action string) error {
 	q := m.durable
 	q.mu.Lock()
-	if err = q.store.control(m.base(), scope, id, batch, action); err != nil {
+	if err := q.store.control(m.base(), scope, id, batch, action); err != nil {
 		q.mu.Unlock()
 		return err
 	}
@@ -677,16 +714,31 @@ func (m *Manager) SetBandwidth(bytesPerSecond int64) error {
 	q.rateMu.Unlock()
 	return nil
 }
-func (q *durableQueue) suspend() error {
+func (q *durableQueue) suspend() error { return q.suspendScope(protocol.Scope{}) }
+func (q *durableQueue) suspendCurrent() error {
+	scope, _, err := q.manager.durableScope()
+	if err != nil {
+		return nil
+	}
+	return q.suspendScope(scope)
+}
+func (q *durableQueue) suspendScope(scope protocol.Scope) error {
 	q.mu.Lock()
 	for _, active := range q.active {
-		active.cancel()
+		if scope.ServerID == "" || active.scope == scope {
+			active.cancel()
+		}
 	}
 	q.mu.Unlock()
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		q.mu.Lock()
-		n := len(q.active)
+		n := 0
+		for _, a := range q.active {
+			if scope.ServerID == "" || a.scope == scope {
+				n++
+			}
+		}
 		q.mu.Unlock()
 		if n == 0 {
 			return nil
@@ -792,6 +844,9 @@ func (m *Manager) QueueHealth() string {
 }
 
 func (m *Manager) wakeAuthenticated(c *client.Client) {
+	m.mu.Lock()
+	delete(m.blocked, c)
+	m.mu.Unlock()
 	if m.durable == nil {
 		return
 	}

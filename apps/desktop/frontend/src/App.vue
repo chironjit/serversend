@@ -68,6 +68,40 @@ const error = ref('');
 
 const profiles = ref<Profile[]>([]);
 const remember = ref(false);
+const combinedQueue = ref(false);
+const editingProfile = ref('');
+const profileName = ref('');
+const profileRoutes = ref('');
+const repairProfile = ref('');
+function editProfile(saved: Profile) {
+  editingProfile.value = saved.origin;
+  profileName.value = saved.name ?? '';
+  profileRoutes.value = (saved.endpoints ?? []).join('\n');
+}
+const saveProfile = () =>
+  attempt(async () => {
+    await TransferService.EditProfile(
+      editingProfile.value,
+      profileName.value,
+      profileRoutes.value.split(/\s+/).filter(Boolean),
+    );
+    editingProfile.value = '';
+    await loadProfiles();
+  });
+const repairTrust = () =>
+  attempt(async () => {
+    const origin = repairProfile.value;
+    await TransferService.RemoveProfile(origin);
+    repairProfile.value = '';
+    address.value = origin;
+    await loadProfiles();
+  });
+function scopeName(scope: string) {
+  const saved = profiles.value.find(
+    (p) => p.trust?.identity?.server_id + '/' + p.account_id === scope,
+  );
+  return saved?.name || saved?.origin || scope;
+}
 async function loadProfiles() {
   profiles.value = (await TransferService.Profiles()) ?? [];
 }
@@ -350,7 +384,13 @@ const canCancel = (state: string) =>
   !terminalStates.has(state) && state !== 'cancel_pending' && state !== 'cancelling';
 const queueAction = (id: number, batch: boolean, action: string) =>
   attempt(async () => {
-    await TransferService.QueueAction(id, batch, action);
+    if (combinedQueue.value) {
+      const scope =
+        (batch
+          ? batches.value.find((b) => b.id === id)?.scope
+          : transfers.value.find((t) => t.id === id)?.scope) ?? '';
+      await TransferService.QueueActionScoped(scope, id, batch, action);
+    } else await TransferService.QueueAction(id, batch, action);
     await refreshBatches();
   });
 function cancelTransfer(id: number) {
@@ -370,8 +410,8 @@ async function refreshBatches() {
   const scope = account.value;
   try {
     const [list, items, health] = await Promise.all([
-      TransferService.Batches(),
-      TransferService.Transfers(),
+      combinedQueue.value ? TransferService.CombinedBatches() : TransferService.Batches(),
+      combinedQueue.value ? TransferService.CombinedTransfers() : TransferService.Transfers(),
       TransferService.QueueHealth(),
     ]);
     if (view.value === 'files' && account.value === scope) {
@@ -676,6 +716,21 @@ function boundTransfers(list: Item[]) {
 // Events arrive as batches of changed transfers, a few times a second.
 function onTransfers(items: Item[]) {
   if (view.value !== 'files') return;
+  if (combinedQueue.value) {
+    // Reconcile through the backend's connected-account filter: buffered
+    // events may outlive profile removal or sign-out.
+    if (
+      items.some(
+        (item) =>
+          item.scope === account.value?.scope &&
+          item.state === 'done' &&
+          item.direction === 'upload',
+      )
+    )
+      refreshFilesSoon();
+    void refreshBatches();
+    return;
+  }
   const list = [...transfers.value];
   const index = new Map(list.map((entry, position) => [entry.id, position]));
   let uploaded = false;
@@ -778,7 +833,8 @@ onUnmounted(() => {
             variant="outline"
             :disabled="busy"
             @click="openProfile(saved.origin)"
-            >{{ saved.username ? saved.username + ' · ' : '' }}{{ saved.origin }}</UiButton
+            >{{ saved.name || saved.origin
+            }}{{ saved.username ? ' · ' + saved.username : '' }}</UiButton
           >
           <UiButton
             type="button"
@@ -787,7 +843,48 @@ onUnmounted(() => {
             @click="removeProfile(saved.origin)"
             >Remove</UiButton
           >
+          <UiButton type="button" variant="ghost" :disabled="busy" @click="editProfile(saved)"
+            >Edit</UiButton
+          >
+          <UiButton
+            type="button"
+            variant="ghost"
+            :disabled="busy"
+            @click="repairProfile = saved.origin"
+            >Repair trust</UiButton
+          >
         </div>
+        <section v-if="editingProfile" class="grid gap-3" aria-label="Edit server profile">
+          <UiField label="Display name"><UiInput v-model="profileName" maxlength="100" /></UiField>
+          <label class="grid gap-1 text-sm"
+            >Approved alternate routes (one HTTPS origin per line)
+            <textarea
+              v-model="profileRoutes"
+              rows="3"
+              class="border-input bg-card rounded-md border p-2"
+            />
+          </label>
+          <p class="text-muted-foreground text-xs">
+            Save checkpoints this profile's transfers. Reopen it to apply routes; sign in again if
+            the session was not remembered.
+          </p>
+          <UiButton type="button" :disabled="busy" @click="saveProfile">Save profile</UiButton>
+          <UiButton type="button" variant="ghost" @click="editingProfile = ''"
+            >Cancel edit</UiButton
+          >
+        </section>
+        <section v-if="repairProfile" class="grid gap-3" aria-label="Confirm trust repair">
+          <p>
+            Forget trust and saved credentials for {{ repairProfile }}? Compare the new CA with your
+            operator before pairing again. Local queue records and downloaded files are retained.
+          </p>
+          <UiButton type="button" :disabled="busy" @click="repairTrust"
+            >Forget trust and pair again</UiButton
+          >
+          <UiButton type="button" variant="ghost" @click="repairProfile = ''"
+            >Cancel repair</UiButton
+          >
+        </section>
         <UiField label="Server address">
           <UiInput
             v-model="address"
@@ -1460,6 +1557,10 @@ onUnmounted(() => {
               </template>
             </UiCardHeader>
           </div>
+          <label class="flex items-center gap-2 px-5 pt-3 text-sm"
+            ><input v-model="combinedQueue" type="checkbox" @change="refreshBatches" />All signed-in
+            servers</label
+          >
           <form class="flex flex-wrap items-end gap-2 px-5 pt-4" @submit.prevent="setBandwidth">
             <label for="bandwidth" class="grid gap-1 text-xs"
               >Bandwidth limit (MiB/s; 0 = unlimited)
@@ -1552,6 +1653,9 @@ onUnmounted(() => {
                 :key="batch.id"
                 class="border-border rounded-lg border p-3"
               >
+                <p v-if="combinedQueue" class="text-muted-foreground text-xs">
+                  {{ scopeName(batch.scope) }}
+                </p>
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="min-w-0 flex-1 wrap-anywhere text-sm font-medium">{{
                     batch.name
@@ -1665,6 +1769,9 @@ onUnmounted(() => {
               :key="item.id"
               class="border-border grid gap-1.5 border-t px-5 py-3 first:border-t-0"
             >
+              <p v-if="combinedQueue" class="text-muted-foreground text-xs">
+                {{ scopeName(item.scope) }}
+              </p>
               <div class="flex items-center gap-2">
                 <ArrowUpFromLine
                   v-if="item.direction === 'upload'"

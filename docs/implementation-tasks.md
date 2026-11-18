@@ -27,7 +27,7 @@ Checked items mean the stated scope is implemented with recorded evidence. Compo
 | 7. Storage visibility | Pending | Existing local throughput display only; accounting and dashboards open |
 | 8. Versions/trash | Implemented | Standard history/conflict resolution, trash/restore/purge and retention delivered; native filesystem and deployment qualification remain open |
 | 9. Private storage | Pending | Contracts only; format prototype, encryption and recovery open |
-| 10. Multiple servers/routes | Pending | Saved profiles with one active connection; simultaneous connections and routes open |
+| 10. Multiple servers/routes | Implemented | Simultaneous scoped clients, combined queues, approved-route failover and explicit trust repair; native LAN/tailnet qualification open |
 | 11. Account administration | Pending | Existing user creation/listing and backend foundations only; complete controls and security policy open |
 | 12. Deployment/backup/upgrades | Partial | Initial standard backup/restore and operator guidance delivered; actual Unraid, private recovery and version compatibility open |
 | 13. Background desktop | Partial | Bounded batch summaries and skip/failure counts delivered; durable controls, tray and native lifecycle open |
@@ -207,15 +207,15 @@ For every feature:
 
 **Outcome:** multiple independent accounts/servers work simultaneously, with safe LAN/tailnet switching.
 
-**Existing:** saved server profiles and certificate fingerprints, optional OS-keychain sessions, single active desktop connection and shared identity-proof contracts. Feature 2 preserves transport pinning; feature 4 establishes persistent single-profile trust.
+**Status:** implementation complete; Linux integration evidence is recorded in the [verification map](requirements-verification.md#multiple-servers-and-trusted-routes--2026-11-18). Native Windows/macOS and actual LAN/tailnet qualification remain open.
 
 **Depends on:** features 4, 5, 6. Add combined/per-server queue views here; feature 13 later completes their background lifecycle and UI qualification.
 
-- [ ] Add/edit/remove persistent profiles containing scoped accounts, trusted identity, approved endpoints and preferences.
-- [ ] Complete pairing and explicit identity/CA repair; validate signed challenges against the actual TLS connection, consume nonces and reject redirects/unapproved origins before sending credentials.
-- [ ] Probe only configured routes with bounded timeouts/failure caching; retain upload identity when switching LAN/tailnet endpoints.
-- [ ] Support simultaneous sign-in, combined/per-server queues and separate catalogs; an offline server must not block another.
-- [ ] Document profile removal, credential deletion and local queue/data retention behavior.
+- [x] Add/edit/remove persistent profiles containing scoped accounts, trusted identity, approved endpoints and preferences.
+- [x] Complete pairing and explicit identity/CA repair; validate signed challenges against the actual TLS connection, consume nonces and reject redirects/unapproved origins before sending credentials.
+- [x] Probe only configured routes with bounded timeouts/failure caching; retain upload identity when switching LAN/tailnet endpoints.
+- [x] Support simultaneous sign-in, combined/per-server queues and separate catalogs; an offline server must not block another.
+- [x] Document profile removal, credential deletion and local queue/data retention behavior.
 
 **Accept when:** two servers with colliding usernames/file IDs remain isolated; route switches resume the same transfer; legitimate certificate renewal succeeds; replacement servers and relayed proofs receive no credentials.
 

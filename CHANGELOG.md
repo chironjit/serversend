@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added simultaneous desktop server sessions, isolated catalogs, combined/scoped queue controls, editable profile names/approved routes, bounded verified route failover and explicit trust repair. Profile removal retains local queue/data; identity proofs reject reused nonces.
+
 - Add experimental private vaults, encrypted names/content and durable tasks, recovery exports, rewrap/lock controls and private backup recovery. Current private ciphertext staging limits each file to 1 GiB; see `docs/private-storage.md`.
 
 - Added desktop version history, downloads and revision-checked restore/conflict resolution, stable overwrite IDs, recoverable file/folder trash with explicit purge, and administrator retention controls (30-day trash; versions kept indefinitely by default). Schema 12 preserves existing versions and exposes earlier hidden displacements in trash. Previously permanently deleted content cannot be recovered. See [lifecycle semantics](docs/protocol-transfers.md#standard-versions-trash-and-retention).

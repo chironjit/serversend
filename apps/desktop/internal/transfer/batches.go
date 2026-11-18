@@ -19,6 +19,7 @@ type SkippedItem struct {
 // Batch reports one file/folder selection. Skip details are bounded while the
 // total remains exact. These in-memory outcomes will move to the durable queue.
 type Batch struct {
+	Scope        string        `json:"scope"`
 	ID           int           `json:"id"`
 	Name         string        `json:"name"`
 	State        string        `json:"state"`

@@ -21,6 +21,7 @@ export interface Account {
  * total remains exact. These in-memory outcomes will move to the durable queue.
  */
 export interface Batch {
+    "scope": string;
     "id": number;
     "name": string;
     "state": string;
@@ -99,6 +100,8 @@ export interface Item {
  * Profile contains public connection preferences; credentials live in the OS keychain.
  */
 export interface Profile {
+    "name"?: string;
+    "endpoints"?: string[] | null;
     "private_default"?: boolean;
     "remember_vault"?: boolean;
     "vault_minutes"?: number;

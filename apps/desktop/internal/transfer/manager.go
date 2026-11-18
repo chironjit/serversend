@@ -78,6 +78,8 @@ type Manager struct {
 	authority   string
 	probe       client.ServerProbe
 	client      *client.Client
+	clients     map[string]*client.Client
+	blocked     map[*client.Client]bool
 	username    string
 	password    string
 	challenge   string
@@ -206,18 +208,25 @@ func (m *Manager) Probe(ctx context.Context, origin string) (client.ServerProbe,
 func (m *Manager) Approve(fingerprint string) error {
 	m.connectionMu.Lock()
 	defer m.connectionMu.Unlock()
-	if err := m.idle(); err != nil {
-		return err
-	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.probe.Fingerprint == "" || fingerprint != m.probe.Fingerprint {
+	probe, authority := m.probe, m.authority
+	alreadyPaired := false
+	for _, p := range m.profiles {
+		if p.Origin == probe.Origin && p.Trust.Identity.Validate() == nil {
+			alreadyPaired = true
+		}
+	}
+	m.mu.Unlock()
+	if alreadyPaired {
+		return errors.New("this server is already paired; open its saved profile or use Repair trust")
+	}
+	if probe.Fingerprint == "" || fingerprint != probe.Fingerprint {
 		return errors.New("check the server again before approving it")
 	}
-	if !m.probe.PubliclyTrusted && m.authority == "" {
+	if !probe.PubliclyTrusted && authority == "" {
 		return errors.New("import the server CA certificate supplied by your administrator before signing in")
 	}
-	c, err := client.NewVerified(m.probe.Origin, client.Trust{AuthorityPEM: m.authority})
+	c, err := client.NewVerified(probe.Origin, client.Trust{AuthorityPEM: authority})
 	if err != nil {
 		return err
 	}
@@ -232,13 +241,13 @@ func (m *Manager) Approve(fingerprint string) error {
 		c.Close()
 		return err
 	}
-	if err := m.saveTrustLocked(m.probe, trust); err != nil {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.saveTrustLocked(probe, trust); err != nil {
 		c.Close()
 		return err
 	}
-	if m.client != nil {
-		m.client.Close()
-	}
+	m.retainClientLocked()
 	m.client, m.challenge, m.password = c, "", ""
 	c.SetAppVersion(m.version)
 	m.configureStoreLocked(c)
@@ -579,7 +588,15 @@ func sortFiles(files []File) {
 
 func (m *Manager) idle() error {
 	if m.durable != nil {
-		return m.durable.suspend()
+		m.mu.Lock()
+		if m.blocked == nil {
+			m.blocked = map[*client.Client]bool{}
+		}
+		if m.client != nil {
+			m.blocked[m.client] = true
+		}
+		m.mu.Unlock()
+		return m.durable.suspendCurrent()
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

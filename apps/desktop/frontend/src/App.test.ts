@@ -21,6 +21,11 @@ const bridge = vi.hoisted(() => ({
     >(),
     CatalogChanged: vi.fn<(revision: string) => Promise<boolean>>(),
     Transfers: vi.fn<() => Promise<unknown[]>>(),
+    CombinedTransfers: vi.fn<() => Promise<unknown[]>>(),
+    CombinedBatches: vi.fn<() => Promise<unknown[]>>(),
+    QueueActionScoped:
+      vi.fn<(scope: string, id: number, batch: boolean, action: string) => Promise<void>>(),
+    EditProfile: vi.fn<(origin: string, name: string, endpoints: string[]) => Promise<void>>(),
     QueueAction: vi.fn<(id: number, batch: boolean, action: string) => Promise<void>>(),
     QueueHealth: vi.fn<() => Promise<string>>().mockResolvedValue(''),
     SetBandwidth: vi.fn<(bytes: number) => Promise<void>>(),
@@ -931,6 +936,67 @@ describe('desktop transfer slice', () => {
     await flushPromises();
     expect(wrapper.text()).not.toContain('old-private-name');
     expect(wrapper.text()).toContain('current-file');
+    wrapper.unmount();
+  });
+
+  it('saves approved routes and requires explicit trust repair confirmation', async () => {
+    bridge.service.Profiles.mockResolvedValue([
+      { origin: 'https://saved.test:58443', name: 'Home', endpoints: [] },
+    ]);
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Edit')!
+      .trigger('click');
+    await wrapper.get('textarea').setValue('https://127.0.0.2:58443');
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save profile')!
+      .trigger('click');
+    await flushPromises();
+    expect(bridge.service.EditProfile).toHaveBeenCalledWith('https://saved.test:58443', 'Home', [
+      'https://127.0.0.2:58443',
+    ]);
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Repair trust')!
+      .trigger('click');
+    expect(bridge.service.RemoveProfile).not.toHaveBeenCalled();
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Forget trust and pair again')!
+      .trigger('click');
+    await flushPromises();
+    expect(bridge.service.RemoveProfile).toHaveBeenCalledWith('https://saved.test:58443');
+    expect(wrapper.text()).toContain('Check server');
+    wrapper.unmount();
+  });
+  it('shows combined queues and sends controls with their original scope', async () => {
+    const wrapper = await mountLibrary();
+    bridge.service.CombinedBatches.mockResolvedValue([]);
+    bridge.service.CombinedTransfers.mockResolvedValue([
+      {
+        id: 55,
+        scope: 's2/a1',
+        name: 'other-server-file',
+        direction: 'upload',
+        state: 'paused',
+        done: 0,
+        total: 12,
+        error: '',
+      },
+    ]);
+    const label = wrapper.findAll('label').find((l) => l.text().includes('All signed-in servers'))!;
+    await label.get('input').setValue(true);
+    await flushPromises();
+    expect(wrapper.text()).toContain('other-server-file');
+    await wrapper.get('[aria-label="Resume other-server-file"]').trigger('click');
+    await flushPromises();
+    expect(bridge.service.QueueActionScoped).toHaveBeenCalledWith('s2/a1', 55, false, 'resume');
+    await label.get('input').setValue(false);
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('other-server-file');
     wrapper.unmount();
   });
 });

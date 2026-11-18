@@ -58,6 +58,7 @@ func WithIdentity(sign func(context.Context, *protocol.IdentityProof) error) Opt
 		var mu sync.Mutex
 		var start time.Time
 		count := 0
+		used := map[string]time.Time{}
 		o.signIdentity = func(ctx context.Context, p *protocol.IdentityProof) error {
 			mu.Lock()
 			now := time.Now()
@@ -67,7 +68,21 @@ func WithIdentity(sign func(context.Context, *protocol.IdentityProof) error) Opt
 			}
 			count++
 			allowed := count <= 64
+			for nonce, expiry := range used {
+				if !now.Before(expiry) {
+					delete(used, nonce)
+				}
+			}
+			_, replay := used[p.Nonce]
+			if allowed && !replay && len(used) < 8192 {
+				used[p.Nonce] = now.Add(protocol.IdentityProofLifetime)
+			} else {
+				allowed = false
+			}
 			mu.Unlock()
+			if replay {
+				return api.Error{Code: api.InvalidRequest, Message: "Use a fresh identity nonce"}
+			}
 			if !allowed {
 				return api.Error{Code: api.Overloaded, Message: "Identity verification is busy; try again shortly", RetryAfterSeconds: 1}
 			}

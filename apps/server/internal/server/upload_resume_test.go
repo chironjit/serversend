@@ -20,7 +20,7 @@ import (
 	"github.com/chironjit/serversend/shared/protocol"
 )
 
-func TestPersistentUploadResumesAcrossRealServerAndClientRestart(t *testing.T) {
+func TestPersistentUploadResumesAcrossRealServerClientRestartAndRouteChange(t *testing.T) {
 	cfg := fixture(t)
 	cfg.TLSCertFile, cfg.TLSKeyFile, cfg.TLSIPs = "", "", "127.0.0.1"
 	var requestsMu sync.Mutex
@@ -134,8 +134,8 @@ func TestPersistentUploadResumesAcrossRealServerAndClientRestart(t *testing.T) {
 	credentials := c.Credentials()
 	c.Close()
 	stop()
-	second, _, stopSecond := start(address)
-	restored, err := client.NewVerified("https://"+address, trust)
+	second, alternateAddress, stopSecond := start("127.0.0.1:0")
+	restored, err := client.NewVerifiedRoutes("https://"+address, []string{"https://" + alternateAddress}, trust)
 	if err != nil {
 		t.Fatal(err)
 	}

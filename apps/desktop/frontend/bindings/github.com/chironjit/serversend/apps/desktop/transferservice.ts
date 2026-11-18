@@ -95,6 +95,14 @@ export function ChooseServerCA(address: string): $CancellablePromise<client$0.Se
     return $Call.ByID(308712104, address);
 }
 
+export function CombinedBatches(): $CancellablePromise<transfer$0.Batch[] | null> {
+    return $Call.ByID(3960231687);
+}
+
+export function CombinedTransfers(): $CancellablePromise<transfer$0.Item[] | null> {
+    return $Call.ByID(1711005579);
+}
+
 export function CompleteReauthentication(code: string): $CancellablePromise<transfer$0.Account> {
     return $Call.ByID(701885792, code);
 }
@@ -121,6 +129,10 @@ export function DeleteEntry(id: string): $CancellablePromise<void> {
 
 export function Devices(before: string): $CancellablePromise<api$0.DeviceInfo[] | null> {
     return $Call.ByID(103921701, before);
+}
+
+export function EditProfile(origin: string, name: string, endpoints: string[] | null): $CancellablePromise<void> {
+    return $Call.ByID(2162518403, origin, name, endpoints);
 }
 
 export function ExportVaultRecovery(data: string): $CancellablePromise<boolean> {
@@ -165,6 +177,10 @@ export function PurgeTrash(id: string): $CancellablePromise<void> {
 
 export function QueueAction(id: number, batch: boolean, action: string): $CancellablePromise<void> {
     return $Call.ByID(369337231, id, batch, action);
+}
+
+export function QueueActionScoped(scope: string, id: number, batch: boolean, action: string): $CancellablePromise<void> {
+    return $Call.ByID(601692523, scope, id, batch, action);
 }
 
 export function QueueHealth(): $CancellablePromise<string> {

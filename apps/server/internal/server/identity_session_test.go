@@ -123,7 +123,7 @@ func TestVerifiedIdentityGatesEveryConnectionAndAllowsLeafRenewal(t *testing.T) 
 			mu.Lock()
 			selected = renewed
 			mu.Unlock()
-			restored, err := client.NewVerified(origin, trust)
+			restored, err := client.NewVerifiedRoutes("https://127.0.0.1:1", []string{origin}, trust)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -147,7 +147,7 @@ func TestVerifiedIdentityGatesEveryConnectionAndAllowsLeafRenewal(t *testing.T) 
 			if _, err = s.db.Exec(`UPDATE server_identity SET key_seed=? WHERE singleton=1`, make([]byte, 32)); err != nil {
 				t.Fatal(err)
 			}
-			replacement, err := client.NewVerified(origin, trust)
+			replacement, err := client.NewVerifiedRoutes("https://127.0.0.1:1", []string{origin}, trust)
 			if err != nil {
 				t.Fatal(err)
 			}

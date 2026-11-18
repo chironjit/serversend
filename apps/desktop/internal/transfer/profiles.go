@@ -19,6 +19,8 @@ import (
 
 // Profile contains public connection preferences; credentials live in the OS keychain.
 type Profile struct {
+	Name           string       `json:"name,omitempty"`
+	Endpoints      []string     `json:"endpoints,omitempty"`
 	PrivateDefault bool         `json:"private_default,omitempty"`
 	RememberVault  bool         `json:"remember_vault,omitempty"`
 	VaultMinutes   int          `json:"vault_minutes,omitempty"`
@@ -223,9 +225,7 @@ func (m *Manager) forgetLogin(origin string) error {
 func (m *Manager) OpenProfile(ctx context.Context, origin string) (Account, error) {
 	m.connectionMu.Lock()
 	defer m.connectionMu.Unlock()
-	if err := m.idle(); err != nil {
-		return Account{}, err
-	}
+
 	m.mu.Lock()
 	var profile Profile
 	for _, p := range m.profiles {
@@ -240,14 +240,30 @@ func (m *Manager) OpenProfile(ctx context.Context, origin string) (Account, erro
 	if profile.Trust.Identity.Validate() != nil {
 		return Account{}, errors.New("this saved server needs trust repair; check its address and import its CA certificate again")
 	}
-	c, err := client.NewVerified(profile.Origin, profile.Trust)
+	m.mu.Lock()
+	m.retainClientLocked()
+	existing := m.clients[origin]
+	if existing != nil {
+		m.client = existing
+		m.privateMode = profile.PrivateDefault
+		m.password, m.challenge = "", ""
+		m.catalog = map[string]api.CatalogEntry{}
+	}
+	m.mu.Unlock()
+	if existing != nil {
+		a, ok := existing.Account()
+		if ok {
+			m.wakeAuthenticated(existing)
+			return publicAccount(existing, a), nil
+		}
+		return Account{}, nil
+	}
+	c, err := client.NewVerifiedRoutes(profile.Origin, profile.Endpoints, profile.Trust)
 	if err != nil {
 		return Account{}, err
 	}
 	m.mu.Lock()
-	if m.client != nil {
-		m.client.Close()
-	}
+	m.retainClientLocked()
 	m.client = c
 	m.privateMode = profile.PrivateDefault
 	c.SetAppVersion(m.version)
@@ -286,7 +302,7 @@ func (m *Manager) OpenProfile(ctx context.Context, origin string) (Account, erro
 func (m *Manager) RemoveProfile(origin string) error {
 	m.connectionMu.Lock()
 	defer m.connectionMu.Unlock()
-	if err := m.idle(); err != nil {
+	if err := m.stopProfile(origin); err != nil {
 		return err
 	}
 	if err := m.forgetLogin(origin); err != nil {
@@ -296,8 +312,13 @@ func (m *Manager) RemoveProfile(origin string) error {
 	defer m.mu.Unlock()
 	if m.client != nil && m.client.Origin() == origin {
 		m.client.Close()
+		delete(m.clients, origin)
 		m.client = nil
 		m.catalog = map[string]api.CatalogEntry{}
+	}
+	if c := m.clients[origin]; c != nil {
+		c.Close()
+		delete(m.clients, origin)
 	}
 	for i, p := range m.profiles {
 		if p.Origin == origin && p.RememberVault {
