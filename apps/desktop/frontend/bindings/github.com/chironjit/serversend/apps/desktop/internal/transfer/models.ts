@@ -30,6 +30,11 @@ export interface Batch {
     "failed": number;
     "directories": number;
     "skipped": number;
+
+    /**
+     * skipped private files over the size limit
+     */
+    "oversized": number;
     "skippedItems": SkippedItem[] | null;
     "error": string;
     "cancelled": number;
@@ -123,6 +128,17 @@ export interface Profile {
 export interface SkippedItem {
     "path": string;
     "reason": string;
+
+    /**
+     * durable task; 0 for in-memory skips
+     */
+    "id": number;
+
+    /**
+     * Unencrypted marks a private file over the size limit that the user may
+     * choose to upload unencrypted with the "unencrypted" queue action.
+     */
+    "unencrypted": boolean;
 }
 
 /**

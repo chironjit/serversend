@@ -550,6 +550,60 @@ describe('desktop app', () => {
     wrapper.unmount();
   });
 
+  it('asks before uploading oversized private files unencrypted', async () => {
+    bridge.service.Batches.mockResolvedValue([
+      {
+        id: 4,
+        name: 'Private batch',
+        state: 'done_with_skips',
+        files: 2,
+        completed: 0,
+        failed: 0,
+        directories: 0,
+        skipped: 2,
+        oversized: 2,
+        skippedItems: [
+          {
+            id: 8,
+            path: '/big/a.iso',
+            reason: 'Larger than the 16 GiB private file limit',
+            unencrypted: true,
+          },
+          {
+            id: 9,
+            path: '/big/b.iso',
+            reason: 'Larger than the 16 GiB private file limit',
+            unencrypted: true,
+          },
+        ],
+        error: '',
+      },
+    ]);
+    const wrapper = await onboard();
+    await goto(wrapper, 'Transfers');
+    const selections = () => wrapper.get('[aria-label="Transfer selections"]');
+    expect(selections().text()).toContain('2 files are larger than the 16 GiB private file limit');
+    await selections()
+      .findAll('button')
+      .find((b) => b.text() === 'Upload unencrypted…')!
+      .trigger('click');
+    expect(bridge.service.QueueAction).not.toHaveBeenCalledWith(4, true, 'unencrypted');
+    expect(selections().text()).toContain('stored unencrypted on the server');
+    await selections()
+      .findAll('button')
+      .find((b) => b.text() === 'Upload unencrypted')!
+      .trigger('click');
+    await flushPromises();
+    expect(bridge.service.QueueAction).toHaveBeenLastCalledWith(4, true, 'unencrypted');
+    await selections()
+      .findAll('button')
+      .filter((b) => b.text() === 'Keep skipped')[1]!
+      .trigger('click');
+    await flushPromises();
+    expect(bridge.service.QueueAction).toHaveBeenLastCalledWith(8, false, 'keep_skipped');
+    wrapper.unmount();
+  });
+
   it('offers retry when upload summaries cannot be read', async () => {
     bridge.service.Batches.mockRejectedValueOnce(new Error('Summary unavailable'));
     const wrapper = await onboard();

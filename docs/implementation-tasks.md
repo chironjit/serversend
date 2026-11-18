@@ -197,7 +197,7 @@ For every feature:
 - [x] Support per-batch mode and per-profile defaults without rewriting existing versions; standard work must remain usable with the vault locked or absent.
 - [x] Document rollback/freshness and device-revocation limits; extend backup/restore coverage to envelopes and recovery packages.
 
-**Remaining qualification:** independent crypto review; native Windows/macOS filesystem/credential-store/UI checks; actual Unraid/power-loss drills; streaming staging beyond the current 1 GiB private-file limit. Local integration verifies interrupted ciphertext retransmission, clean-client and backup recovery, revision races and server disk canaries. These limits keep release acceptance open.
+**Remaining qualification:** independent crypto review; native Windows/macOS filesystem/credential-store/UI checks; actual Unraid/power-loss drills; streaming staging beyond the current 16 GiB private-file limit. Local integration verifies interrupted ciphertext retransmission, clean-client and backup recovery, revision races and server disk canaries. These limits keep release acceptance open.
 
 **Accept when:** clean-device recovery restores private files using exported recovery material; interrupted transfers and rewraps are safe; plaintext/key canaries never reach server disk/database/logs/API/telemetry; all format vectors and adversarial tests pass. Lost account credentials and lost vault keys remain distinct recovery cases.
 

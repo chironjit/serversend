@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Private file limit raised from 1 GiB to 16 GiB. Larger files are skipped with a warning on their selection, where you choose **Upload unencrypted** (confirmed; stored as standard files in the same folder) or **Keep skipped**, per selection or per file. Previously they failed with the generic "needs attention; unlock and retry" message. Skip and private staging-capacity reasons are now shown for private items; other private errors stay masked. The desktop checks free disk space (keeping 1 GiB spare) and a 32 GiB staging budget before encrypting, and removes incomplete stages.
+
 - Desktop background operation: closing the window keeps transfers running in a tray (Open, Pause all, Launch at login, Quit). Quit stops at checkpoints before exiting; launch at login starts hidden; transfers recover after sleep; relaunching shows the window. Removed the scaffold greeting service and demo component.
 
 - Supported upgrades and restores: a schema migration first writes a full backup to `SERVER_SEND_UPGRADE_BACKUP_DIR` (`/backups`) and refuses to migrate without it (`none` opts out). New `-restore DIR -restore-as replace|clone` restores into empty volumes; clones get a new identity and TLS CA, revoke sessions and refuse private data. Backups record schema version and server ID. Adds a versioned Unraid template (`apps/server/deploy/unraid/serversend.xml`), a `/backups` mount in Compose, the `0.4` channel default, and a release guard against overwriting exact image versions. **Existing deployments must add the backup setting before the next schema upgrade.**

@@ -60,7 +60,7 @@ async function action(run: () => Promise<unknown>, done = '') {
         <p class="text-muted-foreground m-0 text-sm">
           {{
             privateMode
-              ? 'New uploads are encrypted on this computer. Only your vault passphrase or recovery file can open them. Private files are limited to 1 GiB each.'
+              ? 'New uploads are encrypted on this computer. Only your vault passphrase or recovery file can open them. Private files are limited to 16 GiB each; you can choose to upload larger files unencrypted.'
               : 'New uploads are stored in original form on the server’s encrypted drive.'
           }}
         </p>

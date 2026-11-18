@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/chironjit/serversend/shared/vault"
 	"io"
+	"io/fs"
 	"net"
 	"net/url"
 	"os"
@@ -248,8 +249,8 @@ func (q *durableQueue) run(ctx context.Context, c *client.Client, t durableTask)
 			retry = time.Now().Add(30 * time.Second).UnixMilli()
 			msg = message(err).Error()
 		}
-		if t.Payload.Private && msg != "" {
-			msg = "Private transfer needs attention; unlock and retry"
+		if t.Payload.Private && !privateSafe(state, msg) {
+			msg = privateAttention
 		}
 		q.persist(func() error {
 			if e := q.store.save(q.manager.base(), t); e != nil {
@@ -306,30 +307,8 @@ func (q *durableQueue) run(ctx context.Context, c *client.Client, t durableTask)
 				defer q.privateGate.Unlock()
 				stage := q.stagePath(t.ID)
 				if cp.Manifest.FileID == "" {
-					_ = os.Remove(stage)
-					var used int64
-					entries, e := os.ReadDir(filepath.Dir(stage))
-					if e != nil && !os.IsNotExist(e) {
-						return api.FinalizeResult{}, e
-					}
-					for _, entry := range entries {
-						info, e := entry.Info()
-						if e != nil {
-							return api.FinalizeResult{}, e
-						}
-						used += info.Size()
-					}
-					src, e := source.Open(path)
-					if e != nil {
-						return api.FinalizeResult{}, e
-					}
-					info, e := src.Stat()
-					src.Close()
-					if e != nil {
-						return api.FinalizeResult{}, e
-					}
-					if used+min(info.Size(), client.MaxPrivateStage)+65536 > 8*client.MaxPrivateStage {
-						return api.FinalizeResult{}, api.Error{Code: api.CapacityExhausted, Message: "Private staging budget is full; resume or cancel paused private uploads"}
+					if err := q.privateStageRoom(path, stage); err != nil {
+						return api.FinalizeResult{}, err
 					}
 				}
 				if err := os.MkdirAll(filepath.Dir(stage), 0700); err != nil {
@@ -401,6 +380,8 @@ func (q *durableQueue) run(ctx context.Context, c *client.Client, t durableTask)
 			retry = time.Now().Add(time.Duration(min(60, 5<<min(t.Attempts, 4))) * time.Second).UnixMilli()
 		case isSkipped(err):
 			state = "skipped"
+			skip, _ := source.Skipped(err)
+			msg = skip.Reason // the path is listed beside it, and stays hidden for private items
 			if t.Kind == "upload" && t.Payload.Upload != nil && t.Payload.Upload.Manifest.FileID != "" {
 				t.Payload.CancelDisposition = "skipped"
 				t.Payload.CancelReason = msg
@@ -449,6 +430,9 @@ func (q *durableQueue) run(ctx context.Context, c *client.Client, t durableTask)
 		}
 		t.Done = t.Total
 	}
+	if t.Payload.Private && !privateSafe(state, msg) {
+		msg = privateAttention // as stored, so live and reloaded views agree
+	}
 	if !q.persist(func() error {
 		if e := q.store.save(q.manager.base(), t); e != nil {
 			return e
@@ -461,6 +445,64 @@ func (q *durableQueue) run(ctx context.Context, c *client.Client, t durableTask)
 	q.manager.emit(t.item())
 	q.notify()
 }
+
+// Private staging may hold paused attempts; the budget bounds their total.
+const privateStageBudget = 2 * client.MaxPrivateStage
+
+// privateDiskReserve is left free on the staging volume for the rest of the
+// device.
+const privateDiskReserve = 1 << 30
+
+const (
+	privateBudgetFull = "Private staging budget is full; resume or cancel paused private uploads"
+	privateDiskFull   = "Not enough free disk space on this device to prepare a private upload; it retries automatically"
+)
+
+// privateStageRoom skips files above the private limit and checks the staging
+// budget and free disk space before a fresh private file is encrypted.
+func (q *durableQueue) privateStageRoom(path, stage string) error {
+	src, err := source.Open(path)
+	if err != nil {
+		return err
+	}
+	info, err := src.Stat()
+	src.Close()
+	if err != nil {
+		return err
+	}
+	if info.Size() > client.MaxPrivateFileBytes {
+		return &source.SkipError{Path: path, Reason: client.PrivateTooLargeReason}
+	}
+	dir := filepath.Dir(stage)
+	if err = os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	_ = os.Remove(stage)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	var used int64
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // a finished task removed its stage meanwhile
+		}
+		if err != nil {
+			return err
+		}
+		used += info.Size()
+	}
+	need := info.Size() + (info.Size()/(1<<20)+1)*28 + 65536
+	if used+need > privateStageBudget {
+		return api.Error{Code: api.CapacityExhausted, Message: privateBudgetFull}
+	}
+	if free, ok := freeDiskBytes(dir); ok && need+privateDiskReserve > free {
+		return api.Error{Code: api.CapacityExhausted, Message: privateDiskFull}
+	}
+	return nil
+}
+
 func isSkipped(err error) bool { _, ok := source.Skipped(err); return ok }
 func (q *durableQueue) throttle(ctx context.Context, bytes int64) {
 	q.rateMu.Lock()

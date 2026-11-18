@@ -8,6 +8,7 @@ import (
 	"github.com/chironjit/serversend/apps/server/internal/backup"
 	"github.com/chironjit/serversend/shared/client"
 	"github.com/chironjit/serversend/shared/protocol"
+	sourcepkg "github.com/chironjit/serversend/shared/source"
 	"github.com/chironjit/serversend/shared/vault"
 	"net"
 	"os"
@@ -152,6 +153,19 @@ func TestPrivateRecoveryResumptionAndCanaries(t *testing.T) {
 	}
 	if repair.Manifest.VersionID == previousVersion {
 		t.Fatal("fresh attempt reused private version")
+	}
+	// Files beyond the staging limit are a visible policy skip, not a failure.
+	largePath := filepath.Join(t.TempDir(), "large.bin")
+	if err = os.WriteFile(largePath, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Truncate(largePath, client.MaxPrivateFileBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	var large client.UploadCheckpoint
+	_, err = c.UploadPrivateResumable(t.Context(), largePath, filepath.Join(t.TempDir(), "large-stage"), "", &large, func(*client.UploadCheckpoint) error { return nil }, nil)
+	if skip, ok := sourcepkg.Skipped(err); !ok || skip.Reason != client.PrivateTooLargeReason {
+		t.Fatal("oversized private file was not skipped", err)
 	}
 	c.LockVault()
 	if _, err = c.VaultKey(); !errors.Is(err, vault.ErrLocked) {

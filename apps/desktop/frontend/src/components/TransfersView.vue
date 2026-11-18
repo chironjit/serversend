@@ -99,6 +99,12 @@ const canResume = (state: string) =>
   state === 'paused' || state.startsWith('waiting_') || state === 'retry_scheduled';
 
 const recentBatches = computed(() => props.batches.toReversed());
+// Uploading unencrypted is a privacy decision, so it asks for confirmation.
+const confirmUnencrypted = ref<{ id: number; batch: boolean } | null>(null);
+function oversizedChoice(id: number, batch: boolean, action: 'unencrypted' | 'keep_skipped') {
+  confirmUnencrypted.value = null;
+  emit('action', id, batch, action);
+}
 const counts = computed(() => {
   let running = 0,
     attention = 0;
@@ -419,6 +425,45 @@ async function setBandwidth() {
             <p v-if="batch.error" class="text-destructive m-0 text-xs wrap-anywhere">
               {{ batch.error }}
             </p>
+            <div
+              v-if="batch.oversized > 0"
+              class="bg-muted grid gap-2 rounded-lg p-3 text-xs"
+              role="alert"
+            >
+              <p class="text-warning m-0">
+                {{ batch.oversized }}
+                {{ batch.oversized === 1 ? 'file is' : 'files are' }} larger than the 16 GiB private
+                file limit and {{ batch.oversized === 1 ? 'was' : 'were' }} skipped.
+              </p>
+              <p v-if="confirmUnencrypted?.batch && confirmUnencrypted.id === batch.id" class="m-0">
+                Their names and contents will be stored unencrypted on the server, in the same
+                folder. Anyone with access to the server can read them.
+              </p>
+              <div class="flex flex-wrap gap-2">
+                <UiButton
+                  v-if="confirmUnencrypted?.batch && confirmUnencrypted.id === batch.id"
+                  size="sm"
+                  :disabled="busy"
+                  @click="oversizedChoice(batch.id, true, 'unencrypted')"
+                  >Upload unencrypted</UiButton
+                >
+                <UiButton
+                  v-else
+                  variant="outline"
+                  size="sm"
+                  :disabled="busy"
+                  @click="confirmUnencrypted = { id: batch.id, batch: true }"
+                  >Upload unencrypted…</UiButton
+                >
+                <UiButton
+                  variant="ghost"
+                  size="sm"
+                  :disabled="busy"
+                  @click="oversizedChoice(batch.id, true, 'keep_skipped')"
+                  >Keep skipped</UiButton
+                >
+              </div>
+            </div>
             <details v-if="batch.skipped > 0" class="text-xs">
               <summary class="text-muted-foreground hover:text-foreground cursor-pointer">
                 Review skipped items ({{ batch.skipped }})
@@ -431,6 +476,38 @@ async function setBandwidth() {
                 >
                   <span class="font-mono wrap-anywhere">{{ skipped.path }}</span>
                   <span class="text-muted-foreground wrap-anywhere">{{ skipped.reason }}</span>
+                  <div v-if="skipped.unencrypted" class="flex flex-wrap items-center gap-2">
+                    <template
+                      v-if="!confirmUnencrypted?.batch && confirmUnencrypted?.id === skipped.id"
+                    >
+                      <span>Store this file unencrypted on the server?</span>
+                      <UiButton
+                        size="sm"
+                        :disabled="busy"
+                        @click="oversizedChoice(skipped.id, false, 'unencrypted')"
+                        >Upload unencrypted</UiButton
+                      >
+                      <UiButton variant="ghost" size="sm" @click="confirmUnencrypted = null"
+                        >Cancel</UiButton
+                      >
+                    </template>
+                    <template v-else>
+                      <UiButton
+                        variant="outline"
+                        size="sm"
+                        :disabled="busy"
+                        @click="confirmUnencrypted = { id: skipped.id, batch: false }"
+                        >Upload unencrypted…</UiButton
+                      >
+                      <UiButton
+                        variant="ghost"
+                        size="sm"
+                        :disabled="busy"
+                        @click="oversizedChoice(skipped.id, false, 'keep_skipped')"
+                        >Keep skipped</UiButton
+                      >
+                    </template>
+                  </div>
                 </li>
               </ul>
               <p

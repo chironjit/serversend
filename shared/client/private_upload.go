@@ -8,17 +8,30 @@ import (
 	"errors"
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
+	"github.com/chironjit/serversend/shared/source"
 	"github.com/chironjit/serversend/shared/vault"
 	"io"
 	"os"
 	"path/filepath"
 )
 
-// Private staging is one bounded file per active worker (maximum 1 GiB).
+// Private staging is one bounded file per active worker (maximum 16 GiB).
 // It contains only ciphertext. The durable checkpoint is saved after fsync and
 // before admission. A lost preparation is disposable; a resumed attempt never
 // encrypts again under an existing immutable version ID.
-const MaxPrivateStage = 1 << 30
+const MaxPrivateStage = 16 << 30
+
+// MaxPrivateFileBytes is the largest plaintext whose ciphertext (28 bytes per
+// chunk) fits in staging.
+const MaxPrivateFileBytes = MaxPrivateStage - (MaxPrivateStage/(1<<20)+1)*28
+
+// PrivateTooLargeReason skips a file above MaxPrivateFileBytes. The desktop
+// offers to upload such files unencrypted instead.
+const PrivateTooLargeReason = "Larger than the 16 GiB private file limit"
+
+// PrivateTooLargeKeptReason records that the user chose to keep such a file
+// skipped rather than upload it unencrypted.
+const PrivateTooLargeKeptReason = PrivateTooLargeReason + "; kept skipped"
 
 func (c *Client) UploadPrivateResumable(ctx context.Context, path, stage string, parent protocol.ID, cp *UploadCheckpoint, save func(*UploadCheckpoint) error, progress Progress) (api.FinalizeResult, error) {
 	if cp == nil || save == nil {
@@ -50,8 +63,8 @@ func (c *Client) UploadPrivateResumable(ctx context.Context, path, stage string,
 			return api.FinalizeResult{}, err
 		}
 		defer src.Close()
-		if info.Size() > MaxPrivateStage-(MaxPrivateStage/(1<<20)+1)*28 {
-			return api.FinalizeResult{}, errors.New("private file exceeds the 1 GiB encrypted staging limit")
+		if info.Size() > MaxPrivateFileBytes {
+			return api.FinalizeResult{}, &source.SkipError{Path: path, Reason: PrivateTooLargeReason}
 		}
 		// Client-assisted name matching preserves IDs and revision conflict semantics.
 		a, _ := c.Account()
@@ -96,6 +109,14 @@ func (c *Client) UploadPrivateResumable(ctx context.Context, path, stage string,
 			return api.FinalizeResult{}, err
 		}
 		defer out.Close()
+		// Remove an incomplete stage, such as one cut short by a full disk.
+		prepared := false
+		defer func() {
+			if !prepared {
+				out.Close()
+				os.Remove(stage)
+			}
+		}()
 		fk := vault.RandomKey()
 		defer clear(fk[:])
 		buffer := make([]byte, min(int64(preferredChunkBytes)-28, max(info.Size(), 1)))
@@ -150,6 +171,7 @@ func (c *Client) UploadPrivateResumable(ctx context.Context, path, stage string,
 		if err = out.Sync(); err != nil {
 			return api.FinalizeResult{}, err
 		}
+		prepared = true
 		*cp = UploadCheckpoint{Manifest: m, Intent: api.CreateUploadRequest{ParentID: parent, FileID: m.FileID, VersionID: m.VersionID, Mode: protocol.Private, ExpectedHead: expected, ChunkCount: int64(len(m.Chunks)), TransmittedBytes: m.TotalBytes, ManifestBytes: int64(len(body))}, IdempotencyKey: string(randomID())}
 		if err = save(cp); err != nil {
 			return api.FinalizeResult{}, err

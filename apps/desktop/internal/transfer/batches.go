@@ -14,6 +14,10 @@ const maxSkippedItems = 100
 type SkippedItem struct {
 	Path   string `json:"path"`
 	Reason string `json:"reason"`
+	ID     int    `json:"id"` // durable task; 0 for in-memory skips
+	// Unencrypted marks a private file over the size limit that the user may
+	// choose to upload unencrypted with the "unencrypted" queue action.
+	Unencrypted bool `json:"unencrypted"`
 }
 
 // Batch reports one file/folder selection. Skip details are bounded while the
@@ -28,6 +32,7 @@ type Batch struct {
 	Failed       int           `json:"failed"`
 	Directories  int           `json:"directories"`
 	Skipped      int           `json:"skipped"`
+	Oversized    int           `json:"oversized"` // skipped private files over the size limit
 	SkippedItems []SkippedItem `json:"skippedItems"`
 	Error        string        `json:"error"`
 	Cancelled    int           `json:"cancelled"`
@@ -126,7 +131,7 @@ func (m *Manager) skip(id int, skip *source.SkipError) {
 	if b := m.batches[id]; b != nil {
 		b.Skipped++
 		if len(b.SkippedItems) < maxSkippedItems {
-			b.SkippedItems = append(b.SkippedItems, SkippedItem{skip.Path, skip.Reason})
+			b.SkippedItems = append(b.SkippedItems, SkippedItem{Path: skip.Path, Reason: skip.Reason})
 		}
 		settleBatch(b)
 	}
@@ -150,7 +155,7 @@ func (m *Manager) finishFile(batchID int, bytes int64, err error) {
 	if skip, ok := source.Skipped(err); ok {
 		b.Skipped++
 		if len(b.SkippedItems) < maxSkippedItems {
-			b.SkippedItems = append(b.SkippedItems, SkippedItem{skip.Path, skip.Reason})
+			b.SkippedItems = append(b.SkippedItems, SkippedItem{Path: skip.Path, Reason: skip.Reason})
 		}
 	} else if errors.Is(err, context.Canceled) {
 		b.Cancelled++

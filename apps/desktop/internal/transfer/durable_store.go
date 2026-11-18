@@ -229,12 +229,66 @@ func (s *durableStore) save(ctx context.Context, t durableTask) error {
 	_, err = s.db.ExecContext(ctx, `UPDATE transfer_tasks SET payload=?,done=?,total=? WHERE id=?`, payload, t.Done, t.Total, t.ID)
 	return err
 }
+
+const privateAttention = "Private transfer needs attention; unlock and retry"
+
+// privateSafe reports whether a private task may keep its message: skip
+// reasons and the staging capacity messages are fixed text without paths.
+func privateSafe(state, msg string) bool {
+	return msg == "" || state == "skipped" || msg == privateBudgetFull || msg == privateDiskFull
+}
+
 func (s *durableStore) finish(ctx context.Context, t durableTask, state, msg string, retry int64) error {
-	if t.Payload.Private && msg != "" {
-		msg = "Private transfer needs attention; unlock and retry"
+	if t.Payload.Private && !privateSafe(state, msg) {
+		msg = privateAttention
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE transfer_tasks SET state=?,error=?,retry_at=?,attempts=attempts+1,done=?,total=? WHERE id=? AND state='active'`, state, msg, retry, t.Done, t.Total, t.ID)
 	return err
+}
+
+// unencrypted requeues skipped private files that exceed the private size
+// limit as standard uploads to the same folder. The user chose this; their
+// names and contents are then stored unencrypted on the server.
+func (s *durableStore) unencrypted(ctx context.Context, tx *sql.Tx, filter string, args []any) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id,payload FROM transfer_tasks WHERE `+filter+` AND state='skipped' AND error=?`, append(args, client.PrivateTooLargeReason)...)
+	if err != nil {
+		return err
+	}
+	type task struct {
+		id  int
+		raw []byte
+	}
+	var tasks []task
+	for rows.Next() {
+		var t task
+		if err := rows.Scan(&t.id, &t.raw); err != nil {
+			rows.Close()
+			return err
+		}
+		tasks = append(tasks, t)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(tasks) == 0 {
+		return errors.New("no skipped private files over the size limit to upload unencrypted")
+	}
+	for _, t := range tasks {
+		var p durablePayload
+		if err := s.decode(t.raw, &p); err != nil {
+			return err
+		}
+		p = durablePayload{Path: p.Path, Parent: p.Parent, Root: p.Root}
+		payload, err := s.encode(p)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE transfer_tasks SET payload=?,name=?,state='queued',error='',retry_at=0,done=0,total=0 WHERE id=?`, payload, taskName(p.Path), t.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (s *durableStore) children(ctx context.Context, parent durableTask, children []durableTask) error {
 	return sqlite.Write(ctx, s.db, func(tx *sql.Tx) error {
@@ -319,15 +373,32 @@ func (s *durableStore) control(ctx context.Context, scope protocol.Scope, id int
 			if err != nil {
 				return err
 			}
+		case "unencrypted":
+			if err := s.unencrypted(ctx, tx, filter, args); err != nil {
+				return err
+			}
+		case "keep_skipped":
+			result, err := tx.ExecContext(ctx, `UPDATE transfer_tasks SET error=? WHERE `+filter+` AND state='skipped' AND error=?`, append([]any{client.PrivateTooLargeKeptReason}, append(args, client.PrivateTooLargeReason)...)...)
+			if err != nil {
+				return err
+			}
+			if n, _ := result.RowsAffected(); n == 0 {
+				return errors.New("no skipped private files over the size limit to keep skipped")
+			}
 		default:
 			return errors.New("unknown queue action")
+		}
+		if !batch && action == "unencrypted" {
+			if _, err := tx.ExecContext(ctx, `UPDATE transfer_batches SET finished_at=0 WHERE id=(SELECT batch_id FROM transfer_tasks WHERE id=?)`, id); err != nil {
+				return err
+			}
 		}
 		if !batch && action == "resume" {
 			if _, err := tx.ExecContext(ctx, `UPDATE transfer_batches SET state='queued',finished_at=0 WHERE id=(SELECT batch_id FROM transfer_tasks WHERE id=?) AND server_id=? AND account_id=? AND state='paused'`, id, scope.ServerID, scope.AccountID); err != nil {
 				return err
 			}
 		}
-		if batch {
+		if batch && action != "keep_skipped" {
 			state := "queued"
 			if action == "pause" {
 				state = "paused"
@@ -452,23 +523,32 @@ func (s *durableStore) batches(ctx context.Context, scope protocol.Scope) ([]Bat
 				}
 			}
 		}
-		details, err := s.db.QueryContext(ctx, `SELECT payload,error FROM transfer_tasks WHERE batch_id=? AND state='skipped' ORDER BY id LIMIT 100`, b.ID)
+		if b.Skipped > 0 {
+			err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM transfer_tasks WHERE batch_id=? AND state='skipped' AND error=?`, b.ID, client.PrivateTooLargeReason).Scan(&b.Oversized)
+			if err != nil {
+				return nil, err
+			}
+		}
+		details, err := s.db.QueryContext(ctx, `SELECT id,payload,error FROM transfer_tasks WHERE batch_id=? AND state='skipped' ORDER BY id LIMIT 100`, b.ID)
 		if err != nil {
 			return nil, err
 		}
 		for details.Next() {
+			var id int
 			var raw []byte
 			var reason string
-			if err := details.Scan(&raw, &reason); err != nil {
+			if err := details.Scan(&id, &raw, &reason); err != nil {
 				details.Close()
 				return nil, err
 			}
 			var p durablePayload
-			if err := s.decode(raw, &p); err != nil {
+			if err := s.decode(raw, &p); errors.Is(err, vault.ErrLocked) {
+				p.Path = "Private item"
+			} else if err != nil {
 				details.Close()
 				return nil, err
 			}
-			b.SkippedItems = append(b.SkippedItems, SkippedItem{p.Path, reason})
+			b.SkippedItems = append(b.SkippedItems, SkippedItem{Path: p.Path, Reason: reason, ID: id, Unencrypted: reason == client.PrivateTooLargeReason})
 		}
 		err = details.Err()
 		details.Close()

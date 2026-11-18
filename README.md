@@ -4,7 +4,7 @@ ServerSend is a desktop client and private file-storage server for LAN and Tails
 
 The end-to-end test slice supports TLS, persistent server identity/accounts/metadata, browser administrator onboarding and user creation, and desktop user sign-in, file and recursive folder uploads, server folders, verified downloads and live throughput. Administrators manage accounts at `/admin/`; file transfers require a user account. See [local testing](docs/local-testing.md), [Unraid Docker setup](docs/unraid-testing.md), [versioned GHCR releases](docs/releases.md), and [current limits](docs/vertical-slice.md). This remains a development build with persistent resumable uploads and file/folder restores, paginated browsing and durable queue controls. Native platform and deployment qualification remain open.
 
-Experimental [private encrypted storage and recovery](docs/private-storage.md) is offered when a server is first opened in the desktop library. Private uploads currently require files below the 1 GiB ciphertext staging limit; independent crypto review and native/deployment qualification remain open.
+Experimental [private encrypted storage and recovery](docs/private-storage.md) is offered when a server is first opened in the desktop library. Private uploads currently require files below the 16 GiB ciphertext staging limit (larger files can be skipped or uploaded unencrypted); independent crypto review and native/deployment qualification remain open.
 
 The next implementation priorities are tracked in the [feature roadmap](docs/implementation-tasks.md), with the full product specification in the [implementation plan](docs/implementation-plan.md).
 
