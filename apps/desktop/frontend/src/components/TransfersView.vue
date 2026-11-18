@@ -11,7 +11,10 @@ import {
   RotateCcw,
   X,
 } from 'lucide-vue-next';
-import { TransferService } from '../../bindings/github.com/chironjit/serversend/apps/desktop';
+import {
+  BackgroundService,
+  TransferService,
+} from '../../bindings/github.com/chironjit/serversend/apps/desktop';
 import type {
   Batch,
   Item,
@@ -149,6 +152,39 @@ onMounted(async () => {
     bandwidthError.value = failure(reason);
   }
 });
+// Background controls persist outside the window and mirror the tray menu.
+const paused = ref(false);
+const launchAtLogin = ref(false);
+const backgroundError = ref('');
+onMounted(async () => {
+  try {
+    [paused.value, launchAtLogin.value] = await Promise.all([
+      BackgroundService.Paused(),
+      BackgroundService.LaunchAtLogin(),
+    ]);
+  } catch (reason) {
+    backgroundError.value = failure(reason);
+  }
+});
+async function setBackground(setting: 'paused' | 'login', value: boolean) {
+  backgroundError.value = '';
+  // Set optimistically so reloading a refused change re-renders the checkbox.
+  if (setting === 'paused') paused.value = value;
+  else launchAtLogin.value = value;
+  try {
+    if (setting === 'paused') await BackgroundService.SetPaused(value);
+    else await BackgroundService.SetLaunchAtLogin(value);
+  } catch (reason) {
+    backgroundError.value = failure(reason);
+  }
+  try {
+    if (setting === 'paused') paused.value = await BackgroundService.Paused();
+    else launchAtLogin.value = await BackgroundService.LaunchAtLogin();
+  } catch {
+    // Keep the last known value; the error above explains the failure.
+  }
+}
+
 async function setBandwidth() {
   bandwidthError.value = '';
   bandwidthSaved.value = false;
@@ -261,6 +297,39 @@ async function setBandwidth() {
           <input v-model="combined" type="checkbox" class="accent-primary" />
           Show all signed-in servers
         </label>
+        <fieldset class="m-0 grid gap-2 border-t p-0 pt-4">
+          <legend class="sr-only">Background operation</legend>
+          <label class="flex items-center gap-2 text-sm">
+            <input
+              :checked="paused"
+              type="checkbox"
+              class="accent-primary"
+              @change="setBackground('paused', ($event.target as HTMLInputElement).checked)"
+            />
+            Pause all transfers
+          </label>
+          <label class="flex items-center gap-2 text-sm">
+            <input
+              :checked="launchAtLogin"
+              type="checkbox"
+              class="accent-primary"
+              @change="setBackground('login', ($event.target as HTMLInputElement).checked)"
+            />
+            Launch at login in the tray
+          </label>
+          <p v-if="backgroundError" class="text-destructive m-0 text-xs" role="alert">
+            {{ backgroundError }}
+          </p>
+          <p class="text-muted-foreground m-0 text-xs">
+            Closing the window keeps transfers running in the tray. They stop while the app is quit
+            or the device sleeps and resume from checkpoints.
+          </p>
+          <div>
+            <UiButton variant="outline" size="sm" @click="BackgroundService.Quit()"
+              >Quit ServerSend</UiButton
+            >
+          </div>
+        </fieldset>
       </div>
     </UiCard>
 

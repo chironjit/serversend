@@ -162,6 +162,10 @@ func (c *Client) Close() {
 	}
 }
 
+// CloseIdleConnections drops pooled connections, such as those that may not
+// have survived the device sleeping; the next request dials afresh.
+func (c *Client) CloseIdleConnections() { c.http.CloseIdleConnections() }
+
 func (c *Client) Origin() string { return c.origin }
 
 // Account returns the signed-in identity without the access token.

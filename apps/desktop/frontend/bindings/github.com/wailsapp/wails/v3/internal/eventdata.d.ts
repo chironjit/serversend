@@ -12,7 +12,6 @@ import type * as transfer$0 from "../../../../chironjit/serversend/apps/desktop/
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
-            "time": string;
             "transfer": transfer$0.Item[] | null;
         }
     }

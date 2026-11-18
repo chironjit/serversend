@@ -8,4 +8,4 @@ Run the component checks from the repository root:
 bash apps/desktop/scripts/check.sh
 ```
 
-The current application is the generated scaffold. Product implementation follows the root [implementation plan](../../docs/implementation-plan.md) and [task breakdown](../../docs/implementation-tasks.md).
+Product implementation follows the root [implementation plan](../../docs/implementation-plan.md) and [task breakdown](../../docs/implementation-tasks.md).

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Desktop background operation: closing the window keeps transfers running in a tray (Open, Pause all, Launch at login, Quit). Quit stops at checkpoints before exiting; launch at login starts hidden; transfers recover after sleep; relaunching shows the window. Removed the scaffold greeting service and demo component.
+
 - Supported upgrades and restores: a schema migration first writes a full backup to `SERVER_SEND_UPGRADE_BACKUP_DIR` (`/backups`) and refuses to migrate without it (`none` opts out). New `-restore DIR -restore-as replace|clone` restores into empty volumes; clones get a new identity and TLS CA, revoke sessions and refuse private data. Backups record schema version and server ID. Adds a versioned Unraid template (`apps/server/deploy/unraid/serversend.xml`), a `/backups` mount in Compose, the `0.4` channel default, and a release guard against overwriting exact image versions. **Existing deployments must add the backup setting before the next schema upgrade.**
 
 - Hardened chunk uploads: an acknowledged chunk can no longer be rewritten by a concurrent request for the same index, and a final chunk fixes the upload's chunk size before writing, so chunks cannot overlap.

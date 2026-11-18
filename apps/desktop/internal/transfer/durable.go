@@ -33,6 +33,7 @@ type durableQueue struct {
 	privateGate  sync.Mutex
 	closed       chan struct{}
 	storageError string
+	paused       bool // every scope; guarded by mu
 	manager      *Manager
 	store        *durableStore
 	mu           sync.Mutex
@@ -74,6 +75,14 @@ func (m *Manager) enableDurable(dir string) error {
 		return err
 	}
 	q.bandwidth = bandwidth
+	var paused bool
+	err = store.db.QueryRowContext(m.base(), `SELECT value FROM transfer_preferences WHERE key='paused'`).Scan(&paused)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		store.db.Close()
+		lock.Close()
+		return err
+	}
+	q.paused = paused
 	m.durable = q
 	store.key = m.privateKey
 	for range workers {
@@ -123,6 +132,9 @@ func (q *durableQueue) work() {
 		}
 		q.mu.Lock()
 		clients := q.manager.connectedClients()
+		if q.paused {
+			clients = nil
+		}
 		var task durableTask
 		var chosen *client.Client
 		for offset := range clients {

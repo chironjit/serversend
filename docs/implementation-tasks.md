@@ -28,7 +28,7 @@ Checked items mean the stated scope is implemented with recorded evidence. Compo
 | 10. Multiple servers/routes | Implemented | Simultaneous scoped clients, combined queues, approved-route failover and explicit trust repair; native LAN/tailnet qualification open |
 | 11. Account administration | Pending | Existing user creation/listing and backend foundations only; complete controls and security policy open |
 | 12. Deployment/backup/upgrades | Partial | Unraid template, restore command with replace/clone modes, automatic pre-upgrade backups, compatibility record and release-tag guard delivered; actual Unraid/network qualification open |
-| 13. Background desktop | Partial | Bounded batch summaries and skip/failure counts delivered; durable controls, tray and native lifecycle open |
+| 13. Background desktop | Partial | Tray/close-to-tray, graceful quit, launch at login, wake recovery, durable global pause, queue controls and bounded events delivered; native platform lifecycle and keyboard/contrast review open |
 | 14. Distribution/qualification | Pending | Existing workflows only; published installers and full platform/scale qualification open |
 
 ## How to execute this plan
@@ -269,11 +269,11 @@ For every feature:
 
 **Depends on:** features 4, 5, 6.
 
-- [ ] Add tray close behavior, explicit quit with durable checkpoints, optional launch at login and sleep/wake recovery.
+- [x] Add tray close behavior, explicit quit with durable checkpoints, optional launch at login and sleep/wake recovery. Closing hides to the tray; relaunching shows the window (also where no tray is shown). Quit cancels workers and waits for the queue to close; login launch starts hidden (`--background`). Wake interrupts in-flight requests, drops pooled connections and clears network back-off. `TestBackgroundWakePauseAndQuit`, the live smoke and a Linux native hidden-start/second-instance/SIGTERM run pass.
 - [x] Show per-file/batch progress and accurate completed/skipped/failed counts, bounded skipped paths/reasons, completed-with-skips and all-skipped outcomes. Retain bounded recent summaries/finished rows; Vue tests and the generated Batches bridge smoke pass. This remains an in-memory foreground workflow.
-- [ ] Build complete queue controls and per-file/batch progress, skipped/failed counts, useful rates and retry actions without premature ETAs.
-- [ ] Bound/throttle progress events and virtualize large lists; a slow frontend must not stall transfers.
-- [ ] Complete keyboard/focus/contrast and both-theme checks for the real workflows; remove scaffold-only UI/services when their smoke coverage is replaced.
+- [x] Build complete queue controls and per-file/batch progress, skipped/failed counts, useful rates and retry actions without premature ETAs. Per-item/selection pause, resume, cancel and retry, plus a durable global pause shared by the window and tray; no ETAs.
+- [x] Bound/throttle progress events and virtualize large lists; a slow frontend must not stall transfers. Events coalesce to five per second from their own goroutine with at most 200 pending items; lists are bounded (200 rows, 100 summaries, 100-row pages) rather than virtualized (`TestSlowWindowPendingMapIsBounded`).
+- [ ] Complete keyboard/focus/contrast and both-theme checks for the real workflows. Scaffold greeting service, `HelloWorld` and the time event were removed; the smoke now uses `BackgroundService`.
 
 **Accept when:** close-to-tray keeps work running; explicit quit/relaunch and sleep/wake resume safely; platform-native tests cover Linux, Windows and macOS and confirm transfers do not run while the app is exited or the device sleeps.
 

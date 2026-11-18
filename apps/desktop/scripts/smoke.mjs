@@ -50,16 +50,21 @@ try {
     assert.ok((await response.arrayBuffer()).byteLength > 0, `Empty asset: ${path}`);
   }
 
-  const binding = await readFile(
-    new URL(
-      '../frontend/bindings/github.com/chironjit/serversend/apps/desktop/greetservice.ts',
-      import.meta.url,
-    ),
-    'utf8',
-  );
-  const method = binding.match(/\$Call\.ByID\((\d+),/);
-  assert.ok(method, 'Generated greeting binding missing');
-  const call = (args, extraHeaders = {}, methodID = Number(method[1])) =>
+  const bindingID = async (file, name) => {
+    const source = await readFile(
+      new URL(
+        `../frontend/bindings/github.com/chironjit/serversend/apps/desktop/${file}`,
+        import.meta.url,
+      ),
+      'utf8',
+    );
+    const match = source.match(
+      new RegExp(`export function ${name}\\([^)]*\\)[\\s\\S]*?\\$Call\\.ByID\\((\\d+)`),
+    );
+    assert.ok(match, `Generated ${name} binding missing`);
+    return Number(match[1]);
+  };
+  const call = (methodID, args, extraHeaders = {}) =>
     request('/wails/runtime', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Origin: origin, ...extraHeaders },
@@ -69,24 +74,21 @@ try {
         args: { 'call-id': crypto.randomUUID(), methodID, args },
       }),
     });
-  const greeting = await call(['Zoë 東京']);
-  assert.equal(greeting.status, 200);
-  assert.equal(await greeting.text(), 'Hello Zoë 東京!');
-  assert.ok((await call([123])).status >= 400, 'Malformed bridge argument was accepted');
-  assert.equal((await call(['Ada'], { Origin: 'https://untrusted.invalid' })).status, 403);
+  const setPaused = await bindingID('backgroundservice.ts', 'SetPaused');
+  const paused = await bindingID('backgroundservice.ts', 'Paused');
+  assert.equal((await call(setPaused, [true])).status, 200);
+  assert.equal(await (await call(paused, [])).json(), true, 'Global pause was not applied');
+  assert.ok(
+    (await call(setPaused, ['yes'])).status >= 400,
+    'Malformed bridge argument was accepted',
+  );
+  assert.equal(
+    (await call(setPaused, [false], { Origin: 'https://untrusted.invalid' })).status,
+    403,
+  );
+  assert.equal(await (await call(paused, [])).json(), true, 'Untrusted origin changed state');
 
-  const transferBinding = await readFile(
-    new URL(
-      '../frontend/bindings/github.com/chironjit/serversend/apps/desktop/transferservice.ts',
-      import.meta.url,
-    ),
-    'utf8',
-  );
-  const batchesMethod = transferBinding.match(
-    /export function Batches\(\)[\s\S]*?\$Call\.ByID\((\d+)/,
-  );
-  assert.ok(batchesMethod, 'Generated upload-summary binding missing');
-  const batches = await call([], {}, Number(batchesMethod[1]));
+  const batches = await call(await bindingID('transferservice.ts', 'Batches'), []);
   assert.equal(batches.status, 200);
   assert.deepEqual(
     await batches.json(),
@@ -97,13 +99,10 @@ try {
   const ws = new WebSocket(origin.replace('http:', 'ws:') + '/wails/events');
   try {
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('No Go time event received')), 5000);
-      ws.addEventListener('message', (event) => {
-        const message = JSON.parse(String(event.data));
-        if (message.name === 'time' && typeof message.data === 'string') {
-          clearTimeout(timer);
-          resolve();
-        }
+      const timer = setTimeout(() => reject(new Error('Event connection timed out')), 5000);
+      ws.addEventListener('open', () => {
+        clearTimeout(timer);
+        resolve();
       });
       ws.addEventListener('error', () => {
         clearTimeout(timer);
@@ -114,7 +113,7 @@ try {
     ws.close();
   }
   console.log(
-    'Scaffold smoke passed: embedded assets, generated Go bindings, upload summaries, invalid input, origin guard, live events',
+    'Scaffold smoke passed: embedded assets, generated Go bindings, durable global pause, upload summaries, invalid input, origin guard, event connection',
   );
 } finally {
   child.kill('SIGTERM');

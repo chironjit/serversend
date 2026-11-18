@@ -6,6 +6,13 @@ import UiInput from './components/ui/UiInput.vue';
 type Listener = (event: { data: unknown }) => void;
 const bridge = vi.hoisted(() => ({
   listener: undefined as Listener | undefined,
+  background: {
+    Paused: vi.fn<() => Promise<boolean>>().mockResolvedValue(false),
+    SetPaused: vi.fn<(paused: boolean) => Promise<void>>().mockResolvedValue(),
+    LaunchAtLogin: vi.fn<() => Promise<boolean>>().mockResolvedValue(false),
+    SetLaunchAtLogin: vi.fn<(enabled: boolean) => Promise<void>>().mockResolvedValue(),
+    Quit: vi.fn<() => Promise<void>>().mockResolvedValue(),
+  },
   service: {
     VaultUnlocked: vi.fn<() => Promise<boolean>>().mockResolvedValue(false),
     PrivateMode: vi.fn<() => Promise<boolean>>().mockResolvedValue(false),
@@ -77,6 +84,7 @@ vi.mock('@wailsio/runtime', () => ({
 }));
 vi.mock('../bindings/github.com/chironjit/serversend/apps/desktop', () => ({
   TransferService: bridge.service,
+  BackgroundService: bridge.background,
 }));
 
 const fingerprint = 'ab12'.repeat(16);
@@ -837,6 +845,26 @@ describe('desktop app', () => {
       .trigger('submit');
     await flushPromises();
     expect(bridge.service.SetBandwidth).toHaveBeenLastCalledWith(2359296);
+    const toggle = (text: string) =>
+      wrapper
+        .findAll('label')
+        .find((label) => label.text() === text)!
+        .get('input');
+    bridge.background.Paused.mockResolvedValueOnce(true);
+    await toggle('Pause all transfers').setValue(true);
+    await flushPromises();
+    expect(bridge.background.SetPaused).toHaveBeenLastCalledWith(true);
+    expect((toggle('Pause all transfers').element as HTMLInputElement).checked).toBe(true);
+    bridge.background.SetLaunchAtLogin.mockRejectedValueOnce(new Error('Autostart unavailable'));
+    await toggle('Launch at login in the tray').setValue(true);
+    await flushPromises();
+    expect(wrapper.get('[role="alert"]').text()).toContain('Autostart unavailable');
+    expect((toggle('Launch at login in the tray').element as HTMLInputElement).checked).toBe(false);
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'Quit ServerSend')!
+      .trigger('click');
+    expect(bridge.background.Quit).toHaveBeenCalled();
     bridge.service.QueueAction.mockRejectedValueOnce(new Error('Queue update failed'));
     await wrapper.get('[aria-label="Resume paused.txt"]').trigger('click');
     await flushPromises();
