@@ -470,8 +470,8 @@ func (q *durableQueue) privateStageRoom(path, stage string) error {
 	if err != nil {
 		return err
 	}
-	if info.Size() > client.MaxPrivateFileBytes {
-		return &source.SkipError{Path: path, Reason: client.PrivateTooLargeReason}
+	if err = privateStageFits(path, info.Size(), 0, 0, false); err != nil {
+		return err // skip oversized files before touching staging
 	}
 	dir := filepath.Dir(stage)
 	if err = os.MkdirAll(dir, 0700); err != nil {
@@ -493,11 +493,21 @@ func (q *durableQueue) privateStageRoom(path, stage string) error {
 		}
 		used += info.Size()
 	}
-	need := info.Size() + (info.Size()/(1<<20)+1)*28 + 65536
+	free, known := freeDiskBytes(dir)
+	return privateStageFits(path, info.Size(), used, free, known)
+}
+
+// privateStageFits applies the private size limit, staging budget (used is
+// bytes already staged) and, when known, free disk space to a file of size.
+func privateStageFits(path string, size, used, free int64, freeKnown bool) error {
+	if size > client.MaxPrivateFileBytes {
+		return &source.SkipError{Path: path, Reason: client.PrivateTooLargeReason}
+	}
+	need := size + (size/(1<<20)+1)*28 + 65536
 	if used+need > privateStageBudget {
 		return api.Error{Code: api.CapacityExhausted, Message: privateBudgetFull}
 	}
-	if free, ok := freeDiskBytes(dir); ok && need+privateDiskReserve > free {
+	if freeKnown && need+privateDiskReserve > free {
 		return api.Error{Code: api.CapacityExhausted, Message: privateDiskFull}
 	}
 	return nil

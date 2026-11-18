@@ -107,41 +107,37 @@ func TestOversizedPrivateFileSkipsAndCanUploadUnencrypted(t *testing.T) {
 		}
 		return key, nil
 	}
+	// Sizes are checked as numbers: Windows has no sparse files for large fixtures.
+	const big, free = client.MaxPrivateFileBytes, int64(1 << 50)
+	if skip, ok := source.Skipped(privateStageFits("large.bin", big+1, 0, free, true)); !ok || skip.Reason != client.PrivateTooLargeReason {
+		t.Fatal("oversized private file was not skipped")
+	}
+	for _, c := range []struct {
+		size, used, free int64
+		known            bool
+		want             string
+	}{
+		{big, 0, free, true, ""},
+		{big, privateStageBudget - big, free, true, privateBudgetFull}, // paused stages count
+		{big, 0, big + privateDiskReserve, true, privateDiskFull},      // overhead and reserve count
+		{big, 0, 0, false, ""}, // unknown free space
+	} {
+		err := privateStageFits("file", c.size, c.used, c.free, c.known)
+		var typed api.Error
+		if c.want == "" && err != nil || c.want != "" && (!errors.As(err, &typed) || typed.Message != c.want) {
+			t.Fatalf("%+v: %v", c, err)
+		}
+	}
 	q := &durableQueue{store: s}
-	large := filepath.Join(t.TempDir(), "large.bin")
-	if err := os.WriteFile(large, nil, 0600); err != nil {
+	root, err := filepath.EvalSymlinks(t.TempDir()) // macOS /var is a link; sources refuse links
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Truncate(large, client.MaxPrivateFileBytes+1); err != nil {
+	large := filepath.Join(root, "large.bin")
+	if err := os.WriteFile(large, []byte("x"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	stage := q.stagePath(1)
-	err := q.privateStageRoom(large, stage)
-	if skip, ok := source.Skipped(err); !ok || skip.Reason != client.PrivateTooLargeReason {
-		t.Fatal("oversized private file was not skipped", err)
-	}
-	// Paused stages count against the budget for a fresh file.
-	if err = os.Truncate(large, 1); err != nil {
-		t.Fatal(err)
-	}
-	paused := q.stagePath(2)
-	if err = os.MkdirAll(filepath.Dir(paused), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(paused, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.Truncate(paused, privateStageBudget); err != nil {
-		t.Fatal(err)
-	}
-	var typed api.Error
-	if err = q.privateStageRoom(large, stage); !errors.As(err, &typed) || typed.Message != privateBudgetFull {
-		t.Fatal("staging budget not enforced", err)
-	}
-	if err = os.Remove(paused); err != nil {
-		t.Fatal(err)
-	}
-	if err = q.privateStageRoom(large, stage); err != nil {
+	if err := q.privateStageRoom(large, q.stagePath(1)); err != nil {
 		t.Fatal(err)
 	}
 
