@@ -36,7 +36,7 @@ it('downloads and selects immutable versions and replaces pages', async () => {
   expect(w.text()).toContain('Conflict');
   await w
     .findAll('button')
-    .find((b) => b.text() === 'Download version')!
+    .find((b) => b.text() === 'Download…')!
     .trigger('click');
   await flushPromises();
   expect(service.ChooseAndDownloadVersion).toHaveBeenCalledWith('file', 'old');

@@ -103,6 +103,12 @@ export interface Profile {
     "name"?: string;
     "endpoints"?: string[] | null;
     "private_default"?: boolean;
+
+    /**
+     * VaultConfigured records that the user chose standard or private storage
+     * for this server, so the desktop asks once before first use.
+     */
+    "vault_configured"?: boolean;
     "remember_vault"?: boolean;
     "vault_minutes"?: number;
     "trust": client$0.Trust;

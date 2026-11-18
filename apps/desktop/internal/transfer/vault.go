@@ -133,6 +133,7 @@ func (m *Manager) SetPrivateMode(private bool) error {
 		for i := range m.profiles {
 			if m.profiles[i].AccountID == a.AccountID && m.profiles[i].Trust.Identity.ServerID == a.ServerID {
 				m.profiles[i].PrivateDefault = private
+				m.profiles[i].VaultConfigured = true
 			}
 		}
 	}

@@ -50,12 +50,16 @@ const bridge = vi.hoisted(() => ({
     ConfirmEnrollment: vi.fn<(code: string) => Promise<string[] | null>>(),
     CompleteSignIn: vi.fn<(code: string) => Promise<unknown>>(),
     SignOut: vi.fn<() => Promise<void>>(),
+    SetPrivateMode: vi.fn<(value: boolean) => Promise<void>>(),
     Batches: vi.fn<() => Promise<unknown[] | null>>(),
     Files:
       vi.fn<
         (parent: string) => Promise<{ id: string; name: string; directory?: boolean }[] | null>
       >(),
     DeleteEntry: vi.fn<(id: string) => Promise<void>>(),
+    CreateDirectory: vi.fn<(parent: string, name: string) => Promise<void>>(),
+    TrashPage: vi.fn<(cursor: string) => Promise<unknown>>(),
+    History: vi.fn<(id: string, cursor: string) => Promise<unknown>>(),
     ChooseAndUploadFolder: vi.fn<(parent: string) => Promise<void>>(),
     CancelTransfer: vi.fn<(id: number) => Promise<void>>(),
     CancelBatch: vi.fn<(id: number) => Promise<void>>(),
@@ -77,145 +81,64 @@ vi.mock('../bindings/github.com/chironjit/serversend/apps/desktop', () => ({
 
 const fingerprint = 'ab12'.repeat(16);
 
-async function submit(wrapper: ReturnType<typeof mount>) {
-  await wrapper.find('form').trigger('submit');
+type Wrapper = ReturnType<typeof mount>;
+const saved = {
+  origin: 'https://saved.test:58443',
+  username: 'alice',
+  fingerprint,
+  remember: true,
+  vault_configured: true,
+};
+const session = {
+  username: 'alice',
+  origin: 'https://saved.test:58443',
+  serverId: 's1',
+  scope: 's1/a1',
+};
+const button = (wrapper: Wrapper, text: string) =>
+  wrapper.findAll('button').find((b) => b.text() === text)!;
+async function submit(wrapper: Wrapper, scope = '') {
+  await wrapper.get(`${scope} form`.trim()).trigger('submit');
   await flushPromises();
 }
+async function goto(wrapper: Wrapper, tab: string) {
+  await wrapper
+    .get('nav[aria-label="Main"]')
+    .findAll('button')
+    .find((b) => b.text().startsWith(tab))!
+    .trigger('click');
+  await flushPromises();
+}
+// First run: no saved servers, so pairing fills the window.
+async function onboard() {
+  bridge.service.SignIn.mockResolvedValue({ next: 'second_factor' });
+  bridge.service.CompleteSignIn.mockResolvedValue({ ...session, origin: 'https://server.test' });
+  const wrapper = mount(App);
+  await flushPromises();
+  await submit(wrapper);
+  await button(wrapper, 'They match — continue').trigger('click');
+  await flushPromises();
+  await submit(wrapper);
+  await wrapper.get('form input').setValue('123456');
+  await submit(wrapper);
+  return wrapper;
+}
+// A saved, remembered server opens straight into the library.
+async function mountLibrary() {
+  bridge.service.Profiles.mockResolvedValue([saved]);
+  bridge.service.OpenProfile.mockResolvedValue(session);
+  const wrapper = mount(App);
+  await flushPromises();
+  return wrapper;
+}
 
-describe('desktop transfer slice', () => {
-  it('restores a saved server session without password or certificate approval', async () => {
-    bridge.service.Profiles.mockResolvedValue([
-      { origin: 'https://saved.test:58443', username: 'alice', fingerprint, remember: true },
-    ]);
-    bridge.service.OpenProfile.mockResolvedValue({
-      username: 'alice',
-      origin: 'https://saved.test:58443',
-      serverId: 's1',
-      scope: 's1/a1',
-    });
-    const wrapper = mount(App);
-    await flushPromises();
-    const saved = wrapper.findAll('button').find((button) => button.text().includes('saved.test'))!;
-    await saved.trigger('click');
-    await flushPromises();
-    expect(bridge.service.OpenProfile).toHaveBeenCalledWith('https://saved.test:58443');
-    expect(bridge.service.SignIn).not.toHaveBeenCalled();
-    expect(bridge.service.Approve).not.toHaveBeenCalled();
-    expect(wrapper.text()).toContain('report.txt');
-    expect(wrapper.text()).toContain('Switch server');
-    wrapper.unmount();
-  });
-  it('lists this device and offline devices and confirms individual or other-device revocation', async () => {
-    bridge.service.Profiles.mockResolvedValue([
-      { origin: 'https://saved.test:58443', username: 'alice', remember: true },
-    ]);
-    bridge.service.OpenProfile.mockResolvedValue({
-      username: 'alice',
-      origin: 'https://saved.test:58443',
-      serverId: 's1',
-    });
-    bridge.service.Devices.mockResolvedValue([
-      {
-        id: 'current',
-        name: 'Current laptop',
-        current: true,
-        status: 'authorized',
-        last_seen_at: '2026-01-01',
-      },
-      {
-        id: 'lost',
-        name: 'Lost laptop',
-        current: false,
-        status: 'authorized',
-        recently_active: false,
-        last_seen_at: '2025-12-01',
-      },
-    ]);
-    bridge.service.RevokeDevice.mockResolvedValue();
-    const wrapper = mount(App);
-    await flushPromises();
-    const button = (text: string) => wrapper.findAll('button').find((b) => b.text() === text)!;
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text().includes('saved.test'))!
-      .trigger('click');
-    await flushPromises();
-    await button('Devices').trigger('click');
-    await flushPromises();
-    expect(wrapper.text()).toContain('Lost laptop');
-    expect(wrapper.text()).toContain('This device');
-    await button('Revoke access').trigger('click');
-    await flushPromises();
-    expect(bridge.service.RevokeDevice).not.toHaveBeenCalled();
-    await button('Confirm revocation').trigger('click');
-    await flushPromises();
-    expect(bridge.service.RevokeDevice).toHaveBeenCalledWith('lost');
-    await button('Sign out other devices').trigger('click');
-    await flushPromises();
-    await button('Confirm revocation').trigger('click');
-    await flushPromises();
-    expect(bridge.service.RevokeDevice).toHaveBeenCalledWith('others');
-    bridge.service.RevokeDevice.mockRejectedValueOnce(
-      new Error('Device access could not be revoked'),
-    );
-    await button('Revoke access').trigger('click');
-    await flushPromises();
-    await button('Confirm revocation').trigger('click');
-    await flushPromises();
-    expect(wrapper.text()).toContain('Device access could not be revoked');
-    bridge.service.ReplaceRecoveryCodes.mockResolvedValue(['RECOVERY-CODE']);
-    await button('Replace recovery codes').trigger('click');
-    const form = wrapper
-      .findAll('form')
-      .find((value) => value.text().includes('Generate new codes'))!;
-    const [passwordInput, codeInput] = form.findAll('input');
-    await passwordInput.setValue('account password');
-    await codeInput.setValue('123456');
-    await form.trigger('submit');
-    await flushPromises();
-    expect(bridge.service.ReplaceRecoveryCodes).toHaveBeenCalledWith('account password', '123456');
-    expect(wrapper.text()).toContain('RECOVERY-CODE');
-    await button('Dismiss codes').trigger('click');
-    expect(wrapper.text()).not.toContain('RECOVERY-CODE');
-    wrapper.unmount();
-  });
-  it('renews a remembered device with TOTP without asking for a password', async () => {
-    bridge.service.Profiles.mockResolvedValue([
-      { origin: 'https://saved.test:58443', username: 'alice', fingerprint, remember: true },
-    ]);
-    bridge.service.OpenProfile.mockResolvedValue({
-      username: 'alice',
-      origin: 'https://saved.test:58443',
-      serverId: 's1',
-      reauthenticationRequired: true,
-    });
-    bridge.service.CompleteReauthentication.mockResolvedValue({
-      username: 'alice',
-      origin: 'https://saved.test:58443',
-      serverId: 's1',
-      scope: 's1/a1',
-    });
-    const wrapper = mount(App);
-    await flushPromises();
-    await wrapper
-      .findAll('button')
-      .find((button) => button.text().includes('saved.test'))!
-      .trigger('click');
-    await flushPromises();
-    expect(wrapper.text()).toContain('Verify this device');
-    expect(wrapper.find('input[type="password"]').exists()).toBe(false);
-    await wrapper.get('form input').setValue('123456');
-    await submit(wrapper);
-    expect(bridge.service.CompleteReauthentication).toHaveBeenCalledWith('123456');
-    expect(bridge.service.SignIn).not.toHaveBeenCalled();
-    expect(wrapper.text()).toContain('report.txt');
-    wrapper.unmount();
-  });
+describe('desktop app', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     bridge.service.SessionStatus.mockResolvedValue({ next: 'files' });
     bridge.service.Profiles.mockResolvedValue([]);
     bridge.service.SetRemember.mockResolvedValue();
+    bridge.service.SetPrivateMode.mockResolvedValue();
     localStorage.clear();
     delete document.documentElement.dataset.theme;
     bridge.service.Probe.mockResolvedValue({
@@ -247,6 +170,110 @@ describe('desktop transfer slice', () => {
     bridge.service.SignOut.mockResolvedValue();
   });
 
+  it('opens a saved server straight into the library without pairing or a password', async () => {
+    const wrapper = await mountLibrary();
+    expect(bridge.service.OpenProfile).toHaveBeenCalledWith('https://saved.test:58443');
+    expect(bridge.service.SignIn).not.toHaveBeenCalled();
+    expect(bridge.service.Approve).not.toHaveBeenCalled();
+    expect(wrapper.text()).not.toContain('Connect to a server');
+    expect(wrapper.text()).toContain('report.txt');
+    expect(wrapper.get('nav[aria-label="Main"]').text()).toContain('Devices');
+    wrapper.unmount();
+  });
+
+  it('reopens the last used server and asks for sign-in when it was not remembered', async () => {
+    localStorage.setItem('serversend-last-server', 'https://second.test');
+    bridge.service.Profiles.mockResolvedValue([
+      saved,
+      { origin: 'https://second.test', username: 'bob', vault_configured: true },
+    ]);
+    bridge.service.OpenProfile.mockResolvedValue({});
+    const wrapper = mount(App);
+    await flushPromises();
+    expect(bridge.service.OpenProfile).toHaveBeenCalledWith('https://second.test');
+    const dialog = wrapper.get('[role="dialog"]');
+    expect(dialog.text()).toContain('Sign in');
+    expect(dialog.get<HTMLInputElement>('input').element.value).toBe('bob');
+    await button(wrapper, 'Cancel').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('asks once per server how files are stored before showing the browser', async () => {
+    bridge.service.Profiles.mockResolvedValue([{ ...saved, vault_configured: false }]);
+    bridge.service.OpenProfile.mockResolvedValue(session);
+    const wrapper = mount(App);
+    await flushPromises();
+    expect(wrapper.text()).toContain('How should files be stored on this server?');
+    expect(wrapper.text()).toContain('administrator who is signed in can technically open them');
+    expect(bridge.service.FilesPage).not.toHaveBeenCalled();
+    bridge.service.Profiles.mockResolvedValue([saved]);
+    await submit(wrapper);
+    expect(bridge.service.SetPrivateMode).toHaveBeenCalledWith(false);
+    expect(wrapper.text()).toContain('report.txt');
+    expect(wrapper.text()).toContain('Standard storage');
+    wrapper.unmount();
+  });
+
+  it('lists this device and offline devices and confirms individual or other-device revocation', async () => {
+    bridge.service.Devices.mockResolvedValue([
+      { id: 'current', name: 'Current laptop', current: true, status: 'authorized' },
+      { id: 'lost', name: 'Lost laptop', current: false, status: 'authorized' },
+    ]);
+    bridge.service.RevokeDevice.mockResolvedValue();
+    const wrapper = await mountLibrary();
+    await goto(wrapper, 'Devices');
+    expect(wrapper.text()).toContain('Lost laptop');
+    expect(wrapper.text()).toContain('This device');
+    await button(wrapper, 'Revoke access').trigger('click');
+    expect(bridge.service.RevokeDevice).not.toHaveBeenCalled();
+    await button(wrapper, 'Confirm revocation').trigger('click');
+    await flushPromises();
+    expect(bridge.service.RevokeDevice).toHaveBeenCalledWith('lost');
+    await button(wrapper, 'Sign out other devices').trigger('click');
+    await button(wrapper, 'Confirm revocation').trigger('click');
+    await flushPromises();
+    expect(bridge.service.RevokeDevice).toHaveBeenCalledWith('others');
+    bridge.service.RevokeDevice.mockRejectedValueOnce(
+      new Error('Device access could not be revoked'),
+    );
+    await button(wrapper, 'Revoke access').trigger('click');
+    await button(wrapper, 'Confirm revocation').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).toContain('Device access could not be revoked');
+    bridge.service.ReplaceRecoveryCodes.mockResolvedValue(['RECOVERY-CODE']);
+    await button(wrapper, 'Replace recovery codes').trigger('click');
+    const form = wrapper.findAll('form').find((f) => f.text().includes('Generate new codes'))!;
+    const [passwordInput, codeInput] = form.findAll('input');
+    await passwordInput!.setValue('account password');
+    await codeInput!.setValue('123456');
+    await form.trigger('submit');
+    await flushPromises();
+    expect(bridge.service.ReplaceRecoveryCodes).toHaveBeenCalledWith('account password', '123456');
+    expect(wrapper.text()).toContain('RECOVERY-CODE');
+    await button(wrapper, 'I saved them').trigger('click');
+    expect(wrapper.text()).not.toContain('RECOVERY-CODE');
+    wrapper.unmount();
+  });
+
+  it('renews a remembered device with TOTP without asking for a password', async () => {
+    bridge.service.Profiles.mockResolvedValue([saved]);
+    bridge.service.OpenProfile.mockResolvedValue({ ...session, reauthenticationRequired: true });
+    bridge.service.CompleteReauthentication.mockResolvedValue(session);
+    const wrapper = mount(App);
+    await flushPromises();
+    expect(wrapper.text()).toContain('Verify this device');
+    expect(wrapper.find('input[type="password"]').exists()).toBe(false);
+    expect(bridge.service.FilesPage).not.toHaveBeenCalled();
+    await wrapper.get('[role="dialog"] form input').setValue('123456');
+    await submit(wrapper, '[role="dialog"]');
+    expect(bridge.service.CompleteReauthentication).toHaveBeenCalledWith('123456');
+    expect(bridge.service.SignIn).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain('report.txt');
+    wrapper.unmount();
+  });
+
   it('onboards a new account through every mandatory step before showing files', async () => {
     const privateProbe = {
       origin: 'https://server.test:58443',
@@ -272,108 +299,77 @@ describe('desktop transfer slice', () => {
       serverId: 's',
     });
     const wrapper = mount(App);
-
+    await flushPromises();
+    expect(wrapper.find('nav[aria-label="Main"]').exists()).toBe(false);
     await wrapper.find('form input').setValue('server.test:58443');
     await submit(wrapper);
     expect(wrapper.find('[data-test="fingerprint"]').text()).toBe(
       fingerprint.match(/.{4}/g)?.join(' '),
     );
     expect(wrapper.text()).toContain('private certificate');
-    const approval = () =>
-      wrapper.findAll('button').find((button) => button.text().includes('They match'))!;
+    const approval = () => button(wrapper, 'They match — continue');
     expect(approval().attributes('disabled')).toBeDefined();
-    await wrapper
-      .findAll('button')
-      .find((button) => button.text().includes('Choose server CA'))!
-      .trigger('click');
+    await button(wrapper, 'Choose server CA certificate').trigger('click');
     await flushPromises();
     expect(bridge.service.ChooseServerCA).toHaveBeenCalledWith('https://server.test:58443');
     expect(wrapper.text()).toContain('ca-fingerprint');
     expect(bridge.service.Approve).not.toHaveBeenCalled();
-
     await approval().trigger('click');
     await flushPromises();
     expect(bridge.service.Approve).toHaveBeenCalledWith(fingerprint);
-
     const [user, pass] = wrapper.findAll('form input');
     await user?.setValue('admin');
     await pass?.setValue('temporary');
     await submit(wrapper);
     expect(wrapper.text()).toContain('Choose your password');
-
     await wrapper.find('form input').setValue('a long permanent password');
     await submit(wrapper);
     expect(wrapper.find('img').attributes('src')).toBe('data:image/png;base64,AA==');
     expect(wrapper.text()).toContain('SECRETKEY');
-
     await wrapper.find('form input').setValue('123456');
     await submit(wrapper);
     expect(wrapper.text()).toContain('AAAA-1111');
     expect(wrapper.text()).not.toContain('SECRETKEY');
     expect(bridge.service.Files).not.toHaveBeenCalled();
-
-    await wrapper.find('button').trigger('click');
+    await button(wrapper, 'I saved them — continue').trigger('click');
     await wrapper.find('form input').setValue('654321');
     await submit(wrapper);
     expect(bridge.service.CompleteSignIn).toHaveBeenCalledWith('654321');
     expect(wrapper.text()).toContain('report.txt');
     expect(wrapper.text()).not.toContain('AAAA-1111');
+    wrapper.unmount();
   });
 
   it('keeps the user on the same step with the reason when an action fails', async () => {
     bridge.service.Probe.mockRejectedValue(new Error('could not reach a ServerSend server'));
     const wrapper = mount(App);
+    await flushPromises();
     await wrapper.find('form input').setValue('nowhere.test');
     await submit(wrapper);
     expect(wrapper.find('[role="alert"]').text()).toContain('could not reach');
     expect(wrapper.text()).toContain('Connect to a server');
-    expect(wrapper.find('button').attributes('disabled')).toBeUndefined();
+    expect(button(wrapper, 'Check server').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
   });
 
-  it('shows live transfer progress, failures and refreshed files', async () => {
-    bridge.service.SignIn.mockResolvedValue({ next: 'second_factor' });
-    bridge.service.CompleteSignIn.mockResolvedValue({
-      username: 'admin',
-      origin: 'https://server.test:58443',
-      serverId: 's',
-    });
-    const wrapper = mount(App);
-    await wrapper.find('form input').setValue('server.test:58443');
-    await submit(wrapper);
-    await wrapper.find('button').trigger('click');
-    await flushPromises();
-    await submit(wrapper);
-    await wrapper.find('form input').setValue('123456');
-    await submit(wrapper);
+  it('shows live transfer progress, a running indicator, failures and refreshed files', async () => {
+    const wrapper = await onboard();
+    await goto(wrapper, 'Transfers');
     expect(wrapper.text()).toContain('Saved uploads and downloads appear here.');
-
     const emit = (item: object) => bridge.listener?.({ data: [item] });
-    emit({
-      id: 1,
-      name: 'video.mp4',
-      direction: 'upload',
-      state: 'active',
-      done: 524288,
-      total: 1048576,
-      error: '',
-    });
+    const video = { id: 1, name: 'video.mp4', direction: 'upload', error: '', total: 1048576 };
+    emit({ ...video, state: 'active', done: 524288 });
     await flushPromises();
-    expect(wrapper.find('progress').attributes('value')).toBe('50');
+    expect(wrapper.get('[aria-label="Transfer queue"] progress').attributes('value')).toBe('50');
     expect(wrapper.text()).toContain('512.0 KiB of 1.0 MiB');
-
+    expect(wrapper.get('nav[aria-label="Main"]').find('[aria-label="1 running"]').exists()).toBe(
+      true,
+    );
     bridge.service.Files.mockResolvedValue([
       { id: 'f1', name: 'report.txt' },
       { id: 'f2', name: 'video.mp4' },
     ]);
-    emit({
-      id: 1,
-      name: 'video.mp4',
-      direction: 'upload',
-      state: 'done',
-      done: 1048576,
-      total: 1048576,
-      error: '',
-    });
+    emit({ ...video, state: 'done', done: 1048576 });
     emit({
       id: 2,
       name: 'gone.bin',
@@ -384,68 +380,87 @@ describe('desktop transfer slice', () => {
       error: 'Sign in again to continue',
     });
     await flushPromises();
-    expect(wrapper.find('progress').exists()).toBe(false);
-    expect(wrapper.text()).toContain('Done · 1.0 MiB');
+    expect(wrapper.find('[aria-label="Transfer queue"] progress').exists()).toBe(false);
     expect(wrapper.text()).toContain('Sign in again to continue');
-    expect(wrapper.findAll('.list')[0]?.text()).toContain('video.mp4');
+    expect(wrapper.find('[aria-label$=" running"]').exists()).toBe(false);
+    await goto(wrapper, 'Library');
+    expect(wrapper.get('[aria-label="Files"]').text()).toContain('video.mp4');
+    wrapper.unmount();
   });
 
-  it('browses folder names and breadcrumbs, shares one upload menu, and confirms deletion', async () => {
-    bridge.service.SignIn.mockResolvedValue({ next: 'second_factor' });
-    bridge.service.CompleteSignIn.mockResolvedValue({
-      username: 'alice',
-      origin: 'https://server.test',
-      serverId: 's',
-    });
+  it('browses folders with breadcrumbs, one upload menu, and confirmed deletion', async () => {
     bridge.service.Files.mockResolvedValue([{ id: 'folder', name: 'Photos', directory: true }]);
     bridge.service.DeleteEntry.mockResolvedValue();
     bridge.service.ChooseAndUploadFolder.mockResolvedValue();
-    const wrapper = mount(App);
-    await submit(wrapper);
-    await wrapper.find('button').trigger('click');
-    await flushPromises();
-    await submit(wrapper);
-    await submit(wrapper);
+    const wrapper = await mountLibrary();
     bridge.service.Files.mockResolvedValue([{ id: 'file', name: 'image.jpg' }]);
-    await wrapper.get('.folder-link').trigger('click');
+    await wrapper
+      .get('[aria-label="Files"]')
+      .findAll('button')
+      .find((b) => b.text() === 'Photos')!
+      .trigger('click');
     await flushPromises();
     expect(bridge.service.Files).toHaveBeenLastCalledWith('folder');
-    expect(wrapper.get('.breadcrumbs').text()).toContain('Photos');
-    await wrapper.get('.upload-menu > button').trigger('click');
-    expect(wrapper.get('.upload-options').text()).toContain('Files…');
-    expect(wrapper.get('.upload-options').text()).toContain('Folder…');
-    await wrapper.get('.upload-options').findAll('button')[1]!.trigger('click');
+    const crumbs = () => wrapper.get('[aria-label="Folder path"]');
+    expect(crumbs().text()).toContain('Photos');
+    await button(wrapper, 'Upload').trigger('click');
+    expect(button(wrapper, 'Files…').exists()).toBe(true);
+    await button(wrapper, 'Folder…').trigger('click');
     await flushPromises();
     expect(bridge.service.ChooseAndUploadFolder).toHaveBeenCalledWith('folder');
+    const confirm = () => wrapper.find('[aria-label="Confirm deletion"]');
     await wrapper.get('[aria-label="Delete image.jpg"]').trigger('click');
     expect(bridge.service.DeleteEntry).not.toHaveBeenCalled();
-    await wrapper.get('.delete-confirm .quiet').trigger('click');
-    expect(wrapper.find('.delete-confirm').exists()).toBe(false);
+    await confirm().findAll('button')[1]!.trigger('click');
+    expect(confirm().exists()).toBe(false);
     await wrapper.get('[aria-label="Delete image.jpg"]').trigger('click');
     bridge.service.DeleteEntry.mockRejectedValueOnce(new Error('Wait for uploads'));
-    await wrapper.get('.delete-confirm .danger').trigger('click');
+    await button(wrapper, 'Move to trash').trigger('click');
     await flushPromises();
     expect(wrapper.get('[role="alert"]').text()).toContain('Wait for uploads');
-    expect(wrapper.find('.delete-confirm').exists()).toBe(true);
+    expect(confirm().exists()).toBe(true);
     bridge.service.Files.mockResolvedValue([]);
-    await wrapper.get('.delete-confirm .danger').trigger('click');
+    await button(wrapper, 'Move to trash').trigger('click');
     await flushPromises();
     expect(bridge.service.DeleteEntry).toHaveBeenLastCalledWith('file');
-    expect(wrapper.find('.delete-confirm').exists()).toBe(false);
-    await wrapper.get('.breadcrumbs button').trigger('click');
+    expect(confirm().exists()).toBe(false);
+    await crumbs().get('button').trigger('click');
     await flushPromises();
     expect(bridge.service.Files).toHaveBeenLastCalledWith('');
-    expect(wrapper.get('.breadcrumbs').text()).not.toContain('Photos');
+    expect(crumbs().text()).not.toContain('Photos');
+    wrapper.unmount();
+  });
+
+  it('creates folders inline and replaces the listing with trash and versions', async () => {
+    bridge.service.CreateDirectory.mockResolvedValue();
+    bridge.service.TrashPage.mockResolvedValue({
+      entries: [{ id: 't1', standard: { name: 'old.doc' } }],
+    });
+    bridge.service.History.mockResolvedValue({ versions: [] });
+    const wrapper = await mountLibrary();
+    await button(wrapper, 'New folder').trigger('click');
+    await wrapper.get('[aria-label="New folder name"]').setValue('Taxes');
+    await wrapper.get('form:has([aria-label="New folder name"])').trigger('submit');
+    await flushPromises();
+    expect(bridge.service.CreateDirectory).toHaveBeenCalledWith('', 'Taxes');
+    expect(wrapper.find('[aria-label="New folder name"]').exists()).toBe(false);
+    const versions = () => wrapper.findAll('button').find((b) => b.text() === 'Versions')!;
+    expect(versions().attributes('disabled')).toBeDefined();
+    await wrapper.get('[aria-label="Select report.txt"]').setValue(true);
+    await versions().trigger('click');
+    await flushPromises();
+    expect(bridge.service.History).toHaveBeenCalledWith('f1', '');
+    expect(wrapper.text()).toContain('Versions of report.txt');
+    expect(wrapper.find('[aria-label="Files"]').exists()).toBe(false);
+    await button(wrapper, 'Back to files').trigger('click');
+    await button(wrapper, 'Trash').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).toContain('old.doc');
+    expect(wrapper.find('[aria-label="Files"]').exists()).toBe(false);
     wrapper.unmount();
   });
 
   it('reports mixed and all-skipped selections with bounded, reviewable reasons', async () => {
-    bridge.service.SignIn.mockResolvedValue({ next: 'second_factor' });
-    bridge.service.CompleteSignIn.mockResolvedValue({
-      username: 'alice',
-      origin: 'https://server.test',
-      serverId: 's',
-    });
     bridge.service.Batches.mockResolvedValue([
       {
         id: 1,
@@ -480,41 +495,23 @@ describe('desktop transfer slice', () => {
         error: '',
       },
     ]);
-    const wrapper = mount(App);
-    await submit(wrapper);
-    await wrapper.find('button').trigger('click');
-    await flushPromises();
-    await submit(wrapper);
-    await submit(wrapper);
+    const wrapper = await onboard();
+    await goto(wrapper, 'Transfers');
     const selections = wrapper.get('[aria-label="Transfer selections"]');
     expect(selections.text()).toContain('Completed with skipped items');
-    expect(selections.text()).toContain(
-      '2 of 2 files transferred · 3 folders created · 103 skipped · 0 failed',
-    );
+    expect(selections.text()).toContain('2 of 2 files · 103 skipped');
     expect(selections.text()).toContain('Zero files transferred. Every selected item was skipped.');
     expect(selections.text()).toContain('Showing 100 of 103 skipped paths');
     expect(selections.findAll('details')).toHaveLength(2);
     expect(selections.findAll('[aria-label="Skipped paths and reasons"] li')).toHaveLength(101);
     expect(selections.text()).toContain('/Documents/link-99');
-    expect(selections.text()).toContain("Select a link's real target");
-    expect(selections.text()).toContain('Took 1m 15s · 3.0 MiB · 41.0 KiB/s average');
-    expect(wrapper.find('progress').exists()).toBe(false);
+    expect(selections.text()).toContain('took 1m 15s · 3.0 MiB · 41.0 KiB/s average');
+    expect(selections.find('progress').exists()).toBe(false);
     wrapper.unmount();
   });
 
   it('refreshes selection outcomes after a failed scan and keeps failures distinct from skips', async () => {
-    bridge.service.SignIn.mockResolvedValue({ next: 'second_factor' });
-    bridge.service.CompleteSignIn.mockResolvedValue({
-      username: 'alice',
-      origin: 'https://server.test',
-      serverId: 's',
-    });
-    const wrapper = mount(App);
-    await submit(wrapper);
-    await wrapper.find('button').trigger('click');
-    await flushPromises();
-    await submit(wrapper);
-    await submit(wrapper);
+    const wrapper = await onboard();
     bridge.service.Batches.mockResolvedValue([
       {
         id: 1,
@@ -532,59 +529,34 @@ describe('desktop transfer slice', () => {
     bridge.service.ChooseAndUploadFolder.mockRejectedValueOnce(
       new Error('Read directory: permission denied'),
     );
-    await wrapper.get('.upload-menu > button').trigger('click');
-    await wrapper.get('.upload-options').findAll('button')[1]!.trigger('click');
+    await button(wrapper, 'Upload').trigger('click');
+    await button(wrapper, 'Folder…').trigger('click');
     await flushPromises();
+    expect(wrapper.get('[role="alert"]').text()).toContain('Read directory: permission denied');
+    expect(button(wrapper, 'Upload').attributes('disabled')).toBeUndefined();
+    await goto(wrapper, 'Transfers');
     const selections = wrapper.get('[aria-label="Transfer selections"]');
     expect(selections.text()).toContain('Failed');
     expect(selections.text()).toContain('Read directory: permission denied');
     expect(selections.text()).not.toContain('Completed with skipped items');
-    expect(wrapper.get('[role="alert"]').text()).toContain('Read directory: permission denied');
-    expect(wrapper.get('.upload-menu > button').attributes('disabled')).toBeUndefined();
     wrapper.unmount();
   });
 
   it('offers retry when upload summaries cannot be read', async () => {
-    bridge.service.SignIn.mockResolvedValue({ next: 'second_factor' });
-    bridge.service.CompleteSignIn.mockResolvedValue({
-      username: 'alice',
-      origin: 'https://server.test',
-      serverId: 's',
-    });
     bridge.service.Batches.mockRejectedValueOnce(new Error('Summary unavailable'));
-    const wrapper = mount(App);
-    await submit(wrapper);
-    await wrapper.find('button').trigger('click');
+    const wrapper = await onboard();
+    await goto(wrapper, 'Transfers');
+    const selections = () => wrapper.get('[aria-label="Transfer selections"]');
+    expect(selections().text()).toContain('Transfer summaries unavailable: Summary unavailable');
+    await button(wrapper, 'Retry summaries').trigger('click');
     await flushPromises();
-    await submit(wrapper);
-    await submit(wrapper);
-    expect(wrapper.get('[aria-label="Transfer selections"]').text()).toContain(
-      'Transfer summaries unavailable: Summary unavailable',
-    );
-    await wrapper
-      .findAll('button')
-      .find((button) => button.text() === 'Retry summaries')!
-      .trigger('click');
-    await flushPromises();
-    expect(wrapper.get('[aria-label="Transfer selections"]').text()).not.toContain(
-      'Transfer summaries unavailable',
-    );
+    expect(selections().text()).not.toContain('Transfer summaries unavailable');
     wrapper.unmount();
   });
 
   it('bounds finished transfer history while retaining current work', async () => {
-    bridge.service.SignIn.mockResolvedValue({ next: 'second_factor' });
-    bridge.service.CompleteSignIn.mockResolvedValue({
-      username: 'alice',
-      origin: 'https://server.test',
-      serverId: 's',
-    });
-    const wrapper = mount(App);
-    await submit(wrapper);
-    await wrapper.find('button').trigger('click');
-    await flushPromises();
-    await submit(wrapper);
-    await submit(wrapper);
+    const wrapper = await onboard();
+    await goto(wrapper, 'Transfers');
     const item = (id: number, state: string) => ({
       id,
       name: `${state}-${id}`,
@@ -598,9 +570,7 @@ describe('desktop transfer slice', () => {
     bridge.service.Files.mockClear();
     // One batch per state, as a large folder scan and its uploads produce.
     bridge.listener?.({ data: [item(1, 'active')] });
-    bridge.listener?.({
-      data: Array.from({ length: 501 }, (_, index) => item(index + 2, 'done')),
-    });
+    bridge.listener?.({ data: Array.from({ length: 501 }, (_, index) => item(index + 2, 'done')) });
     bridge.listener?.({
       data: Array.from({ length: 5000 }, (_, index) => item(index + 600, 'queued')),
     });
@@ -620,12 +590,6 @@ describe('desktop transfer slice', () => {
   });
 
   it('cancels running selections and individual transfers', async () => {
-    bridge.service.SignIn.mockResolvedValue({ next: 'second_factor' });
-    bridge.service.CompleteSignIn.mockResolvedValue({
-      username: 'alice',
-      origin: 'https://server.test',
-      serverId: 's',
-    });
     bridge.service.CancelTransfer.mockResolvedValue();
     bridge.service.CancelBatch.mockResolvedValue();
     bridge.service.Batches.mockResolvedValue([
@@ -646,45 +610,31 @@ describe('desktop transfer slice', () => {
         finishedAt: 0,
       },
     ]);
-    const wrapper = mount(App);
-    await submit(wrapper);
-    await wrapper.find('button').trigger('click');
-    await flushPromises();
-    await submit(wrapper);
-    await submit(wrapper);
+    const wrapper = await onboard();
+    await goto(wrapper, 'Transfers');
+    const queued = {
+      id: 3,
+      name: 'a.jpg',
+      direction: 'upload',
+      state: 'queued',
+      done: 0,
+      total: 1,
+      error: '',
+    };
     bridge.listener?.({
       data: [
-        {
-          id: 3,
-          name: 'a.jpg',
-          direction: 'upload',
-          state: 'queued',
-          done: 0,
-          total: 1,
-          error: '',
-        },
+        queued,
         { id: 4, name: 'b.jpg', direction: 'upload', state: 'done', done: 1, total: 1, error: '' },
       ],
     });
     await flushPromises();
     const selections = wrapper.get('[aria-label="Transfer selections"]');
     expect(selections.text()).toContain('1 cancelled');
+    expect(selections.find('progress').attributes('value')).toBe('33');
     await selections.get('[aria-label="Cancel Photos"]').trigger('click');
     expect(bridge.service.QueueAction).toHaveBeenCalledWith(7, true, 'cancel');
     await flushPromises();
-    bridge.listener?.({
-      data: [
-        {
-          id: 3,
-          name: 'a.jpg',
-          direction: 'upload',
-          state: 'queued',
-          done: 0,
-          total: 1,
-          error: '',
-        },
-      ],
-    });
+    bridge.listener?.({ data: [queued] });
     await flushPromises();
     const queue = wrapper.get('[aria-label="Transfer queue"]');
     expect(queue.find('[aria-label="Cancel b.jpg"]').exists()).toBe(false);
@@ -692,26 +642,6 @@ describe('desktop transfer slice', () => {
     expect(bridge.service.QueueAction).toHaveBeenCalledWith(3, false, 'cancel');
     wrapper.unmount();
   });
-
-  async function mountLibrary() {
-    bridge.service.Profiles.mockResolvedValue([
-      { origin: 'https://saved.test:58443', username: 'alice', remember: true },
-    ]);
-    bridge.service.OpenProfile.mockResolvedValue({
-      username: 'alice',
-      origin: 'https://saved.test:58443',
-      serverId: 's1',
-      scope: 's1/a1',
-    });
-    const wrapper = mount(App);
-    await flushPromises();
-    await wrapper
-      .findAll('button')
-      .find((button) => button.text().includes('saved.test'))!
-      .trigger('click');
-    await flushPromises();
-    return wrapper;
-  }
 
   it('keeps catalog rows and selections bounded to one page and navigates both directions', async () => {
     bridge.service.FilesPage.mockImplementation(async (_parent, cursor) => ({
@@ -724,23 +654,17 @@ describe('desktop transfer slice', () => {
       snapshot: 'snapshot-7',
     }));
     const wrapper = await mountLibrary();
-    expect(wrapper.get('[aria-label="Files"]').findAll(':scope > li')).toHaveLength(100);
+    expect(wrapper.get('[aria-label="Files"]').findAll(':scope > li')).toHaveLength(101);
     await wrapper.get('[aria-label="Select file-0"]').setValue(true);
-    expect(wrapper.text()).toContain('Restore selected (1)');
-    await wrapper
-      .findAll('button')
-      .find((button) => button.text() === 'Next files')!
-      .trigger('click');
+    expect(wrapper.get('[aria-label="Restore selection"]').text()).toContain('1 selected');
+    await button(wrapper, 'Next').trigger('click');
     await flushPromises();
     expect(bridge.service.FilesPage).toHaveBeenLastCalledWith('', 'next-page');
     expect(wrapper.get('[aria-label="Files"]').text()).toContain('file-100');
     expect(wrapper.get('[aria-label="Files"]').text()).not.toContain('file-0');
-    expect(wrapper.text()).toContain('Restore selected (0)');
+    expect(wrapper.find('[aria-label="Restore selection"]').exists()).toBe(false);
     expect(wrapper.text()).toContain('Page 2');
-    await wrapper
-      .findAll('button')
-      .find((button) => button.text() === 'Previous files')!
-      .trigger('click');
+    await button(wrapper, 'Previous').trigger('click');
     await flushPromises();
     expect(bridge.service.FilesPage).toHaveBeenLastCalledWith('', '');
     expect(wrapper.text()).toContain('Page 1');
@@ -763,27 +687,19 @@ describe('desktop transfer slice', () => {
     });
     const wrapper = await mountLibrary();
     await wrapper.get('[aria-label="Select old.txt"]').setValue(true);
-    await wrapper
-      .findAll('button')
-      .find((button) => button.text() === 'Next files')!
-      .trigger('click');
+    await button(wrapper, 'Next').trigger('click');
     await flushPromises();
     expect(wrapper.text()).toContain('The folder changed or its page expired');
     expect(wrapper.get('[aria-label="Files"]').text()).toContain('new.txt');
     expect(wrapper.get('[aria-label="Files"]').text()).not.toContain('old.txt');
-    expect(wrapper.text()).toContain('Restore selected (0)');
-    expect(
-      wrapper
-        .findAll('button')
-        .find((button) => button.text() === 'Previous files')!
-        .attributes('disabled'),
-    ).toBeDefined();
+    expect(wrapper.find('[aria-label="Restore selection"]').exists()).toBe(false);
+    expect(wrapper.find('[aria-label="File pages"]').exists()).toBe(false);
     wrapper.unmount();
   });
 
   it('reconciles catalog revisions after reconnect without replacing an unchanged current page', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    let wrapper: Awaited<ReturnType<typeof mountLibrary>> | undefined;
+    let wrapper: Wrapper | undefined;
     try {
       wrapper = await mountLibrary();
       bridge.service.FilesPage.mockClear();
@@ -807,6 +723,22 @@ describe('desktop transfer slice', () => {
     }
   });
 
+  it('asks for a full sign-in when the device authorization is revoked', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    let wrapper: Wrapper | undefined;
+    try {
+      wrapper = await mountLibrary();
+      bridge.service.SessionStatus.mockResolvedValue({ next: 'password' });
+      await vi.advanceTimersByTimeAsync(30000);
+      const dialog = wrapper.get('[role="dialog"]');
+      expect(dialog.text()).toContain('Device authorization expired or was revoked');
+      expect(wrapper.find('[aria-label="Files"]').exists()).toBe(false);
+    } finally {
+      wrapper?.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it('restores selected files and folders with an explicit existing-file policy', async () => {
     bridge.service.Files.mockResolvedValue([
       { id: 'folder', name: 'Photos', directory: true },
@@ -815,30 +747,22 @@ describe('desktop transfer slice', () => {
     const wrapper = await mountLibrary();
     await wrapper.get('[aria-label="Select Photos"]').setValue(true);
     await wrapper.get('[aria-label="Select report.txt"]').setValue(true);
-    await wrapper
-      .findAll('button')
-      .find((button) => button.text().startsWith('Restore selected'))!
-      .trigger('click');
+    await button(wrapper, 'Download 2…').trigger('click');
     await flushPromises();
     expect(bridge.service.ChooseAndRestore).toHaveBeenLastCalledWith(['folder', 'file'], 'fail');
     await wrapper.get('[aria-label="Existing file policy"]').setValue('replace');
-    await wrapper
-      .findAll('button')
-      .find((button) => button.text().startsWith('Restore selected'))!
-      .trigger('click');
+    await button(wrapper, 'Download 2…').trigger('click');
     await flushPromises();
     expect(bridge.service.ChooseAndRestore).toHaveBeenLastCalledWith(['folder', 'file'], 'replace');
     await wrapper.get('[aria-label="Existing file policy"]').setValue('skip');
-    await wrapper.get('[aria-label="Restore folder Photos"]').trigger('click');
+    await wrapper.get('[aria-label="Download Photos"]').trigger('click');
     await flushPromises();
     expect(bridge.service.ChooseAndRestore).toHaveBeenLastCalledWith(['folder'], 'skip');
     bridge.service.ChooseAndRestore.mockRejectedValueOnce(new Error('Destination is not writable'));
-    await wrapper.get('[aria-label="Restore folder Photos"]').trigger('click');
+    await wrapper.get('[aria-label="Download Photos"]').trigger('click');
     await flushPromises();
     expect(wrapper.get('[role="alert"]').text()).toContain('Destination is not writable');
-    expect(
-      wrapper.get('[aria-label="Restore folder Photos"]').attributes('disabled'),
-    ).toBeUndefined();
+    expect(wrapper.get('[aria-label="Download Photos"]').attributes('disabled')).toBeUndefined();
     wrapper.unmount();
   });
 
@@ -887,6 +811,7 @@ describe('desktop transfer slice', () => {
       },
     ]);
     const wrapper = await mountLibrary();
+    await goto(wrapper, 'Transfers');
     expect(wrapper.text()).toContain('Waiting for connection');
     expect(wrapper.text()).toContain('Connection unavailable');
     expect((wrapper.get('#bandwidth').element as HTMLInputElement).value).toBe('1.5');
@@ -921,6 +846,7 @@ describe('desktop transfer slice', () => {
 
   it('applies and persists the chosen theme', async () => {
     const wrapper = mount(App);
+    await flushPromises();
     expect(document.documentElement.dataset.theme).toBeUndefined();
     await wrapper.find('input[value="dark"]').setValue(true);
     expect(document.documentElement.dataset.theme).toBe('dark');
@@ -929,30 +855,15 @@ describe('desktop transfer slice', () => {
     mount(App);
     expect(document.documentElement.dataset.theme).toBe('dark');
   });
+
   it('discards buffered transfer events from another account', async () => {
     const wrapper = await mountLibrary();
+    await goto(wrapper, 'Transfers');
+    const event = { direction: 'upload', state: 'active', done: 1, total: 2, error: '' };
     bridge.listener?.({
       data: [
-        {
-          id: 900,
-          scope: 'old-server/old-account',
-          name: 'old-private-name',
-          direction: 'upload',
-          state: 'active',
-          done: 1,
-          total: 2,
-          error: '',
-        },
-        {
-          id: 901,
-          scope: 's1/a1',
-          name: 'current-file',
-          direction: 'upload',
-          state: 'active',
-          done: 1,
-          total: 2,
-          error: '',
-        },
+        { ...event, id: 900, scope: 'old-server/old-account', name: 'old-private-name' },
+        { ...event, id: 901, scope: 's1/a1', name: 'current-file' },
       ],
     });
     await flushPromises();
@@ -963,39 +874,37 @@ describe('desktop transfer slice', () => {
 
   it('saves approved routes and requires explicit trust repair confirmation', async () => {
     bridge.service.Profiles.mockResolvedValue([
-      { origin: 'https://saved.test:58443', name: 'Home', endpoints: [] },
+      { origin: 'https://saved.test:58443', name: 'Home', endpoints: [], vault_configured: true },
     ]);
+    bridge.service.OpenProfile.mockResolvedValue({});
+    bridge.service.EditProfile.mockResolvedValue();
+    bridge.service.RemoveProfile.mockResolvedValue();
     const wrapper = mount(App);
     await flushPromises();
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Edit')!
-      .trigger('click');
+    await button(wrapper, 'Cancel').trigger('click');
+    await goto(wrapper, 'Servers');
+    await button(wrapper, 'Edit').trigger('click');
     await wrapper.get('textarea').setValue('https://127.0.0.2:58443');
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Save profile')!
-      .trigger('click');
+    await wrapper.get('[aria-label="Edit server profile"]').trigger('submit');
     await flushPromises();
     expect(bridge.service.EditProfile).toHaveBeenCalledWith('https://saved.test:58443', 'Home', [
       'https://127.0.0.2:58443',
     ]);
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Repair trust')!
-      .trigger('click');
+    await button(wrapper, 'Repair trust').trigger('click');
     expect(bridge.service.RemoveProfile).not.toHaveBeenCalled();
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Forget trust and pair again')!
-      .trigger('click');
+    await button(wrapper, 'Forget trust and pair again').trigger('click');
     await flushPromises();
     expect(bridge.service.RemoveProfile).toHaveBeenCalledWith('https://saved.test:58443');
-    expect(wrapper.text()).toContain('Check server');
+    expect(wrapper.get('[role="dialog"]').text()).toContain('Check server');
+    expect(wrapper.get<HTMLInputElement>('[role="dialog"] input').element.value).toBe(
+      'https://saved.test:58443',
+    );
     wrapper.unmount();
   });
+
   it('shows combined queues and sends controls with their original scope', async () => {
     const wrapper = await mountLibrary();
+    await goto(wrapper, 'Transfers');
     bridge.service.CombinedBatches.mockResolvedValue([]);
     bridge.service.CombinedTransfers.mockResolvedValue([
       {
@@ -1009,7 +918,9 @@ describe('desktop transfer slice', () => {
         error: '',
       },
     ]);
-    const label = wrapper.findAll('label').find((l) => l.text().includes('All signed-in servers'))!;
+    const label = wrapper
+      .findAll('label')
+      .find((l) => l.text().includes('Show all signed-in servers'))!;
     await label.get('input').setValue(true);
     await flushPromises();
     expect(wrapper.text()).toContain('other-server-file');

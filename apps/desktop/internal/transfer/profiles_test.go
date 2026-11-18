@@ -139,3 +139,23 @@ func TestCredentialScopeLockedUnavailableAndLostStore(t *testing.T) {
 	}
 	m.client.Close()
 }
+
+func TestStorageChoiceIsRecordedPerProfile(t *testing.T) {
+	m, _ := startFake(t, 1)
+	a, ok := m.client.Account()
+	if !ok {
+		t.Fatal("fake account missing")
+	}
+	trust := profileTrust()
+	trust.Identity.ServerID = a.ServerID
+	m.profiles = []Profile{{Origin: "https://chosen.test", Trust: trust, AccountID: a.AccountID}, {Origin: "https://other.test", Trust: profileTrust()}}
+	if err := m.SetPrivateMode(false); err != nil {
+		t.Fatal(err)
+	}
+	if !m.profiles[0].VaultConfigured || m.profiles[0].PrivateDefault || m.profiles[1].VaultConfigured {
+		t.Fatalf("storage choice not scoped to the signed-in profile: %+v", m.profiles)
+	}
+	if err := m.SetPrivateMode(true); err == nil || m.profiles[0].PrivateDefault {
+		t.Fatal("private mode enabled while the vault is locked")
+	}
+}

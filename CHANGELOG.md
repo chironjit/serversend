@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reworked the desktop layout: saved servers open straight into the library; a top navigation separates Library (one card per server with an in-place folder browser, upload, new folder, trash and versions), Transfers (rates, throughput, bandwidth and queues, with a running indicator in the navigation), Servers (profiles, storage mode, vault policy and usage) and Devices. Sign-in runs in a dialog. Each server asks once whether to use standard or private vault storage.
+
 - Restore small-file batching for durable uploads: concurrently prepared standard files share bounded requests while retaining per-file checkpoints and crash recovery. Eight-worker local disk samples measured about 10× faster than individual requests; deployment throughput remains unqualified.
 
 - Added simultaneous desktop server sessions, isolated catalogs, combined/scoped queue controls, editable profile names/approved routes, bounded verified route failover and explicit trust repair. Profile removal retains local queue/data; identity proofs reject reused nonces.

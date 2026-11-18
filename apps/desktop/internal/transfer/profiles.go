@@ -19,18 +19,21 @@ import (
 
 // Profile contains public connection preferences; credentials live in the OS keychain.
 type Profile struct {
-	Name           string       `json:"name,omitempty"`
-	Endpoints      []string     `json:"endpoints,omitempty"`
-	PrivateDefault bool         `json:"private_default,omitempty"`
-	RememberVault  bool         `json:"remember_vault,omitempty"`
-	VaultMinutes   int          `json:"vault_minutes,omitempty"`
-	Trust          client.Trust `json:"trust"`
-	AccountID      protocol.ID  `json:"account_id,omitempty"`
-	InstallationID protocol.ID  `json:"installation_id,omitempty"`
-	Origin         string       `json:"origin"`
-	Fingerprint    string       `json:"fingerprint"`
-	Username       string       `json:"username"`
-	Remember       bool         `json:"remember"`
+	Name           string   `json:"name,omitempty"`
+	Endpoints      []string `json:"endpoints,omitempty"`
+	PrivateDefault bool     `json:"private_default,omitempty"`
+	// VaultConfigured records that the user chose standard or private storage
+	// for this server, so the desktop asks once before first use.
+	VaultConfigured bool         `json:"vault_configured,omitempty"`
+	RememberVault   bool         `json:"remember_vault,omitempty"`
+	VaultMinutes    int          `json:"vault_minutes,omitempty"`
+	Trust           client.Trust `json:"trust"`
+	AccountID       protocol.ID  `json:"account_id,omitempty"`
+	InstallationID  protocol.ID  `json:"installation_id,omitempty"`
+	Origin          string       `json:"origin"`
+	Fingerprint     string       `json:"fingerprint"`
+	Username        string       `json:"username"`
+	Remember        bool         `json:"remember"`
 }
 
 func credentialID(scope ...string) string {
