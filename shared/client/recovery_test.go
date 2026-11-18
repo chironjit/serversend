@@ -350,3 +350,48 @@ func recoverySourcePath(t *testing.T, name string) string {
 	}
 	return filepath.Join(root, name)
 }
+
+// A server copy changed after upload is still restored, with a warning: a
+// damaged chunk is fetched twice before it is accepted, and a shortened
+// chunk is accepted only when its shorter length was declared.
+func TestDownloadKeepsChangedServerCopyWithWarning(t *testing.T) {
+	for _, transient := range []bool{false, true} {
+		t.Run(map[bool]string{false: "changed", true: "transient"}[transient], func(t *testing.T) {
+			entry, manifest, data := downloadFixture()
+			damaged := bytes.Clone(data[:4096])
+			damaged[10] ^= 0xff
+			short := data[4096 : 4096+10]
+			fetches := 0
+			c := recoveryClient(sourceTestTransport(func(r *http.Request) (*http.Response, error) {
+				if strings.HasSuffix(r.URL.Path, "/manifest") {
+					return recoveryResponse(manifest), nil
+				}
+				body := recoveryChunk(r, data)
+				if strings.HasSuffix(r.URL.Path, "/chunks/0") {
+					fetches++
+					if !transient || fetches == 1 {
+						body = damaged
+					}
+				} else if !transient {
+					body = short
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{}, ContentLength: int64(len(body)), Body: io.NopCloser(bytes.NewReader(body))}, nil
+			}))
+			destination := filepath.Join(t.TempDir(), "restored")
+			err := c.Download(t.Context(), entry, destination, nil)
+			got, _ := os.ReadFile(destination)
+			want := append(bytes.Clone(damaged), short...)
+			if transient {
+				want = data
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if !errors.Is(err, ErrContentMismatch) {
+				t.Fatalf("got %v; want a content mismatch", err)
+			}
+			if !bytes.Equal(got, want) || fetches != 2 {
+				t.Fatalf("restored %d bytes after %d fetches", len(got), fetches)
+			}
+		})
+	}
+}

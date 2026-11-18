@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Supported upgrades and restores: a schema migration first writes a full backup to `SERVER_SEND_UPGRADE_BACKUP_DIR` (`/backups`) and refuses to migrate without it (`none` opts out). New `-restore DIR -restore-as replace|clone` restores into empty volumes; clones get a new identity and TLS CA, revoke sessions and refuse private data. Backups record schema version and server ID. Adds a versioned Unraid template (`apps/server/deploy/unraid/serversend.xml`), a `/backups` mount in Compose, the `0.4` channel default, and a release guard against overwriting exact image versions. **Existing deployments must add the backup setting before the next schema upgrade.**
+
+- Hardened chunk uploads: an acknowledged chunk can no longer be rewritten by a concurrent request for the same index, and a final chunk fixes the upload's chunk size before writing, so chunks cannot overlap.
+
+- Files changed or damaged on the server's data volume after upload stay downloadable: the server starts and logs them instead of refusing to start, and the desktop restores the server's current bytes and marks the restore with a mismatch warning. Missing files still stop startup. Private files that fail verification still fail.
+
 - Reworked the desktop layout: saved servers open straight into the library; a top navigation separates Library (one card per server with an in-place folder browser, upload, new folder, trash and versions), Transfers (rates, throughput, bandwidth and queues, with a running indicator in the navigation), Servers (profiles, storage mode, vault policy and usage) and Devices. Sign-in runs in a dialog. Each server asks once whether to use standard or private vault storage.
 
 - Restore small-file batching for durable uploads: concurrently prepared standard files share bounded requests while retaining per-file checkpoints and crash recovery. Eight-worker local disk samples measured about 10× faster than individual requests; deployment throughput remains unqualified.

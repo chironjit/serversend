@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -435,5 +436,44 @@ func TestQuotaScopesAndForeignCancellation(t *testing.T) {
 		} else {
 			code(t, err, api.CapacityExhausted)
 		}
+	}
+}
+
+// A stored file whose size changed on the data volume no longer blocks
+// startup; it is reported and its remaining bytes stay downloadable.
+func TestChangedStoredFileStaysDownloadable(t *testing.T) {
+	s, db, data := fixture(t, StoragePolicy{})
+	ctx := context.Background()
+	b := []byte("data")
+	u, m := createFile(t, s, "edited.bin", b)
+	if _, _, err := s.PutChunk(ctx, owner, u.ID, 0, 4, digest(b), bytes.NewReader(b)); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.Finalize(ctx, owner, u.ID, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(data, "test", "edited.bin"), []byte("da"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.Open(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := New(database.NewRepository(db), store, serverID, s.limits, nil)
+	if err != nil {
+		t.Fatalf("changed file blocked startup: %v", err)
+	}
+	if count, paths := restarted.ChangedFiles(); count != 1 || len(paths) != 1 || paths[0] != "test/edited.bin" {
+		t.Fatalf("changed files: %d %v", count, paths)
+	}
+	reader, chunk, err := restarted.OpenChunk(ctx, owner, result.FileID, result.VersionID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	got, err := io.ReadAll(reader)
+	if err != nil || string(got) != "da" || chunk.Bytes != 2 || chunk.SHA256 != digest(b) {
+		t.Fatalf("served %q as %+v: %v", got, chunk, err)
 	}
 }

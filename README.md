@@ -52,19 +52,21 @@ Full details: [Unraid setup](docs/unraid-testing.md) and [releases](docs/release
 ### 1. Prepare host folders (Unraid terminal)
 
 ```sh
-mkdir -p /mnt/user/appdata/serversend/config /mnt/user/serversend/data /mnt/user/serversend/staging
-chown 10001:10001 /mnt/user/appdata/serversend/config /mnt/user/serversend/data /mnt/user/serversend/staging
-chmod 700 /mnt/user/appdata/serversend/config /mnt/user/serversend/data /mnt/user/serversend/staging
+mkdir -p /mnt/user/appdata/serversend/config /mnt/user/serversend/data /mnt/user/serversend/staging /mnt/user/serversend-backups
+chown 10001:10001 /mnt/user/appdata/serversend/config /mnt/user/serversend/data /mnt/user/serversend/staging /mnt/user/serversend-backups
+chmod 700 /mnt/user/appdata/serversend/config /mnt/user/serversend/data /mnt/user/serversend/staging /mnt/user/serversend-backups
 ```
 
 Keep config on a local pool (not SMB/NFS). The container runs as UID/GID 10001.
 
 ### 2. Add the container (Docker tab → Add Container, Advanced View)
 
+Or copy the versioned template `apps/server/deploy/unraid/serversend.xml` to `/boot/config/plugins/dockerMan/templates-user/my-serversend.xml` and pick it under **Add Container**; it contains the settings below.
+
 | Field | Value |
 | --- | --- |
 | Name | `serversend` |
-| Repository | `ghcr.io/chironjit/serversend:latest` (or `:0.1` to stay on the 0.1 series) |
+| Repository | `ghcr.io/chironjit/serversend:latest` (or `:0.4` to stay on the 0.4 series) |
 | Network Type | Bridge |
 | WebUI | `https://[IP]:[PORT:58443]/admin/` |
 | Extra Parameters | `--read-only --cap-drop=ALL --security-opt=no-new-privileges --stop-timeout=15` |
@@ -80,10 +82,12 @@ Keep config on a local pool (not SMB/NFS). The container runs as UID/GID 10001.
 | Config | `/config` | `/mnt/user/appdata/serversend/config` | Read/Write |
 | Data | `/data` | `/mnt/user/serversend/data` | Read/Write |
 | Staging | `/staging` | `/mnt/user/serversend/staging` | Read/Write |
+| Backups | `/backups` | `/mnt/user/serversend-backups` | Read/Write |
 
 | Variable | Key | Value |
 | --- | --- | --- |
 | Server IPs | `SERVER_SEND_TLS_IPS` | Unraid LAN IPv4, e.g. `192.168.1.10`; add the Tailscale IP comma-separated if used (e.g `192.168.1.10,172.100.1.10`) |
+| Upgrade backups | `SERVER_SEND_UPGRADE_BACKUP_DIR` | `/backups` (or `none` if you take your own stopped-server backups) |
 | User quota (optional) | `SERVER_SEND_STORAGE_USER_BYTES` | Bytes per account; `0` = unlimited (default) |
 | Total quota (optional) | `SERVER_SEND_STORAGE_GLOBAL_BYTES` | Bytes for all accounts; `0` = unlimited (default) |
 | Free-space floor (optional) | `SERVER_SEND_STORAGE_MIN_FREE_BYTES` | Default `67108864` (64 MiB) |
@@ -107,7 +111,7 @@ Save the printed temporary password (valid one hour), open `https://UNRAID_IP:58
 
 ### Updating
 
-Use **Check for Updates → Apply Update**; keep paths and variables, and do not bootstrap again. Back up all three folders (container stopped) before upgrading — see [backup/restore](docs/backup-restore.md).
+Use **Check for Updates → Apply Update**; keep paths and variables, and do not bootstrap again. When an update migrates the database, the server first writes a full backup into `/backups`; without `SERVER_SEND_UPGRADE_BACKUP_DIR` it refuses to migrate. See [backup/restore](docs/backup-restore.md) for restores and downgrades.
 
 **Breaking change (per-user file tree):** files uploaded by older images are not migrated and the server refuses to start with them. Accounts survive, but all uploaded files are deleted by:
 
@@ -122,4 +126,4 @@ docker run --rm --network none --read-only \
 docker start serversend
 ```
 
-Files are then browsable on the host at `/mnt/user/serversend/data/<username>/…`; leave `data/.serversend` alone.
+Files are then browsable on the host at `/mnt/user/serversend/data/<username>/…`; leave `data/.serversend` alone. Keep the share unexported or read-only: a file changed there no longer matches its upload checksums, and downloads of it complete with a warning.

@@ -115,6 +115,7 @@ Deleting a file or folder cancels unfinished uploads into it in the same transac
 | `SERVER_SEND_TLS_CERT_FILE` | Empty | Absolute certificate path when provisioned |
 | `SERVER_SEND_TLS_KEY_FILE` | Empty | Absolute key path when provisioned |
 | `SERVER_SEND_TLS_IPS` | Empty | Comma-separated client-visible unicast IPv4 addresses; enables private provisioning instead of external files |
+| `SERVER_SEND_UPGRADE_BACKUP_DIR` | Empty | Absolute path outside the three volumes, or `none`. Required before a schema migration; see [upgrades](backup-restore.md#upgrades-and-downgrades) |
 
 IPv6 listen addresses use brackets, such as `[::1]:58443`. Hostnames are deliberately unsupported for bind addresses; use an explicit local IP or an empty host to bind all interfaces. These are server bind settings, not client connection URLs.
 
@@ -255,7 +256,7 @@ Unfinished uploads expire after 24 hours. Startup, new-upload admission and minu
 
 Each user's current files appear at their real paths, `data/<username>/<folders>/<name>`, so the data directory can be browsed directly. Treat it as read-only: the server owns it, and changed contents fail download verification. Hidden `data/.serversend/` holds `versions/<account>/<file>/<version>` (replaced or conflicting versions, including a file replaced by a same-named upload), `uploads/` (unfinished uploads, chunks written at their offsets), `trash/` and `tmp/` (in-progress removals and batches) and `untracked/` (anything found by hand where a new upload lands, kept rather than overwritten). Uploading a same-named file replaces the visible file and retains the old one; creating an existing folder name reuses that folder. Every tree change is journaled in the transaction that requires it and applied straight after.
 
-Startup replays the journal, clears `tmp/` and `trash/`, removes upload files without an open upload, then checks every retained version's existence and length. Missing/truncated acknowledged bytes stop startup; restore a matching backup rather than deleting metadata. Hash verification remains at upload/download boundaries, not a full startup scrub. All paths are resolved through `os.Root`, so a link placed in the tree cannot redirect writes outside it.
+Startup replays the journal, clears `tmp/` and `trash/`, removes upload files without an open upload, then checks every retained version's existence and length. A missing version stops startup (for example, an unmounted data volume); restore a matching backup rather than deleting metadata. A version whose size changed on the data volume is logged as a warning and stays downloadable. Hash verification remains at upload/download boundaries, not a full startup scrub. All paths are resolved through `os.Root`, so a link placed in the tree cannot redirect writes outside it.
 
 The pre-release chunk-object layout (`data/objects`) is not migrated: startup refuses it, and `serversend -reset-files` (server stopped) deletes every uploaded file and folder while keeping accounts, devices, identity and certificates.
 

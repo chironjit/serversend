@@ -24,6 +24,8 @@ import (
 var (
 	ErrMismatch = errors.New("bytes do not match the declared length and digest")
 	ErrGone     = errors.New("upload file no longer exists")
+	// ErrSizeChanged reports a stored file whose size differs from its upload.
+	ErrSizeChanged = errors.New("size differs from the uploaded file")
 	// ErrLegacyLayout refuses data written by the pre-release object store.
 	ErrLegacyLayout = errors.New("the data directory uses the pre-release object layout; stop the server and run serversend -reset-files to remove all uploaded files (accounts are kept), or restore a matching backup")
 )
@@ -344,15 +346,19 @@ func (s *Store) Occupied(name string) (bool, error) {
 	return err == nil, err
 }
 
-// Verify refuses startup with missing or truncated acknowledged contents.
-// It never deletes metadata to hide storage corruption.
+// Verify checks that acknowledged contents exist with their recorded size.
+// A present regular file of another size returns ErrSizeChanged. It never
+// deletes metadata to hide storage corruption.
 func (s *Store) Verify(name string, size int64, exact bool) error {
 	info, err := s.root.Lstat(name)
 	if err != nil {
 		return fmt.Errorf("stored file %s: %w", name, err)
 	}
-	if !info.Mode().IsRegular() || info.Size() < size || exact && info.Size() != size {
-		return fmt.Errorf("stored file %s is missing or truncated", name)
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("stored file %s is not a regular file", name)
+	}
+	if info.Size() < size || exact && info.Size() != size {
+		return fmt.Errorf("stored file %s: %w", name, ErrSizeChanged)
 	}
 	return nil
 }

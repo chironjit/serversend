@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<!-- ServerSend Unraid template, version 1 (2026-11-18). Bump the version and
+     Changes entry whenever mappings or defaults change. Install by copying to
+     /boot/config/plugins/dockerMan/templates-user/my-serversend.xml. -->
+<Container version="2">
+  <Name>serversend</Name>
+  <Repository>ghcr.io/chironjit/serversend:0.4</Repository>
+  <Registry>https://github.com/chironjit/serversend/pkgs/container/serversend</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/chironjit/serversend/issues</Support>
+  <Project>https://github.com/chironjit/serversend</Project>
+  <Overview>ServerSend private file backup server (experimental). Runs as UID/GID 10001: chown the four host paths to 10001:10001 and chmod 700 before first start. Keep config on a pool, never SMB/NFS. Stop the container before running maintenance commands.</Overview>
+  <Changes>Template 1: ports, paths, certificate IPs and automatic pre-upgrade backups.</Changes>
+  <Category>Backup: Cloud:</Category>
+  <WebUI>https://[IP]:[PORT:58443]/admin/</WebUI>
+  <ExtraParams>--read-only --cap-drop=ALL --security-opt=no-new-privileges --stop-timeout=15</ExtraParams>
+  <Config Name="HTTPS" Target="58443" Default="58443" Mode="tcp" Description="HTTPS and HTTP/2 fallback. Keep host and container ports equal." Type="Port" Display="always" Required="true" Mask="false">58443</Config>
+  <Config Name="HTTP/3" Target="58443" Default="58443" Mode="udp" Description="HTTP/3 over QUIC. If blocked, clients use HTTP/2 over TCP." Type="Port" Display="always" Required="true" Mask="false">58443</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/serversend/config" Mode="rw" Description="Database, identity, keys and certificates. Pool-backed local storage only." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/serversend/config</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/serversend/data" Mode="rw" Description="Uploaded files. Stop the container while the mover runs on this share." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/serversend/data</Config>
+  <Config Name="Staging" Target="/staging" Default="/mnt/user/serversend/staging" Mode="rw" Description="Temporary files and SQLite spill space." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/serversend/staging</Config>
+  <Config Name="Backups" Target="/backups" Default="/mnt/user/serversend-backups" Mode="rw" Description="Automatic pre-upgrade backups. Needs space for a full copy of config, data and staging. Use a different share from the three paths above." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/serversend-backups</Config>
+  <Config Name="Certificate IPs" Target="SERVER_SEND_TLS_IPS" Default="" Mode="" Description="Comma-separated IPv4 addresses clients use, e.g. the Unraid LAN IP and Tailscale IP." Type="Variable" Display="always" Required="true" Mask="false"></Config>
+  <Config Name="Upgrade backup directory" Target="SERVER_SEND_UPGRADE_BACKUP_DIR" Default="/backups" Mode="" Description="Where schema upgrades first write a backup. Set to none only if you take your own stopped-server backups." Type="Variable" Display="advanced" Required="true" Mask="false">/backups</Config>
+</Container>

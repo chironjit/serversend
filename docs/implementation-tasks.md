@@ -27,7 +27,7 @@ Checked items mean the stated scope is implemented with recorded evidence. Compo
 | 9. Private storage | Pending | Contracts only; format prototype, encryption and recovery open |
 | 10. Multiple servers/routes | Implemented | Simultaneous scoped clients, combined queues, approved-route failover and explicit trust repair; native LAN/tailnet qualification open |
 | 11. Account administration | Pending | Existing user creation/listing and backend foundations only; complete controls and security policy open |
-| 12. Deployment/backup/upgrades | Partial | Initial standard backup/restore and operator guidance delivered; actual Unraid, private recovery and version compatibility open |
+| 12. Deployment/backup/upgrades | Partial | Unraid template, restore command with replace/clone modes, automatic pre-upgrade backups, compatibility record and release-tag guard delivered; actual Unraid/network qualification open |
 | 13. Background desktop | Partial | Bounded batch summaries and skip/failure counts delivered; durable controls, tray and native lifecycle open |
 | 14. Distribution/qualification | Pending | Existing workflows only; published installers and full platform/scale qualification open |
 
@@ -81,7 +81,7 @@ For every feature:
 - [x] Lock config/data/staging before initialization so a second process cannot modify the same deployment. Local exclusivity, rollback and crash-release tests pass.
 - [x] Provide `serversend -backup DIR` with a stopped-server barrier and consistent SQLite snapshot. The isolated restore test preserves identity/account/catalog and downloads the original standard-file bytes.
 - [x] Document pre-upgrade backups and matching-backup/image downgrade restoration in [backup/restore](backup-restore.md); reject unsupported schemas.
-- [x] Reconcile interrupted publication at startup; flush shard/root/source directory entries before acknowledgement. Test process exit before metadata recording, metadata rollback, short writes and injected full/read-only/flush errors. Refuse missing/truncated acknowledged data.
+- [x] Reconcile interrupted publication at startup; flush shard/root/source directory entries before acknowledgement. Test process exit before metadata recording, metadata rollback, short writes and injected full/read-only/flush errors. Refuse missing acknowledged data; versions changed on the data volume stay downloadable with a warning.
 - [ ] Qualify actual full/read-only filesystems and power-loss durability on the intended deployment; injected errors and tmpfs process exits do not establish this.
 - [x] Add configurable per-user/global content quotas, transactional reservations and data-volume free-space checks. Concurrent admission cannot exceed declared capacity; external writers/filesystem overhead still require operator headroom. Existing request/chunk/manifest bounds remain in force.
 - [x] Retire expired uploads at startup/admission and every minute; expose idempotent account-scoped cancellation, retain key tombstones, bound chunks by reservations and serialize cancellation/finalization/publication. Duplicate/conflicting chunks and cancellation races have regression coverage. Durable desktop controls remain feature 5 work.
@@ -241,17 +241,23 @@ For every feature:
 
 **Outcome:** the server can be operated, upgraded and restored predictably on the actual Unraid host.
 
-**Existing:** non-root Docker build, Compose examples, certificates, release workflow and deployment/update documentation. Feature 3 delivers an initial offline standard backup/restore path.
+**Status:** tooling implemented; every remaining box needs the actual Unraid host and networks. Run and record the [deployment qualification](unraid-testing.md#deployment-qualification-record).
+
+**Implemented:** versioned Unraid template with a `/backups` mount; `serversend -restore DIR -restore-as replace|clone` into empty volumes; automatic pre-upgrade backups, refused migration without a backup policy; backup manifests with schema version and server ID; a [compatibility record](releases.md#compatibility); and a publish guard against overwriting exact image versions. Linux tests cover upgrade refusal, schema-13 backup and migration, downgrade restore, protected rollback backups, replace/clone identity and sessions, private-data clone refusal and failed-restore cleanup.
 
 **Depends on:** features 3, 4, 8 and 9; verify QUIC reachability after feature 2.
 
-- [ ] Finish the versioned Unraid template and validate UID/GID, mounts, locking, resource guidance and pool/array/separate-staging layouts on actual hardware.
+- [x] Finish the versioned Unraid template (`apps/server/deploy/unraid/serversend.xml`) with ports, four paths, certificate IPs and upgrade backups.
+- [ ] Validate the template, UID/GID, mounts, locking, resource guidance and pool/array/separate-staging layouts on actual hardware.
 - [ ] Validate LAN, direct-tailnet and relayed-tailnet transfers, blocked-UDP fallback, private IPv4 CA provisioning, browser/per-profile trust and certificate renewal without public exposure.
 - [x] Deliver an offline standard-data backup tool with a stopped-server maintenance barrier, identity/keys/object copies and consistent SQLite snapshot; document operator pre-upgrade backups and matching-image downgrade restore. Local backup/restore evidence is recorded under feature 3.
-- [ ] Extend backup tooling to private envelopes/recovery material and qualify it on actual Unraid storage. Live snapshots, if implemented, require reference snapshots with GC suspension.
+- [x] Extend backup tooling to private envelopes; recovery packages stay client-side and are exported separately (feature 9). Live snapshots, if implemented, require reference snapshots with GC suspension.
+- [ ] Qualify backup and restore on actual Unraid storage.
 - [x] Add a local isolated standard restore integration check preserving identity and downloading original bytes; document replacement-only identity reuse and require the original process to remain stopped.
-- [ ] Complete replacement-versus-clone enforcement and independent-clone identity migration; extend restore drills to recovery-key private downloads and actual Unraid.
-- [ ] Automate pre-upgrade backup integration and migration compatibility checks. Record tested client/server version compatibility and avoid overwriting release tags; execute the documented downgrade restore procedure on supported deployments.
+- [x] Enforce an explicit replace/clone restore mode; clones get a new identity and CA, revoke sessions and refuse private-mode data bound to the original server ID. Local private recovery-key drills pass (feature 9).
+- [ ] Run replacement and clone restore drills on actual Unraid.
+- [x] Automate pre-upgrade backups before migrations and test migration from every prior schema plus downgrade restore. Record tested client/server compatibility; refuse to overwrite exact image versions.
+- [ ] Execute an image update with migration and the documented downgrade restore on the actual deployment.
 
 **Accept when:** an actual Unraid deployment survives restart/update and restores from backup onto an isolated instance with both storage modes intact; tested TCP/UDP, filesystem and permission outcomes are recorded. A workflow file or instructions alone do not close this feature.
 

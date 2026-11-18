@@ -30,14 +30,16 @@ RUN go build -mod=readonly -trimpath -ldflags='-s -w' -o /out/serversend ./cmd/s
 FROM debian:bookworm-slim
 # SQLite spills large temporary tables/sorts here with a read-only root.
 ENV SQLITE_TMPDIR=/staging
-RUN mkdir /config /data /staging \
-    && chown 10001:10001 /config /data /staging \
-    && chmod 0700 /config /data /staging
+# /backups is an optional mount for automatic pre-upgrade backups; it is not a
+# VOLUME, so an unmounted path never silently keeps backups inside Docker.
+RUN mkdir /config /data /staging /backups \
+    && chown 10001:10001 /config /data /staging /backups \
+    && chmod 0700 /config /data /staging /backups
 COPY --from=build /out/serversend /usr/local/bin/serversend
 USER 10001:10001
 VOLUME ["/config", "/data", "/staging"]
 EXPOSE 58443/tcp
-# Reserved for the later QUIC listener; currently no UDP service is started.
+# HTTP/3 (QUIC); clients fall back to HTTP/2 over TCP when UDP is blocked.
 EXPOSE 58443/udp
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/usr/local/bin/serversend"]

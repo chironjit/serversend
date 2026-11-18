@@ -15,7 +15,7 @@ func TestCommandArguments(t *testing.T) {
 	if err := run(t.Context(), []string{"-help"}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"unexpected"}, {"-unknown"}, {"-check", "-bootstrap-admin", "admin"}, {"-bootstrap-admin", "admin", "-recover-bootstrap-admin", "admin"}} {
+	for _, args := range [][]string{{"unexpected"}, {"-unknown"}, {"-check", "-bootstrap-admin", "admin"}, {"-bootstrap-admin", "admin", "-recover-bootstrap-admin", "admin"}, {"-restore", "/backup"}, {"-restore-as", "clone"}, {"-backup", "/a", "-restore", "/b", "-restore-as", "replace"}} {
 		if err := run(t.Context(), args, io.Discard); err == nil {
 			t.Fatalf("accepted invalid command arguments: %v", args)
 		}

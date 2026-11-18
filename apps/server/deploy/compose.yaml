@@ -16,11 +16,15 @@ services:
     environment:
       # Set the LAN address clients actually use; Docker cannot infer it.
       SERVER_SEND_TLS_IPS: "${SERVER_SEND_TLS_IPS:-127.0.0.1}"
+      # Schema migrations first back up the stopped deployment here.
+      SERVER_SEND_UPGRADE_BACKUP_DIR: /backups
     volumes:
       - config:/config
       - data:/data
       - staging:/staging
+      - backups:/backups
 volumes:
   config:
   data:
   staging:
+  backups:

@@ -146,39 +146,27 @@ func (c *Client) DownloadWithPolicy(ctx context.Context, entry api.CatalogEntry,
 	if progress != nil {
 		progress(received, manifest.TotalBytes)
 	}
+	mismatched := false
 	for _, chunk := range manifest.Chunks[reusedChunks:] {
 		if err = ctx.Err(); err != nil {
 			return err
 		}
-		data := buffer[:chunk.Bytes]
-		err = retryTransfer(ctx, func() error {
-			response, e := c.do(ctx, call{method: "GET", path: "/files/" + string(entry.ID) + "/versions/" + string(entry.HeadVersionID) + "/chunks/" + strconv.FormatInt(chunk.Index, 10), token: c.token()})
-			if e != nil {
-				return e
-			}
-			defer response.Body.Close()
-			if _, e = io.ReadFull(response.Body, data); e != nil {
-				return e
-			}
-			var extra [1]byte
-			n, e := response.Body.Read(extra[:])
-			if n != 0 {
-				return errors.New("downloaded chunk exceeds its declared length")
-			}
-			if e != io.EOF {
-				if e == nil {
-					return io.ErrUnexpectedEOF
-				}
-				return e
-			}
-			return nil
-		})
+		data, err := c.downloadChunk(ctx, entry, chunk, buffer)
 		if err != nil {
 			return err
 		}
-		sum := sha256.Sum256(data)
-		if hex.EncodeToString(sum[:]) != string(chunk.SHA256) {
-			return errors.New("downloaded data failed verification; retry the download")
+		if !chunkMatches(data, chunk) {
+			// Fetch once more to rule out a transient read error, then keep
+			// the server's current bytes and report the mismatch.
+			if data, err = c.downloadChunk(ctx, entry, chunk, buffer); err != nil {
+				return err
+			}
+			if !chunkMatches(data, chunk) {
+				if manifest.Mode == protocol.Private {
+					return errors.New("the server copy of this private file is damaged and cannot be decrypted")
+				}
+				mismatched = true
+			}
 		}
 		if _, err = file.Write(data); err != nil {
 			return err
@@ -277,7 +265,58 @@ func (c *Client) DownloadWithPolicy(ctx context.Context, entry api.CatalogEntry,
 	if manifest.Mode == protocol.Private {
 		_ = root.Remove(partial)
 	}
-	return syncRestoreDirectory(root)
+	if err = syncRestoreDirectory(root); err != nil {
+		return err
+	}
+	if mismatched {
+		return ErrContentMismatch
+	}
+	return nil
+}
+
+// ErrContentMismatch is returned after a standard file was restored from a
+// server copy that no longer matches the checksums recorded at upload, for
+// example after it was edited or damaged on the server's storage. The
+// destination holds the server's current bytes.
+var ErrContentMismatch = errors.New("restored, but the server copy no longer matches the uploaded file")
+
+func chunkMatches(data []byte, chunk protocol.Chunk) bool {
+	sum := sha256.Sum256(data)
+	return int64(len(data)) == chunk.Bytes && hex.EncodeToString(sum[:]) == string(chunk.SHA256)
+}
+
+// downloadChunk reads one chunk into buffer. A server copy that changed size
+// declares a shorter length up front; anything else must be complete.
+func (c *Client) downloadChunk(ctx context.Context, entry api.CatalogEntry, chunk protocol.Chunk, buffer []byte) (data []byte, err error) {
+	err = retryTransfer(ctx, func() error {
+		response, e := c.do(ctx, call{method: "GET", path: "/files/" + string(entry.ID) + "/versions/" + string(entry.HeadVersionID) + "/chunks/" + strconv.FormatInt(chunk.Index, 10), token: c.token()})
+		if e != nil {
+			return e
+		}
+		defer response.Body.Close()
+		data = buffer[:chunk.Bytes]
+		n, e := io.ReadFull(response.Body, data)
+		if e != nil {
+			if (e == io.EOF || e == io.ErrUnexpectedEOF) && response.ContentLength == int64(n) {
+				data = data[:n] // complete, as declared, but shorter than recorded
+				return nil
+			}
+			return e
+		}
+		var extra [1]byte
+		n, e = response.Body.Read(extra[:])
+		if n != 0 {
+			return errors.New("downloaded chunk exceeds its declared length")
+		}
+		if e != io.EOF {
+			if e == nil {
+				return io.ErrUnexpectedEOF
+			}
+			return e
+		}
+		return nil
+	})
+	return data, err
 }
 
 func checkRestoreDestination(root *os.Root, name, destination, policy string) error {

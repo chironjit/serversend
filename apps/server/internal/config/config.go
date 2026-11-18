@@ -20,7 +20,13 @@ type Config struct {
 	TLSCertFile                          string
 	TLSKeyFile                           string
 	TLSIPs                               string
+	// UpgradeBackupDir receives an automatic stopped-server backup before a
+	// schema migration. "none" deliberately skips it; empty refuses upgrades.
+	UpgradeBackupDir string
 }
+
+// SkipUpgradeBackup is the explicit operator opt-out for UpgradeBackupDir.
+const SkipUpgradeBackup = "none"
 
 // Defaults returns the initial Unraid container settings.
 func Defaults() Config {
@@ -56,6 +62,7 @@ func FromEnvironment(lookup func(string) (string, bool)) (Config, error) {
 		{"SERVER_SEND_TLS_CERT_FILE", &c.TLSCertFile},
 		{"SERVER_SEND_TLS_KEY_FILE", &c.TLSKeyFile},
 		{"SERVER_SEND_TLS_IPS", &c.TLSIPs},
+		{"SERVER_SEND_UPGRADE_BACKUP_DIR", &c.UpgradeBackupDir},
 	}
 	for _, setting := range settings {
 		if value, ok := lookup(setting.name); ok {

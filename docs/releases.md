@@ -21,12 +21,12 @@ The build embeds the tag version and GitHub repository with `-ldflags`. The upda
 
 A draft GitHub Release holds downloads until all checks, packaging and container checks pass and the image is pushed. It uses GitHub's built-in `GITHUB_TOKEN`; no PAT is needed. Release notes are generated from GitHub changes and include the image/update channels. Maintain `CHANGELOG.md` for human-curated changes. This product remains experimental. Patch versions should preserve compatibility; use a new minor version for a new feature series or breaking pre-1.0 changes. Database schema versions remain separate.
 
-Never move/reuse a published tag or overwrite an exact image version. Protect release tags in repository rulesets. Failed runs can leave a draft and, if publishing partially succeeds, image tags. Inspect the failed step first. A rerun uses the original tagged commit. Use a fresh version if the fix requires a new commit or if the failed run pushed any image tag. A failed local tag push retains the local tag; inspect remote state before retrying. Publishing to GHCR and GitHub Releases is not atomic.
+Never move/reuse a published tag or overwrite an exact image version; the publish step refuses an exact image version that already exists. Protect release tags in repository rulesets. Failed runs can leave a draft and, if publishing partially succeeds, image tags. Inspect the failed step first. A rerun uses the original tagged commit. Use a fresh version if the fix requires a new commit or if the failed run pushed any image tag. A failed local tag push retains the local tag; inspect remote state before retrying. Publishing to GHCR and GitHub Releases is not atomic.
 
 | Image tag | Meaning |
 | --- | --- |
-| `ghcr.io/chironjit/serversend:0.1.0` | Exact release, retained by policy |
-| `ghcr.io/chironjit/serversend:0.1` | Moves with patch releases in the 0.1 series; recommended for Unraid testing |
+| `ghcr.io/chironjit/serversend:0.4.0` | Exact release, retained by policy |
+| `ghcr.io/chironjit/serversend:0.4` | Moves with patch releases in the 0.4 series; recommended for Unraid testing |
 | `ghcr.io/chironjit/serversend:latest` | Moves with every release, including new feature series |
 
 The workflow does not enforce registry immutability; use an image digest if you need a cryptographically fixed deployment. Protect release Git tags against deletion/force updates in GitHub repository rulesets. Only maintainers should be able to push release tags.
@@ -57,25 +57,25 @@ Confirm authentication still works for Unraid's scheduled updater after reboot; 
 
 ## First Unraid installation
 
-Use the Docker tab's saved container template for the simplest integration with Unraid updates. Follow [Unraid network testing](unraid-testing.md) for directories, ownership and mappings, with these changes:
+Use the versioned template `apps/server/deploy/unraid/serversend.xml` (or the Docker tab's saved container template) for the simplest integration with Unraid updates. Follow [Unraid network testing](unraid-testing.md) for directories, ownership and mappings, with these changes:
 
 ```sh
-docker pull ghcr.io/chironjit/serversend:0.1
+docker pull ghcr.io/chironjit/serversend:0.4
 ```
 
-Set **Repository** to `ghcr.io/chironjit/serversend:0.1`. Keep TCP host/container ports both `58443`, the three persistent paths, `SERVER_SEND_TLS_IPS`, and the extra parameters from that guide. No image tarball transfer is needed. For initial administrator bootstrap, replace `serversend:dev` in the guide's `docker run` command with `ghcr.io/chironjit/serversend:0.1`.
+Set **Repository** to `ghcr.io/chironjit/serversend:0.4`. Keep TCP/UDP host/container ports both `58443`, the four paths, `SERVER_SEND_TLS_IPS`, and the extra parameters from that guide. No image tarball transfer is needed. For initial administrator bootstrap, replace `serversend:dev` in the guide's `docker run` command with `ghcr.io/chironjit/serversend:0.4`.
 
 An existing Unraid installation only needs its Repository changed; preserve its paths and settings and do not bootstrap again. An existing local-computer Docker install is a separate server unless you deliberately migrate its complete persistent storage while stopped.
 
-The Compose example now defaults to the `0.1` GHCR channel. Set `SERVER_SEND_IMAGE=serversend:dev` in its env file to keep using a locally loaded development image. Choose either Unraid's template or Compose to manage the container, not both.
+The Compose example now defaults to the `0.4` GHCR channel. Set `SERVER_SEND_IMAGE=serversend:dev` in its env file to keep using a locally loaded development image. Choose either Unraid's template or Compose to manage the container, not both.
 
 ## Updates
 
 Unraid's **Docker → Check for Updates → Apply Update** pulls a changed image and recreates the container with its saved settings. A moving tag enables detection; restarting a container alone does not fetch an update. Autostart means start at boot, not auto-update.
 
-For unattended updates, an optional third-party Unraid plugin is **CA Auto Update Applications** by Squid. If you choose to install it through Community Applications, enable scheduled Docker updates only for `serversend`, select a quiet time and enable notifications. This repository does not install that plugin or change your Unraid settings. A `0.1` subscription stays on that series; change it deliberately to `0.2` for a new feature series. `latest` follows all releases.
+For unattended updates, an optional third-party Unraid plugin is **CA Auto Update Applications** by Squid. If you choose to install it through Community Applications, enable scheduled Docker updates only for `serversend`, select a quiet time and enable notifications. This repository does not install that plugin or change your Unraid settings. A `0.4` subscription stays on that series; change it deliberately to `0.5` for a new feature series. `latest` follows all releases.
 
-Updates stop active transfers, and the current desktop cannot resume them. Back up all three persistent directories and the deployment settings with the container stopped before upgrades; preserve matching metadata, keys and objects. The auto-update plugin alone does not provide this backup policy. Use manual updates until your backup schedule is in place. After a database migration, rollback may require restoring the matching backup as well as the previous image.
+Updates interrupt active transfers; the desktop resumes them after reconnecting. If the new image migrates the database schema, startup first writes a full stopped-server backup to `SERVER_SEND_UPGRADE_BACKUP_DIR` (`/backups` in the template and Compose files) and refuses to migrate without that setting. The backup volume needs room for a complete copy. Rolling back after a migration means restoring that backup with the previous image; see [upgrades and downgrades](backup-restore.md#upgrades-and-downgrades).
 
 For a Compose-managed deployment, manually update with:
 
@@ -88,7 +88,7 @@ Do not delete volumes or host directories. Accounts, TLS identity and uploaded d
 
 ## Subsequent releases and version inspection
 
-Use `make release` for each subsequent patch. The workflow moves `0.1` and `latest` after checks pass. You do not rebuild on Unraid. Moving to a new minor version publishes a new series channel; a `0.1` deployment stays on `0.1` until you deliberately change it.
+Use `make release` for each subsequent patch. The workflow moves the series channel (for example `0.4`) and `latest` after checks pass. You do not rebuild on Unraid. Moving to a new minor version publishes a new series channel; a `0.4` deployment stays on `0.4` until you deliberately change it.
 
 Inspect the image actually used by the running container, even if a newer image has been pulled:
 
@@ -107,3 +107,13 @@ docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revisi
 ## Build checks without releasing
 
 Branch pushes and pull requests run the combined **Check** workflow, which builds the Linux amd64 server image using the release Dockerfile. Tagged releases build and smoke-test the image in the **publish** job. Use **Actions → Check → Run workflow** to check both components on demand. The reusable component workflows remain available for troubleshooting; component-prefixed tags no longer trigger them. A shared release version identifies a tested source revision, but CI does not test compatibility against historical desktop/server binaries. Keep API additions compatible with deployed clients; breaking protocols need an explicit migration window.
+
+## Compatibility
+
+Desktop and server from the same release tag are the only tested combination: CI checks both from one source revision. Historical desktop/server binaries are not tested against each other, so update both together. Server schemas only move forward; a newer schema is refused by older servers, and backups record their schema version.
+
+| Release | Server schema | Desktop schema | Identity protocol | Tested with |
+| --- | --- | --- | --- | --- |
+| Unreleased (after v0.4.7) | 14 | 3 | 1 | Same-release desktop and server |
+
+Add a row for each release. Upgrades from every earlier server schema are covered by `TestServerUpgradeEveryPriorSchema`; the pre-upgrade backup and downgrade restore by `TestUpgradeRequiresBackupAndDowngradeRestoresPriorSchema`.

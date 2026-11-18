@@ -39,6 +39,16 @@ func (c Config) Validate() error {
 			}
 		}
 	}
+	if c.UpgradeBackupDir != "" && c.UpgradeBackupDir != SkipUpgradeBackup {
+		if err := validatePath(c.UpgradeBackupDir); err != nil {
+			return fmt.Errorf("SERVER_SEND_UPGRADE_BACKUP_DIR: %w, or none", err)
+		}
+		for _, dir := range dirs {
+			if pathsOverlap(c.UpgradeBackupDir, dir.value) {
+				return fmt.Errorf("SERVER_SEND_UPGRADE_BACKUP_DIR must be outside %s", dir.name)
+			}
+		}
+	}
 	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
 		return errors.New("SERVER_SEND_TLS_CERT_FILE and SERVER_SEND_TLS_KEY_FILE must both be set or both be empty")
 	}

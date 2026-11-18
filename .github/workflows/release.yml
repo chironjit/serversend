@@ -162,6 +162,11 @@ jobs:
           bash apps/server/scripts/check_container.sh "$IMAGE:$VERSION" external
       - name: Publish version and update channels
         run: |
+          # Exact versions are immutable: refuse to overwrite one pushed earlier.
+          if docker manifest inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
+            echo "$IMAGE:$VERSION already exists; release a new version instead." >&2
+            exit 1
+          fi
           docker push "$IMAGE:$VERSION"
           docker push "$IMAGE:$SERIES"
           docker push "$IMAGE:latest"
@@ -194,6 +199,6 @@ jobs:
           Windows downloads are unsigned; macOS bundles are ad-hoc signed, without notarization.
           Desktop: use ServerSend → Check for Updates… and finish transfers before Restart & Apply.
           Downloads are checked against SHA256SUMS; release signatures are not configured.
-          Transfers are interrupted by server updates; back up before upgrading.
+          Server updates interrupt transfers. Schema upgrades first back up to SERVER_SEND_UPGRADE_BACKUP_DIR and refuse to migrate without it.
           EOF
           gh release edit "v$VERSION" --notes-file dist/notes.md --draft=false --latest

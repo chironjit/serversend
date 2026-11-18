@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/chironjit/serversend/shared/api"
@@ -123,4 +124,70 @@ func TestNonFinalChunksMustShareOneSize(t *testing.T) {
 	last := bytes.Repeat([]byte{3}, 11)
 	_, _, err = s.PutChunk(ctx, owner, u.ID, 2, int64(len(last)), digest(last), bytes.NewReader(last))
 	code(t, err, api.InvalidRequest)
+}
+
+// The final chunk fixes the chunk size it implies before writing, so it can
+// never be placed where it overlaps another chunk.
+func TestFinalChunkClaimsChunkSize(t *testing.T) {
+	s, db, _ := fixture(t, StoragePolicy{})
+	ctx := context.Background()
+	size := int64(1 << 20)
+	u, _, err := s.Create(ctx, owner, string(newID()), api.CreateUploadRequest{FileID: newID(), VersionID: newID(), Mode: protocol.Standard, ExpectedHead: "0",
+		ChunkCount: 3, TransmittedBytes: 2*size + 5, ManifestBytes: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	odd := bytes.Repeat([]byte{4}, 6) // implies a non-integer chunk size
+	_, _, err = s.PutChunk(ctx, owner, u.ID, 2, int64(len(odd)), digest(odd), bytes.NewReader(odd))
+	code(t, err, api.InvalidRequest)
+	last := bytes.Repeat([]byte{3}, 5)
+	if _, _, err := s.PutChunk(ctx, owner, u.ID, 2, int64(len(last)), digest(last), bytes.NewReader(last)); err != nil {
+		t.Fatal(err)
+	}
+	var claimed int64
+	if err := db.QueryRow(`SELECT chunk_bytes FROM uploads WHERE id=?`, u.ID).Scan(&claimed); err != nil || claimed != size {
+		t.Fatalf("chunk size %d, %v; want %d", claimed, err, size)
+	}
+	other := bytes.Repeat([]byte{2}, int(size+2))
+	_, _, err = s.PutChunk(ctx, owner, u.ID, 0, int64(len(other)), digest(other), bytes.NewReader(other))
+	code(t, err, api.InvalidRequest)
+}
+
+// Concurrent requests carrying different bytes for one index acknowledge
+// exactly one of them, and the stored bytes are the acknowledged ones.
+func TestConcurrentDifferentChunksKeepAcknowledgedBytes(t *testing.T) {
+	s, _, data := fixture(t, StoragePolicy{})
+	ctx := context.Background()
+	size := 1 << 20
+	for round := 0; round < 5; round++ {
+		u, _, err := s.Create(ctx, owner, string(newID()), api.CreateUploadRequest{FileID: newID(), VersionID: newID(), Mode: protocol.Standard, ExpectedHead: "0",
+			ChunkCount: 2, TransmittedBytes: int64(size) + 1, ManifestBytes: 1024})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		acknowledged := []protocol.Digest{}
+		for i := range 8 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				part := bytes.Repeat([]byte{byte(i + 1)}, size)
+				ack, created, err := s.PutChunk(ctx, owner, u.ID, 0, int64(size), digest(part), bytes.NewReader(part))
+				if err == nil && created {
+					mu.Lock()
+					acknowledged = append(acknowledged, ack.Chunk.SHA256)
+					mu.Unlock()
+				}
+			}()
+		}
+		wg.Wait()
+		if len(acknowledged) != 1 {
+			t.Fatalf("round %d: %d acknowledgements", round, len(acknowledged))
+		}
+		stored, err := os.ReadFile(filepath.Join(data, ".serversend", "uploads", string(u.ID)))
+		if err != nil || digest(stored[:size]) != acknowledged[0] {
+			t.Fatalf("round %d: stored bytes differ from the acknowledged chunk: %v", round, err)
+		}
+	}
 }

@@ -7,8 +7,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -68,6 +70,10 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	upgradeNote, err := preUpgradeBackup(ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	db, err := database.Open(ctx, c.ConfigDir)
 	if err != nil {
 		return nil, fmt.Errorf("open metadata: %w", err)
@@ -100,7 +106,14 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 		db.Close()
 		return nil, fmt.Errorf("open application logs: %w", err)
 	}
+	if upgradeNote != "" {
+		log.Print(upgradeNote)
+		logs.Add("info", upgradeNote)
+	}
 	logs.Add("info", "Server initialized; metadata and storage ready")
+	if count, sample := transfers.ChangedFiles(); count > 0 {
+		logs.Add("warn", fmt.Sprintf("%d stored files changed size since upload and no longer match their recorded checksums; they remain downloadable with a warning. Examples: %s", count, strings.Join(sample, ", ")))
+	}
 	keepLocks = true
 	maintenanceCtx, maintenanceCancel := context.WithCancel(context.Background())
 	maintenanceDone := make(chan struct{})

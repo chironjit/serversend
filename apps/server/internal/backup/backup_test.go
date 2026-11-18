@@ -111,7 +111,7 @@ func TestCreateIncludesCommittedWALKeysObjectsAndStaging(t *testing.T) {
 	}
 	var manifest Manifest
 	contents, err := os.ReadFile(filepath.Join(destination, "backup.json"))
-	if err != nil || json.Unmarshal(contents, &manifest) != nil || manifest.Version != 1 || manifest.TLSIPs != c.TLSIPs || manifest.ExternalTLS || manifest.CreatedAt.IsZero() {
+	if err != nil || json.Unmarshal(contents, &manifest) != nil || manifest.Version != 2 || manifest.SchemaVersion != database.LatestVersion() || manifest.TLSIPs != c.TLSIPs || manifest.ExternalTLS || manifest.CreatedAt.IsZero() {
 		t.Fatalf("invalid manifest: %s (%v)", contents, err)
 	}
 	snapshot, err := sqlite.OpenPrivate(t.Context(), filepath.Join(destination, "config", database.Filename))

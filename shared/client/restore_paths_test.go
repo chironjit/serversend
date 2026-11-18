@@ -176,7 +176,9 @@ func TestRestoreSurvivesProcessExit(t *testing.T) {
 	}
 }
 
-func TestCorruptRestoreNeverPublishesAndCanResume(t *testing.T) {
+// A changed server copy is restored with a warning, never counts as a match,
+// and a later intact copy replaces it.
+func TestChangedServerCopyRestoresWithWarningAndCanBeReplaced(t *testing.T) {
 	entry, manifest, data := downloadFixture()
 	destination := restoreTestPath(t, "restored")
 	corrupt := true
@@ -190,14 +192,17 @@ func TestCorruptRestoreNeverPublishesAndCanResume(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(body))}, nil
 	}))
-	if err := c.DownloadWithPolicy(t.Context(), entry, destination, "fail", nil); err == nil {
-		t.Fatal("corruption accepted")
+	if err := c.DownloadWithPolicy(t.Context(), entry, destination, "fail", nil); !errors.Is(err, ErrContentMismatch) {
+		t.Fatalf("got %v; want a content mismatch", err)
 	}
-	if _, err := os.Stat(destination); !os.IsNotExist(err) {
-		t.Fatal("corrupt destination published")
+	if got, _ := os.ReadFile(destination); !bytes.Equal(got, append(bytes.Clone(data[:4096]), bytes.Repeat([]byte("x"), 4096)...)) {
+		t.Fatal("changed server copy not restored")
+	}
+	if match, err := c.DownloadMatches(t.Context(), entry, destination); err != nil || match {
+		t.Fatalf("changed copy matched: match=%v err=%v", match, err)
 	}
 	corrupt = false
-	if err := c.DownloadWithPolicy(t.Context(), entry, destination, "fail", nil); err != nil {
+	if err := c.DownloadWithPolicy(t.Context(), entry, destination, "replace", nil); err != nil {
 		t.Fatal(err)
 	}
 	match, err := c.DownloadMatches(t.Context(), entry, destination)

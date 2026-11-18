@@ -5,6 +5,7 @@ package backup
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,22 +23,38 @@ import (
 
 // Manifest is written last, after every file is flushed. Its absence means the
 // directory is incomplete and must never be restored as a successful backup.
+// Version 2 adds the schema version and server ID; version 1 remains restorable.
 type Manifest struct {
-	Version     int       `json:"version"`
-	CreatedAt   time.Time `json:"createdAt"`
-	TLSIPs      string    `json:"tlsIps,omitempty"`
-	ExternalTLS bool      `json:"externalTls"`
+	Version       int       `json:"version"`
+	CreatedAt     time.Time `json:"createdAt"`
+	SchemaVersion int       `json:"schemaVersion,omitempty"`
+	ServerID      string    `json:"serverId,omitempty"`
+	TLSIPs        string    `json:"tlsIps,omitempty"`
+	ExternalTLS   bool      `json:"externalTls"`
 }
+
+const manifestVersion = 2
 
 // Create requires a new absolute destination under an existing trusted parent,
 // outside all source volumes. It never overwrites an existing destination and
 // never starts the server or runs schema migrations. Backups contain secrets
 // and are private, unencrypted directories requiring protected offline storage.
-func Create(ctx context.Context, c config.Config, destination string) (err error) {
-	if err := ctx.Err(); err != nil {
+func Create(ctx context.Context, c config.Config, destination string) error {
+	if err := c.CheckStorage(); err != nil {
 		return err
 	}
-	if err := c.CheckStorage(); err != nil {
+	locks, err := instancelock.Acquire(c.ConfigDir, c.DataDir, c.StagingDir)
+	if err != nil {
+		return fmt.Errorf("stop the server before taking a backup: %w", err)
+	}
+	defer locks.Close()
+	return CreateLocked(ctx, c, destination)
+}
+
+// CreateLocked is Create for a caller that already holds the deployment locks,
+// such as startup taking a pre-upgrade backup before migrating.
+func CreateLocked(ctx context.Context, c config.Config, destination string) (err error) {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if !filepath.IsAbs(destination) {
@@ -53,29 +70,10 @@ func Create(ctx context.Context, c config.Config, destination string) (err error
 		{"config", c.ConfigDir}, {"data", c.DataDir}, {"staging", c.StagingDir},
 	}
 	for _, volume := range volumes {
-		info, err := os.Stat(volume.path)
-		if err != nil {
-			return err
-		}
-		// Compare inode identity too, so aliases/bind mounts cannot hide nesting.
-		for ancestor := parent; ; ancestor = filepath.Dir(ancestor) {
-			current, err := os.Stat(ancestor)
-			if err != nil {
-				return err
-			}
-			if os.SameFile(info, current) {
-				return errors.New("backup destination must be outside source volumes")
-			}
-			if filepath.Dir(ancestor) == ancestor {
-				break
-			}
+		if inside, err := within(parent, volume.path); err != nil || inside {
+			return errors.Join(err, errors.New("backup destination must be outside source volumes"))
 		}
 	}
-	locks, err := instancelock.Acquire(c.ConfigDir, c.DataDir, c.StagingDir)
-	if err != nil {
-		return fmt.Errorf("stop the server before taking a backup: %w", err)
-	}
-	defer locks.Close()
 	// Refuse an uninitialized deployment instead of creating an empty database.
 	info, err := os.Lstat(filepath.Join(c.ConfigDir, database.Filename))
 	if err != nil || !info.Mode().IsRegular() {
@@ -90,7 +88,11 @@ func Create(ctx context.Context, c config.Config, destination string) (err error
 		}
 	}()
 	for _, volume := range volumes {
-		if err := copyVolume(ctx, volume.path, filepath.Join(destination, volume.name), volume.name == "config"); err != nil {
+		target := filepath.Join(destination, volume.name)
+		if err := os.Mkdir(target, 0o700); err != nil {
+			return err
+		}
+		if err := copyVolume(ctx, volume.path, target, volume.name == "config"); err != nil {
 			return fmt.Errorf("backup %s: %w", volume.name, err)
 		}
 	}
@@ -98,12 +100,18 @@ func Create(ctx context.Context, c config.Config, destination string) (err error
 	if err != nil {
 		return err
 	}
-	err = sqlite.Backup(ctx, db, filepath.Join(destination, "config", database.Filename))
+	manifest := Manifest{Version: manifestVersion, CreatedAt: time.Now().UTC(), TLSIPs: c.TLSIPs, ExternalTLS: c.TLSCertFile != ""}
+	err = db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&manifest.SchemaVersion)
+	if err == nil {
+		manifest.ServerID, err = serverID(ctx, db)
+	}
+	if err == nil {
+		err = sqlite.Backup(ctx, db, filepath.Join(destination, "config", database.Filename))
+	}
 	closeErr := db.Close()
 	if err = errors.Join(err, closeErr); err != nil {
 		return err
 	}
-	manifest := Manifest{Version: 1, CreatedAt: time.Now().UTC(), TLSIPs: c.TLSIPs, ExternalTLS: c.TLSCertFile != ""}
 	if manifest.ExternalTLS {
 		directory := filepath.Join(destination, "external-tls")
 		if err := os.Mkdir(directory, 0o700); err != nil {
@@ -139,6 +147,7 @@ func Create(ctx context.Context, c config.Config, destination string) (err error
 	return errors.Join(syncDirectory(filepath.Join(destination, "config")), syncDirectory(destination), syncDirectory(parent))
 }
 
+// copyVolume copies source's contents into the existing destination directory.
 func copyVolume(ctx context.Context, source, destination string, metadata bool) error {
 	err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -152,6 +161,9 @@ func copyVolume(ctx context.Context, source, destination string, metadata bool) 
 			return err
 		}
 		if relative == instancelock.Filename || metadata && (relative == database.Filename || relative == database.Filename+"-wal" || relative == database.Filename+"-shm" || relative == database.Filename+"-journal") {
+			return nil
+		}
+		if relative == "." {
 			return nil
 		}
 		if entry.IsDir() {
@@ -229,4 +241,33 @@ func syncDirectory(path string) error {
 		return err
 	}
 	return errors.Join(directory.Sync(), directory.Close())
+}
+
+// within reports whether path is volume or lies beneath it. Comparing inode
+// identity too means aliases and bind mounts cannot hide nesting.
+func within(path, volume string) (bool, error) {
+	info, err := os.Stat(volume)
+	if err != nil {
+		return false, err
+	}
+	for ancestor := path; ; ancestor = filepath.Dir(ancestor) {
+		current, err := os.Stat(ancestor)
+		if err != nil {
+			return false, err
+		}
+		if os.SameFile(info, current) {
+			return true, nil
+		}
+		if filepath.Dir(ancestor) == ancestor {
+			return false, nil
+		}
+	}
+}
+
+func serverID(ctx context.Context, db *sql.DB) (id string, err error) {
+	err = db.QueryRowContext(ctx, `SELECT server_id FROM server_identity WHERE singleton=1`).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
 }

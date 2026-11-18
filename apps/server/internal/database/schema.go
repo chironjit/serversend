@@ -1,7 +1,12 @@
 package database
 
 import (
+	"context"
+	"database/sql"
 	"embed"
+	"errors"
+	"os"
+	"path/filepath"
 
 	"github.com/chironjit/serversend/shared/sqlite"
 )
@@ -33,4 +38,30 @@ func migrationSQL(name string) string {
 		panic(err)
 	}
 	return string(data)
+}
+
+// LatestVersion is the schema version this server migrates to.
+func LatestVersion() int { return migrations[len(migrations)-1].Version }
+
+// Installed reads an existing database's schema version and server ID without
+// migrating it. A missing database reports 0. The caller holds the deployment
+// locks, so neither can change before Open.
+func Installed(ctx context.Context, configDir string) (version int, serverID string, err error) {
+	filename := filepath.Join(configDir, Filename)
+	if _, err := os.Lstat(filename); errors.Is(err, os.ErrNotExist) {
+		return 0, "", nil
+	}
+	db, err := sqlite.OpenPrivate(ctx, filename)
+	if err != nil {
+		return 0, "", err
+	}
+	defer db.Close()
+	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version == 0 {
+		return version, "", err
+	}
+	err = db.QueryRowContext(ctx, `SELECT server_id FROM server_identity WHERE singleton=1`).Scan(&serverID)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = nil
+	}
+	return version, serverID, err
 }

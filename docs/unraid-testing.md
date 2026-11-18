@@ -1,6 +1,6 @@
 # Unraid network testing
 
-Use TCP **58443** permanently, with a DHCP reservation for the Unraid LAN address. This is the ServerSend default, selected to avoid the commonly used 8443 port. Check that another container is not already using it. The desktop accepts a bare IP and supplies HTTPS and port 58443. An explicit port is still supported. The server also listens on UDP 58443 for HTTP/3 evaluation; the desktop continues to prefer HTTP/2. See [transport measurements](performance-baseline.md). Actual Unraid/Tailscale UDP reachability remains unverified.
+Use TCP **58443** permanently, with a DHCP reservation for the Unraid LAN address. This is the ServerSend default, selected to avoid the commonly used 8443 port. Check that another container is not already using it. The desktop accepts a bare IP and supplies HTTPS and port 58443. An explicit port is still supported. The server also listens on UDP 58443 for HTTP/3; the desktop tries HTTP/3 first on each connection and falls back to HTTP/2 over TCP. See [transport measurements](performance-baseline.md). Actual Unraid/Tailscale UDP reachability remains unverified.
 
 This image uses Debian Bookworm slim and runs as UID/GID 10001.
 
@@ -20,16 +20,16 @@ Build for the architecture of the Unraid host (normally linux/amd64). On Unraid:
 
 ```sh
 docker load -i /mnt/user/appdata/serversend-dev.tar
-mkdir -p /mnt/user/appdata/serversend/config /mnt/user/serversend/data /mnt/user/serversend/staging
-chown 10001:10001 /mnt/user/appdata/serversend/config /mnt/user/serversend/data /mnt/user/serversend/staging
-chmod 700 /mnt/user/appdata/serversend/config /mnt/user/serversend/data /mnt/user/serversend/staging
+mkdir -p /mnt/user/appdata/serversend/config /mnt/user/serversend/data /mnt/user/serversend/staging /mnt/user/serversend-backups
+chown 10001:10001 /mnt/user/appdata/serversend/config /mnt/user/serversend/data /mnt/user/serversend/staging /mnt/user/serversend-backups
+chmod 700 /mnt/user/appdata/serversend/config /mnt/user/serversend/data /mnt/user/serversend/staging /mnt/user/serversend-backups
 ```
 
-Use local storage for the SQLite configuration directory, never an SMB/NFS mount. Set the appdata share's storage pool in Unraid before setup; use a pool-backed appdata share for metadata performance. Choose the data share's pool/array policy deliberately: measured throughput includes its disk speed. Keep these directories private and do not let another process alter the database or objects.
+Use local storage for the SQLite configuration directory, never an SMB/NFS mount. Set the appdata share's storage pool in Unraid before setup; use a pool-backed appdata share for metadata performance. Choose the data share's pool/array policy deliberately: measured throughput includes its disk speed. If the mover moves the data share from cache to array, stop the container while it runs; it is not coordinated with in-progress uploads or replacements. Keep these directories private and do not let another process alter the database or objects. A changed stored file is logged at startup and downloads with a mismatch warning; XFS cannot detect silent damage, while ZFS/Btrfs checksums return read errors instead.
 
 ## Configure once in Unraid's Docker UI
 
-Add a container (enable Advanced View where needed):
+The versioned template `apps/server/deploy/unraid/serversend.xml` holds these settings: copy it to `/boot/config/plugins/dockerMan/templates-user/my-serversend.xml`, choose it under **Add Container**, then set the repository and IP. Otherwise add a container manually (enable Advanced View where needed):
 
 | Field | Value |
 | --- | --- |
@@ -38,16 +38,18 @@ Add a container (enable Advanced View where needed):
 | Network type | Bridge |
 | WebUI | `https://[IP]:[PORT:58443]/admin/` |
 | Port | Host `58443`, container `58443`, TCP |
-| Port for HTTP/3 evaluation | Host `58443`, container `58443`, UDP |
+| Port for HTTP/3 | Host `58443`, container `58443`, UDP |
 | Path | `/mnt/user/appdata/serversend/config` → `/config`, read/write |
 | Path | `/mnt/user/serversend/data` → `/data`, read/write |
 | Path | `/mnt/user/serversend/staging` → `/staging`, read/write |
+| Path | `/mnt/user/serversend-backups` → `/backups`, read/write (separate share) |
+| Variable | `SERVER_SEND_UPGRADE_BACKUP_DIR` = `/backups` |
 | Variable | `SERVER_SEND_TLS_IPS` = your Unraid LAN IPv4 address |
 | Extra parameters | `--read-only --cap-drop=ALL --security-opt=no-new-privileges --stop-timeout=15` |
 
 Do not enable privileged mode. Enable Autostart after setup. Unraid saves this template, including mappings and settings, for later recreations. If using Tailscale too, supply LAN and Tailscale IPv4 addresses comma-separated in `SERVER_SEND_TLS_IPS`.
 
-Alternatively, if Docker Compose is already available, copy `apps/server/deploy/compose.unraid.yaml` and `unraid.env.example` to a persistent directory. Rename the env example `serversend.env`, edit the IP once, and use `SERVER_SEND_IMAGE=serversend:dev` for the locally loaded image (the default is the published GHCR `0.1` channel), then run:
+Alternatively, if Docker Compose is already available, copy `apps/server/deploy/compose.unraid.yaml` and `unraid.env.example` to a persistent directory. Rename the env example `serversend.env`, edit the IP once, and use `SERVER_SEND_IMAGE=serversend:dev` for the locally loaded image (the default is the published GHCR `0.4` channel), then run:
 
 ```sh
 docker compose --env-file serversend.env -f compose.unraid.yaml up -d
@@ -103,7 +105,7 @@ Build and load the new image, stop the old container, and recreate it from the s
 docker compose --env-file serversend.env -f compose.unraid.yaml up -d --force-recreate
 ```
 
-Do not bootstrap again, delete the host folders, or change the mappings. `/config` holds SQLite accounts/settings/metadata, server identity, TLS certificates and the TOTP protection key; `/data` holds each user's browsable files (`<username>/…`) and internal `.serversend` data; `/staging` is reserved for staging. The deployment template or env file persists listener/certificate-IP settings outside the image. Schema migrations apply automatically; make a stopped-container backup of all three paths and the deployment settings before upgrading. Preserve the complete config directory, especially its keys. Restore matching metadata and data together. Downgrading an image after a schema migration is not supported without restoring the matching backup.
+Do not bootstrap again, delete the host folders, or change the mappings. `/config` holds SQLite accounts/settings/metadata, server identity, TLS certificates and the TOTP protection key; `/data` holds each user's browsable files (`<username>/…`) and internal `.serversend` data; `/staging` is reserved for staging. The deployment template or env file persists listener/certificate-IP settings outside the image. Before a schema migration the server writes a full backup to `/backups` and refuses to migrate if `SERVER_SEND_UPGRADE_BACKUP_DIR` is unset. Keep the deployment settings with your backups. Restore matching metadata and data together; downgrading after a migration requires restoring the matching backup ([procedure](backup-restore.md#upgrades-and-downgrades)).
 
 The initial `serversend -backup DIR` command captures a consistent stopped-server snapshot, including committed SQLite WAL data, config keys, objects and staging. See [backup/restore instructions](backup-restore.md). Native locks now refuse a second process sharing any deployment volume; stop the serving process before bootstrap, recovery, `-check` or backup. Do not delete live `.serversend.lock` files. These local-lock and backup tests still require actual Unraid pool/array qualification.
 
@@ -111,8 +113,7 @@ The initial `serversend -backup DIR` command captures a consistent stopped-serve
 
 Upload a stable multi-gigabyte file, then download it to a different local directory. The desktop shows upload/download rates and a rolling 60-second chart. These are useful acknowledged/verified bytes per second, including network, disk and verification costs; chunk acknowledgements cause bursts. Source hashing before upload is preparation and does not count as transferred bytes. Compare the restored file's hash with the original.
 
-Then upload a folder containing nested folders, empty folders and many small files. Choose the destination by opening a server folder first. The selected source folder is created beneath it. Duplicate folder names return an error; choose another destination or rename the source. The skip-and-report implementation is described below; Linux backend tests pass, while native picker/Windows/macOS qualification remains pending. Transfers are sequential, not resumable, and not persisted across desktop restarts. The catalog currently shows at most 1000 entries per folder; large-scale pagination and queue persistence remain follow-up work. Desktop sign-in must be repeated after an app restart, but server setup and user enrollment persist.
-
+Then upload a folder containing nested folders, empty folders and many small files. Choose the destination by opening a server folder first. The selected source folder is created beneath it. Duplicate folder names return an error; choose another destination or rename the source. The skip-and-report implementation is described below; Linux backend tests pass, while native picker/Windows/macOS qualification remains pending. 
 Older development images used Ed25519 HTTPS certificates that Firefox cannot negotiate. New images use ECDSA P-256. Existing deployments retain their original certificates until explicitly migrated; see [Firefox certificate compatibility](server-development.md#firefox-certificate-compatibility) before moving TLS files. This is separate from the normal private-CA trust warning.
 
 ## Link-handling implementation and remaining gates
@@ -124,3 +125,12 @@ The user approved skip-and-report and the `golang.org/x/sys` filesystem integrat
 Large folder deletions use a SQLite temporary table that can spill to disk. With `--read-only`, the image's default temporary directories cannot be written. This can produce `disk I/O error: permission denied` even while uploads and ordinary database writes work. The image now sets `SQLITE_TMPDIR=/staging` so SQLite uses the existing writable mount.
 
 For an already deployed image, add the environment variable **`SQLITE_TMPDIR` = `/staging`** in the Unraid container template and apply/recreate the container, retaining the same storage mappings. Retry deletion. With Compose, add `SQLITE_TMPDIR: /staging` under `environment` and recreate the service. If the staging mount uses a custom container path, use that writable path instead. No database or uploaded-folder migration is required. Logs now distinguish metadata deletion failures from stored-object cleanup failures; if permission errors continue, inspect the corresponding mount's ownership and read/write mapping.
+
+## Deployment qualification record
+
+Feature 12 stays open until these are run on the actual Unraid host and recorded in the [verification map](requirements-verification.md), with image version, Unraid version, share pool/array settings and filesystem:
+
+- Template install, UID/GID 10001 ownership, all four mappings, lock refusal of a second container, and restart/autostart; config on a pool, data on the pool and on the array, and staging on a separate share.
+- LAN, direct-tailnet and relayed-tailnet uploads and downloads; blocked UDP 58443 must still work over HTTP/2. Record which transport was used.
+- Private IPv4 CA import in the desktop and a browser, per-profile trust, and certificate renewal without public exposure.
+- An image update with a schema migration (automatic pre-upgrade backup present), a replacement restore onto an isolated instance with standard and private data verified by hash, and the documented downgrade restore.

@@ -1,7 +1,7 @@
 name: serversend
 services:
   server:
-    image: ${SERVER_SEND_IMAGE:-ghcr.io/chironjit/serversend:0.1}
+    image: ${SERVER_SEND_IMAGE:-ghcr.io/chironjit/serversend:0.4}
     container_name: serversend
     restart: unless-stopped
     read_only: true
@@ -15,7 +15,9 @@ services:
       - "${SERVER_SEND_BIND_IP:?Set the Unraid LAN IP}:58443:58443/udp"
     environment:
       SERVER_SEND_TLS_IPS: "${SERVER_SEND_TLS_IPS:?Set the Unraid LAN IP}"
+      SERVER_SEND_UPGRADE_BACKUP_DIR: /backups
     volumes:
       - "${SERVER_SEND_CONFIG_PATH:-/mnt/user/appdata/serversend/config}:/config"
       - "${SERVER_SEND_DATA_PATH:-/mnt/user/serversend/data}:/data"
       - "${SERVER_SEND_STAGING_PATH:-/mnt/user/serversend/staging}:/staging"
+      - "${SERVER_SEND_BACKUP_PATH:-/mnt/user/serversend-backups}:/backups"

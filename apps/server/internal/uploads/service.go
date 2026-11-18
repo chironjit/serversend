@@ -42,6 +42,9 @@ type StoragePolicy struct{ GlobalBytes, UserBytes, MinFreeBytes int64 }
 type Service struct {
 	readers int // open version streams; protected by mu
 
+	changed      []string // set once by recover
+	changedCount int
+
 	statsGate       chan struct{}
 	statsCache      map[protocol.ID]api.StorageStatistics
 	stageMu         sync.Mutex
@@ -113,10 +116,25 @@ func (s *Service) recover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// A missing version still refuses startup (for example, an unmounted data
+	// volume). A changed size stays downloadable; clients verify every chunk
+	// and report the mismatch.
 	return s.repo.EachVersion(ctx, func(location database.VersionLocation) error {
-		return s.store.Verify(location.Path, location.Bytes, true)
+		err := s.store.Verify(location.Path, location.Bytes, true)
+		if errors.Is(err, storage.ErrSizeChanged) {
+			if len(s.changed) < 20 {
+				s.changed = append(s.changed, location.Path)
+			}
+			s.changedCount++
+			return nil
+		}
+		return err
 	})
 }
+
+// ChangedFiles reports how many stored versions differed in size from their
+// uploads at startup, with up to 20 of their data-volume paths.
+func (s *Service) ChangedFiles() (int, []string) { return s.changedCount, s.changed }
 
 // applyJournal performs and forgets every pending filesystem change. Each
 // mutation calls it under s.mu after committing, so changes apply in order;
@@ -278,6 +296,13 @@ func (s *Service) PutChunk(ctx context.Context, account, upload protocol.ID, ind
 	if index < 0 || index >= t.ChunkCount || digest.Validate() != nil || s.limits.ValidateChunkSize(length, final) != nil {
 		return api.ChunkAcknowledgement{}, false, api.Error{Code: api.InvalidRequest, Message: "Chunk index, length or digest is outside this upload's bounds"}
 	}
+	// Claim the index before looking it up, so a request that finds it
+	// unacknowledged cannot write over bytes another request acknowledged.
+	release, busy := s.claimWriter(upload, index)
+	if busy {
+		return api.ChunkAcknowledgement{}, false, api.Error{Code: api.Conflict, Message: "This chunk is already being received; retry shortly"}
+	}
+	defer release()
 	existing, err := s.repo.StoredChunk(ctx, account, upload, index)
 	created := false
 	if errors.Is(err, sql.ErrNoRows) {
@@ -302,11 +327,6 @@ func (s *Service) PutChunk(ctx context.Context, account, upload protocol.ID, ind
 		if available < s.policy.MinFreeBytes || length > available-s.policy.MinFreeBytes {
 			return api.ChunkAcknowledgement{}, false, api.Error{Code: api.CapacityExhausted, Message: "Insufficient free space to store this chunk"}
 		}
-		release, busy := s.claimWriter(upload, index)
-		if busy {
-			return api.ChunkAcknowledgement{}, false, api.Error{Code: api.Conflict, Message: "This chunk is already being received; retry shortly"}
-		}
-		defer release()
 		if writeErr := s.store.WriteChunk(upload, offset, length, digest, body); writeErr != nil {
 			switch {
 			case errors.Is(writeErr, storage.ErrMismatch):
@@ -341,29 +361,40 @@ func (s *Service) PutChunk(ctx context.Context, account, upload protocol.ID, ind
 	return api.ChunkAcknowledgement{UploadID: upload, Chunk: protocol.Chunk{Index: index, Bytes: length, SHA256: digest}}, created, nil
 }
 
-// chunkOffset places a chunk: non-final chunks at index times the upload's
-// chunk size, and the final chunk at the end of the file.
+// chunkOffset places a chunk at index times the upload's chunk size. Every
+// chunk, including the final one, implies that size and atomically claims it
+// before writing, so concurrent chunks can never be placed at overlapping
+// ranges.
 func (s *Service) chunkOffset(ctx context.Context, t database.Transfer, index, length int64) (int64, error) {
 	invalid := api.Error{Code: api.InvalidRequest, Message: "Every chunk except the last must have the same size, and the last must end the file"}
-	size := t.ChunkBytes
-	if index < t.ChunkCount-1 && size == 0 {
-		if length*(t.ChunkCount-1) >= t.TransmittedBytes || t.TransmittedBytes-length*(t.ChunkCount-1) > length {
+	others := t.ChunkCount - 1
+	if others == 0 {
+		if length != t.TransmittedBytes {
 			return 0, invalid
 		}
-		claimed, err := s.repo.ClaimChunkSize(ctx, t.AccountID, t.ID, length)
-		if err != nil {
+		return 0, nil
+	}
+	size := length
+	if index == others {
+		rest := t.TransmittedBytes - length
+		if rest <= 0 || rest%others != 0 {
+			return 0, invalid
+		}
+		size = rest / others
+		if size < length || s.limits.ValidateChunkSize(size, false) != nil {
+			return 0, invalid
+		}
+	} else if length*others >= t.TransmittedBytes || t.TransmittedBytes-length*others > length {
+		return 0, invalid
+	}
+	claimed := t.ChunkBytes
+	if claimed == 0 {
+		var err error
+		if claimed, err = s.repo.ClaimChunkSize(ctx, t.AccountID, t.ID, size); err != nil {
 			return 0, err
 		}
-		size = claimed
 	}
-	if index == t.ChunkCount-1 {
-		offset := t.TransmittedBytes - length
-		if offset < 0 || size != 0 && offset != size*index {
-			return 0, invalid
-		}
-		return offset, nil
-	}
-	if length != size {
+	if claimed != size {
 		return 0, invalid
 	}
 	return index * size, nil
@@ -511,8 +542,17 @@ func (s *Service) OpenChunk(ctx context.Context, account, file, version protocol
 	if err != nil {
 		return nil, protocol.Chunk{}, api.Error{Code: api.SourceMissing, Message: "Stored data for this file is missing on the server; contact the server operator"}
 	}
+	// A file changed on the data volume may now end inside or before this
+	// chunk; send the bytes that remain, with the recorded digest, so the
+	// client can detect and report the difference.
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, protocol.Chunk{}, err
+	}
+	length := min(stored.Bytes, max(0, info.Size()-stored.Offset))
 	s.readers++
-	return chunkReader{io.NewSectionReader(f, stored.Offset, stored.Bytes), &versionReaderCloser{close: func() error { err := f.Close(); s.mu.Lock(); s.readers--; s.mu.Unlock(); return err }}}, protocol.Chunk{Index: index, Bytes: stored.Bytes, SHA256: stored.Digest}, nil
+	return chunkReader{io.NewSectionReader(f, stored.Offset, length), &versionReaderCloser{close: func() error { err := f.Close(); s.mu.Lock(); s.readers--; s.mu.Unlock(); return err }}}, protocol.Chunk{Index: index, Bytes: length, SHA256: stored.Digest}, nil
 }
 
 // Available reports usable free bytes on the object filesystem.
