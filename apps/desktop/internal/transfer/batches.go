@@ -26,6 +26,7 @@ type Batch struct {
 	Scope        string        `json:"scope"`
 	ID           int           `json:"id"`
 	Name         string        `json:"name"`
+	Direction    string        `json:"direction"` // "upload" or "download"
 	State        string        `json:"state"`
 	Files        int           `json:"files"`
 	Completed    int           `json:"completed"`
@@ -55,7 +56,7 @@ func (m *Manager) startBatch(parent context.Context, name string) (int, context.
 	}
 	m.nextBatch++
 	id := m.nextBatch
-	m.batches[id] = &Batch{ID: id, Name: name, State: "scanning", SkippedItems: []SkippedItem{}, scanning: true, StartedAt: time.Now().UnixMilli(), cancel: cancel}
+	m.batches[id] = &Batch{ID: id, Name: name, Direction: "upload", State: "scanning", SkippedItems: []SkippedItem{}, scanning: true, StartedAt: time.Now().UnixMilli(), cancel: cancel}
 	// Retain recent outcomes and all active selections. There is no file-count
 	// cutoff, and historical skip paths cannot grow without bound.
 	for previous, batch := range m.batches {

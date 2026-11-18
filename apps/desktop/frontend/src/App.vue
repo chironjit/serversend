@@ -8,9 +8,13 @@ import {
   Laptop,
   Loader2,
   LockKeyhole,
+  RefreshCw,
   Server,
 } from 'lucide-vue-next';
-import { TransferService } from '../bindings/github.com/chironjit/serversend/apps/desktop';
+import {
+  BackgroundService,
+  TransferService,
+} from '../bindings/github.com/chironjit/serversend/apps/desktop';
 import type {
   Account,
   Batch,
@@ -21,6 +25,7 @@ import AuthFlow, { type AuthStep } from './components/AuthFlow.vue';
 import DevicesView from './components/DevicesView.vue';
 import FileBrowser from './components/FileBrowser.vue';
 import ServersView from './components/ServersView.vue';
+import SettingsView from './components/SettingsView.vue';
 import TransfersView from './components/TransfersView.vue';
 import VaultSetup from './components/VaultSetup.vue';
 import BrandMark from './components/ui/BrandMark.vue';
@@ -33,7 +38,7 @@ import UiEmpty from './components/ui/UiEmpty.vue';
 import { failure, size } from './format';
 
 type Theme = 'system' | 'light' | 'dark';
-type Tab = 'library' | 'transfers' | 'servers' | 'devices';
+type Tab = 'library' | 'transfers' | 'servers' | 'devices' | 'settings';
 type Auth = {
   step: AuthStep;
   origin?: string;
@@ -47,6 +52,7 @@ const tabs: { id: Tab; label: string }[] = [
   { id: 'transfers', label: 'Transfers' },
   { id: 'servers', label: 'Servers' },
   { id: 'devices', label: 'Devices' },
+  { id: 'settings', label: 'Settings' },
 ];
 const tab = ref<Tab>('library');
 const theme = ref<Theme>('system');
@@ -88,6 +94,8 @@ const needsChoice = computed(
 );
 const browser = ref<InstanceType<typeof FileBrowser>>();
 
+// Development builds cannot update, so the check stays visible but disabled.
+const updatesEnabled = ref(false);
 const combinedQueue = ref(false);
 // Replaced wholesale on each event batch; deep reactivity over thousands of
 // queued files is what made large folder uploads freeze the window.
@@ -171,7 +179,7 @@ const open = (origin: string) =>
     } else startAuth('password', { origin, username: saved?.username, remember: saved?.remember });
   });
 async function sessionReady() {
-  tab.value = tab.value === 'devices' || tab.value === 'transfers' ? tab.value : 'library';
+  tab.value = ['devices', 'transfers', 'settings'].includes(tab.value) ? tab.value : 'library';
   await Promise.all([refreshBatches(), refreshVault()]);
 }
 async function signedIn(next: Account) {
@@ -400,6 +408,9 @@ onMounted(() => {
       if (ready.value && !busy.value) void Promise.all([refreshBatches(), refreshVault()]);
     }, 1000),
   ];
+  void BackgroundService.UpdatesEnabled()
+    .then((enabled) => (updatesEnabled.value = enabled))
+    .catch(() => undefined);
   stopEvents = Events.On('transfer', (event: { data: Item[] | null }) =>
     onTransfers(event.data ?? []),
   );
@@ -476,6 +487,18 @@ onUnmounted(() => {
             <ArrowUpFromLine class="size-3" aria-hidden="true" />{{ size(speed.up) }}/s
             <ArrowDownToLine class="size-3" aria-hidden="true" />{{ size(speed.down) }}/s
           </button>
+          <UiButton
+            variant="ghost"
+            size="sm"
+            :disabled="!updatesEnabled"
+            :title="
+              updatesEnabled ? 'Check for updates' : 'Updates are disabled in development builds'
+            "
+            aria-label="Check for updates"
+            @click="BackgroundService.CheckForUpdates()"
+          >
+            <RefreshCw aria-hidden="true" /><span class="hidden lg:inline">Check for updates</span>
+          </UiButton>
           <ThemeSwitch :model-value="theme" @update:model-value="applyTheme" />
         </div>
       </div>
@@ -551,7 +574,7 @@ onUnmounted(() => {
 
       <TransfersView
         v-if="tab === 'transfers'"
-        v-model:combined="combinedQueue"
+        :combined="combinedQueue"
         :transfers="transfers"
         :batches="batches"
         :speed="speed"
@@ -560,7 +583,6 @@ onUnmounted(() => {
         :busy="busy"
         :batch-error="batchError"
         :scope-name="scopeName"
-        @update:combined="refreshBatches"
         @action="queueAction"
         @retry="refreshBatches"
       />
@@ -592,6 +614,13 @@ onUnmounted(() => {
           </UiEmpty>
         </UiCard>
       </template>
+
+      <SettingsView
+        v-else-if="tab === 'settings'"
+        v-model:combined="combinedQueue"
+        :busy="busy"
+        @update:combined="refreshBatches"
+      />
     </main>
 
     <!-- Sign-in for a saved or new server, over whichever page is open. -->

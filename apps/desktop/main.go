@@ -58,9 +58,11 @@ func main() {
 	})
 	background.app = app
 
-	if err := configureUpdater(app); err != nil {
+	checkUpdates, err := configureUpdater(app)
+	if err != nil {
 		log.Fatalf("configure updater: %v", err)
 	}
+	background.checkUpdates = checkUpdates
 
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title: "ServerSend",

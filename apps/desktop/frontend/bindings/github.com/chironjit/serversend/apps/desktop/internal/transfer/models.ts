@@ -24,6 +24,11 @@ export interface Batch {
     "scope": string;
     "id": number;
     "name": string;
+
+    /**
+     * "upload" or "download"
+     */
+    "direction": string;
     "state": string;
     "files": number;
     "completed": number;

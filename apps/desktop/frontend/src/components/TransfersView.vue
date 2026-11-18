@@ -4,17 +4,14 @@ import {
   ArrowDownToLine,
   ArrowLeftRight,
   ArrowUpFromLine,
+  ChevronRight,
   CircleAlert,
-  Layers,
   Pause,
   Play,
   RotateCcw,
   X,
 } from 'lucide-vue-next';
-import {
-  BackgroundService,
-  TransferService,
-} from '../../bindings/github.com/chironjit/serversend/apps/desktop';
+import { BackgroundService } from '../../bindings/github.com/chironjit/serversend/apps/desktop';
 import type {
   Batch,
   Item,
@@ -25,10 +22,14 @@ import UiButton from './ui/UiButton.vue';
 import UiCard from './ui/UiCard.vue';
 import UiCardHeader from './ui/UiCardHeader.vue';
 import UiEmpty from './ui/UiEmpty.vue';
-import UiInput from './ui/UiInput.vue';
 import UiProgress from './ui/UiProgress.vue';
 
 type Tone = 'primary' | 'neutral' | 'success' | 'warning' | 'danger';
+type Direction = 'upload' | 'download';
+// One upload or download the user started, with its files. Files whose
+// selection is no longer listed are gathered under "Other files".
+type Group = { key: string; name: string; batch?: Batch; items: Item[] };
+
 const props = defineProps<{
   transfers: Item[];
   batches: Batch[];
@@ -37,9 +38,9 @@ const props = defineProps<{
   clock: number;
   busy: boolean;
   batchError: string;
+  combined: boolean;
   scopeName: (scope: string) => string;
 }>();
-const combined = defineModel<boolean>('combined', { required: true });
 const emit = defineEmits<{ action: [id: number, batch: boolean, action: string]; retry: [] }>();
 
 const stateLabel: Record<string, string> = {
@@ -98,7 +99,55 @@ const canCancel = (state: string) =>
 const canResume = (state: string) =>
   state === 'paused' || state.startsWith('waiting_') || state === 'retry_scheduled';
 
-const recentBatches = computed(() => props.batches.toReversed());
+const sections: { direction: Direction; title: string; empty: string }[] = [
+  { direction: 'upload', title: 'Uploads', empty: 'Files and folders you upload appear here.' },
+  {
+    direction: 'download',
+    title: 'Downloads',
+    empty: 'Files and folders you download appear here.',
+  },
+];
+const groups = computed(() => {
+  const byBatch = new Map<number, Item[]>();
+  for (const item of props.transfers) {
+    const list = byBatch.get(item.batchId);
+    if (list) list.push(item);
+    else byBatch.set(item.batchId, [item]);
+  }
+  const result: Record<Direction, Group[]> = { upload: [], download: [] };
+  const listed = new Set<number>();
+  // Sources disagree on order (the durable store is newest first), so sort.
+  for (const batch of props.batches.toSorted((a, b) => b.id - a.id)) {
+    listed.add(batch.id);
+    const items = byBatch.get(batch.id) ?? [];
+    const direction = batch.direction || items[0]?.direction;
+    result[direction === 'download' ? 'download' : 'upload'].push({
+      key: `batch-${batch.id}`,
+      name: batch.name,
+      batch,
+      items,
+    });
+  }
+  for (const direction of ['upload', 'download'] as const) {
+    const items = props.transfers.filter(
+      (item) =>
+        !listed.has(item.batchId) && (item.direction === 'download') === (direction === 'download'),
+    );
+    if (items.length)
+      result[direction].push({ key: `other-${direction}`, name: 'Other files', items });
+  }
+  return result;
+});
+// Unfinished selections start expanded; a click overrides that per selection.
+const expandedOverride = ref(new Map<string, boolean>());
+const expanded = (group: Group) =>
+  expandedOverride.value.get(group.key) ?? !group.batch?.finishedAt;
+function toggle(group: Group) {
+  const next = new Map(expandedOverride.value);
+  next.set(group.key, !expanded(group));
+  expandedOverride.value = next;
+}
+
 // Uploading unencrypted is a privacy decision, so it asks for confirmation.
 const confirmUnencrypted = ref<{ id: number; batch: boolean } | null>(null);
 function oversizedChoice(id: number, batch: boolean, action: 'unencrypted' | 'keep_skipped') {
@@ -140,7 +189,7 @@ function summary(batch: Batch): string {
   if (batch.failed) parts.push(`${batch.failed} failed`);
   if (batch.cancelled) parts.push(`${batch.cancelled} cancelled`);
   if (batch.startedAt) parts.push(timing(batch));
-  if (combined.value) parts.unshift(props.scopeName(batch.scope));
+  if (props.combined) parts.unshift(props.scopeName(batch.scope));
   return parts.join(' · ');
 }
 function chart(direction: 'up' | 'down') {
@@ -148,68 +197,58 @@ function chart(direction: 'up' | 'down') {
   return props.rates.map((r, i) => `${(i * 300) / 59},${60 - (r[direction] / max) * 56}`).join(' ');
 }
 
-const bandwidth = ref('0');
-const bandwidthError = ref('');
-const bandwidthSaved = ref(false);
-onMounted(async () => {
-  try {
-    bandwidth.value = String((await TransferService.Bandwidth()) / 1048576);
-  } catch (reason) {
-    bandwidthError.value = failure(reason);
-  }
-});
-// Background controls persist outside the window and mirror the tray menu.
+// Pausing everything persists and mirrors the tray menu.
 const paused = ref(false);
-const launchAtLogin = ref(false);
-const backgroundError = ref('');
+const pauseError = ref('');
 onMounted(async () => {
   try {
-    [paused.value, launchAtLogin.value] = await Promise.all([
-      BackgroundService.Paused(),
-      BackgroundService.LaunchAtLogin(),
-    ]);
+    paused.value = await BackgroundService.Paused();
   } catch (reason) {
-    backgroundError.value = failure(reason);
+    pauseError.value = failure(reason);
   }
 });
-async function setBackground(setting: 'paused' | 'login', value: boolean) {
-  backgroundError.value = '';
-  // Set optimistically so reloading a refused change re-renders the checkbox.
-  if (setting === 'paused') paused.value = value;
-  else launchAtLogin.value = value;
+async function togglePaused() {
+  pauseError.value = '';
   try {
-    if (setting === 'paused') await BackgroundService.SetPaused(value);
-    else await BackgroundService.SetLaunchAtLogin(value);
+    await BackgroundService.SetPaused(!paused.value);
   } catch (reason) {
-    backgroundError.value = failure(reason);
+    pauseError.value = failure(reason);
   }
   try {
-    if (setting === 'paused') paused.value = await BackgroundService.Paused();
-    else launchAtLogin.value = await BackgroundService.LaunchAtLogin();
+    paused.value = await BackgroundService.Paused();
   } catch {
     // Keep the last known value; the error above explains the failure.
-  }
-}
-
-async function setBandwidth() {
-  bandwidthError.value = '';
-  bandwidthSaved.value = false;
-  const limit = Number(bandwidth.value);
-  if (!Number.isFinite(limit) || limit < 0 || limit > Number.MAX_SAFE_INTEGER / 1048576) {
-    bandwidthError.value = 'Enter a nonnegative bandwidth limit. Use 0 for unlimited.';
-    return;
-  }
-  try {
-    await TransferService.SetBandwidth(Math.round(limit * 1048576));
-    bandwidthSaved.value = true;
-  } catch (reason) {
-    bandwidthError.value = failure(reason);
   }
 }
 </script>
 
 <template>
   <div class="grid gap-6">
+    <UiCard
+      class="flex flex-wrap items-center gap-3 p-4"
+      :class="paused ? 'border-warning/40 bg-warning/10' : ''"
+    >
+      <div class="grid min-w-0 flex-1 gap-0.5">
+        <p class="m-0 text-sm font-medium">
+          {{ paused ? 'All transfers are paused' : 'Transfers are running' }}
+        </p>
+        <p class="text-muted-foreground m-0 text-xs">
+          {{
+            paused
+              ? 'Queued work waits until you resume, even after a restart.'
+              : 'Transfers continue in the tray when the window is closed.'
+          }}
+        </p>
+        <p v-if="pauseError" class="text-destructive m-0 text-xs" role="alert">
+          {{ pauseError }}
+        </p>
+      </div>
+      <UiButton :variant="paused ? 'primary' : 'outline'" @click="togglePaused">
+        <Play v-if="paused" aria-hidden="true" /><Pause v-else aria-hidden="true" />
+        {{ paused ? 'Resume all transfers' : 'Pause all transfers' }}
+      </UiButton>
+    </UiCard>
+
     <dl class="m-0 grid grid-cols-2 gap-4 lg:grid-cols-4">
       <UiCard class="p-4">
         <dt class="text-muted-foreground flex items-center gap-1.5 text-xs">
@@ -242,374 +281,351 @@ async function setBandwidth() {
       </UiCard>
     </dl>
 
-    <UiCard as="section" class="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_280px]">
-      <div class="min-w-0">
-        <div class="flex items-center justify-between gap-3">
-          <h2 class="m-0 text-base font-semibold">Throughput</h2>
-          <div class="text-muted-foreground flex gap-4 text-xs">
-            <span class="flex items-center gap-1.5"
-              ><span class="bg-chart-up size-2 rounded-full" />Upload</span
-            >
-            <span class="flex items-center gap-1.5"
-              ><span class="bg-chart-down size-2 rounded-full" />Download</span
-            >
-          </div>
-        </div>
-        <svg
-          viewBox="0 0 300 64"
-          preserveAspectRatio="none"
-          class="mt-3 h-24 w-full"
-          role="img"
-          aria-label="Upload and download throughput over the last 60 seconds"
-        >
-          <line x1="0" y1="63" x2="300" y2="63" stroke="var(--border)" stroke-width="1" />
-          <polyline
-            :points="chart('up')"
-            fill="none"
-            stroke="var(--chart-up)"
-            stroke-width="2"
-            stroke-linejoin="round"
-            vector-effect="non-scaling-stroke"
-          />
-          <polyline
-            :points="chart('down')"
-            fill="none"
-            stroke="var(--chart-down)"
-            stroke-width="2"
-            stroke-linejoin="round"
-            vector-effect="non-scaling-stroke"
-          />
-        </svg>
-        <p class="text-muted-foreground m-0 mt-2 text-xs">
-          Last 60 seconds of verified bytes, including disk and verification time.
-        </p>
-      </div>
-      <div class="grid content-start gap-4 border-t pt-4 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-5">
-        <form class="grid gap-1.5" @submit.prevent="setBandwidth">
-          <label for="bandwidth" class="text-sm font-medium">Bandwidth limit (MiB/s)</label>
-          <div class="flex gap-2">
-            <UiInput id="bandwidth" v-model="bandwidth" type="number" min="0" step="any" required />
-            <UiButton type="submit" variant="outline" :disabled="busy">Apply</UiButton>
-          </div>
-          <span
-            class="text-xs"
-            :class="bandwidthError ? 'text-destructive' : 'text-muted-foreground'"
-            :role="bandwidthError ? 'alert' : undefined"
+    <UiCard as="section" class="p-5">
+      <div class="flex items-center justify-between gap-3">
+        <h2 class="m-0 text-base font-semibold">Throughput</h2>
+        <div class="text-muted-foreground flex gap-4 text-xs">
+          <span class="flex items-center gap-1.5"
+            ><span class="bg-chart-up size-2 rounded-full" />Upload</span
           >
-            {{ bandwidthError || (bandwidthSaved ? 'Limit applied.' : '0 means unlimited.') }}
-          </span>
-        </form>
-        <label class="flex items-center gap-2 text-sm">
-          <input v-model="combined" type="checkbox" class="accent-primary" />
-          Show all signed-in servers
-        </label>
-        <fieldset class="m-0 grid gap-2 border-t p-0 pt-4">
-          <legend class="sr-only">Background operation</legend>
-          <label class="flex items-center gap-2 text-sm">
-            <input
-              :checked="paused"
-              type="checkbox"
-              class="accent-primary"
-              @change="setBackground('paused', ($event.target as HTMLInputElement).checked)"
-            />
-            Pause all transfers
-          </label>
-          <label class="flex items-center gap-2 text-sm">
-            <input
-              :checked="launchAtLogin"
-              type="checkbox"
-              class="accent-primary"
-              @change="setBackground('login', ($event.target as HTMLInputElement).checked)"
-            />
-            Launch at login in the tray
-          </label>
-          <p v-if="backgroundError" class="text-destructive m-0 text-xs" role="alert">
-            {{ backgroundError }}
-          </p>
-          <p class="text-muted-foreground m-0 text-xs">
-            Closing the window keeps transfers running in the tray. They stop while the app is quit
-            or the device sleeps and resume from checkpoints.
-          </p>
-          <div>
-            <UiButton variant="outline" size="sm" @click="BackgroundService.Quit()"
-              >Quit ServerSend</UiButton
-            >
-          </div>
-        </fieldset>
+          <span class="flex items-center gap-1.5"
+            ><span class="bg-chart-down size-2 rounded-full" />Download</span
+          >
+        </div>
       </div>
+      <svg
+        viewBox="0 0 300 64"
+        preserveAspectRatio="none"
+        class="mt-3 h-24 w-full"
+        role="img"
+        aria-label="Upload and download throughput over the last 60 seconds"
+      >
+        <line x1="0" y1="63" x2="300" y2="63" stroke="var(--border)" stroke-width="1" />
+        <polyline
+          :points="chart('up')"
+          fill="none"
+          stroke="var(--chart-up)"
+          stroke-width="2"
+          stroke-linejoin="round"
+          vector-effect="non-scaling-stroke"
+        />
+        <polyline
+          :points="chart('down')"
+          fill="none"
+          stroke="var(--chart-down)"
+          stroke-width="2"
+          stroke-linejoin="round"
+          vector-effect="non-scaling-stroke"
+        />
+      </svg>
+      <p class="text-muted-foreground m-0 mt-2 text-xs">
+        Last 60 seconds of verified bytes, including disk and verification time.
+      </p>
     </UiCard>
 
-    <div class="grid items-start gap-6 xl:grid-cols-2">
-      <UiCard as="section" class="min-w-0" aria-label="Transfer selections">
+    <div v-if="batchError" class="flex items-center gap-2" role="alert">
+      <p class="text-destructive m-0 flex-1 text-sm">
+        Transfer summaries unavailable: {{ batchError }}
+      </p>
+      <UiButton variant="ghost" size="sm" @click="emit('retry')">Retry summaries</UiButton>
+    </div>
+
+    <div class="grid gap-6">
+      <UiCard
+        v-for="section in sections"
+        :key="section.direction"
+        as="section"
+        class="min-w-0"
+        :aria-label="section.title"
+      >
         <div class="p-5 pb-3">
           <UiCardHeader
-            title="Selections"
-            description="Each upload or download you start. Links and unsupported files are skipped."
+            :title="section.title"
+            description="Newest first. Links and unsupported files are skipped."
           />
         </div>
-        <div v-if="batchError" class="flex items-center gap-2 px-5 pb-3" role="alert">
-          <p class="text-destructive m-0 flex-1 text-sm">
-            Transfer summaries unavailable: {{ batchError }}
-          </p>
-          <UiButton variant="ghost" size="sm" @click="emit('retry')">Retry summaries</UiButton>
-        </div>
-        <UiEmpty v-if="!batches.length" title="No selections yet">
-          <template #icon><Layers /></template>
-          Uploads and downloads you start appear here.
+        <UiEmpty
+          v-if="!groups[section.direction].length"
+          :title="`No ${section.title.toLowerCase()} yet`"
+        >
+          <template #icon>
+            <ArrowUpFromLine v-if="section.direction === 'upload'" />
+            <ArrowDownToLine v-else />
+          </template>
+          {{ section.empty }}
         </UiEmpty>
-        <ul v-else class="m-0 list-none border-t p-0" aria-label="Recent transfer selections">
+        <ul
+          v-else
+          class="m-0 max-h-[36rem] list-none overflow-y-auto border-t p-0"
+          :aria-label="`${section.title} started`"
+        >
           <li
-            v-for="batch in recentBatches"
-            :key="batch.id"
-            class="grid gap-2 border-b px-5 py-3 last:border-b-0"
+            v-for="group in groups[section.direction]"
+            :key="group.key"
+            class="grid gap-2 border-b py-3 last:border-b-0"
           >
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 pr-5 pl-3">
+              <UiButton
+                variant="ghost"
+                size="icon-sm"
+                :aria-expanded="expanded(group)"
+                :aria-label="`${expanded(group) ? 'Hide' : 'Show'} files in ${group.name}`"
+                @click="toggle(group)"
+                ><ChevronRight
+                  class="transition-transform"
+                  :class="expanded(group) ? 'rotate-90' : ''"
+                  aria-hidden="true"
+              /></UiButton>
               <div class="grid min-w-0 flex-1 gap-0.5">
-                <span class="truncate text-sm font-medium" :title="batch.name">{{
-                  batch.name
+                <span class="truncate text-sm font-medium" :title="group.name">{{
+                  group.name
                 }}</span>
                 <span class="text-muted-foreground text-xs tabular-nums" role="status">{{
-                  summary(batch)
+                  group.batch
+                    ? summary(group.batch)
+                    : `${group.items.length} ${group.items.length === 1 ? 'file' : 'files'}`
                 }}</span>
               </div>
-              <UiBadge :tone="stateTone[batch.state] ?? 'neutral'">{{
-                stateLabel[batch.state] ?? batch.state
-              }}</UiBadge>
-              <UiButton
-                v-if="canPause(batch.state)"
-                variant="ghost"
-                size="icon-sm"
-                :disabled="busy"
-                :aria-label="`Pause ${batch.name}`"
-                title="Pause"
-                @click="emit('action', batch.id, true, 'pause')"
-                ><Pause aria-hidden="true"
-              /></UiButton>
-              <UiButton
-                v-if="batch.state === 'paused'"
-                variant="ghost"
-                size="icon-sm"
-                :disabled="busy"
-                :aria-label="`Resume ${batch.name}`"
-                title="Resume"
-                @click="emit('action', batch.id, true, 'resume')"
-                ><Play aria-hidden="true"
-              /></UiButton>
-              <UiButton
-                v-if="['failed', 'partial', 'cancelled'].includes(batch.state)"
-                variant="ghost"
-                size="icon-sm"
-                :disabled="busy"
-                :aria-label="`Retry ${batch.name}`"
-                title="Retry unresolved"
-                @click="emit('action', batch.id, true, 'retry')"
-                ><RotateCcw aria-hidden="true"
-              /></UiButton>
-              <UiButton
-                v-if="canCancel(batch.state)"
-                variant="ghost"
-                size="icon-sm"
-                :aria-label="`Cancel ${batch.name}`"
-                title="Cancel"
-                @click="emit('action', batch.id, true, 'cancel')"
-                ><X aria-hidden="true"
-              /></UiButton>
-            </div>
-            <UiProgress
-              v-if="!batch.finishedAt && batch.files"
-              :value="percent(batch.completed, batch.files)"
-            />
-            <p v-if="batch.state === 'all_skipped'" class="text-warning m-0 text-xs">
-              Zero files transferred. Every selected item was skipped.
-            </p>
-            <p v-if="batch.error" class="text-destructive m-0 text-xs wrap-anywhere">
-              {{ batch.error }}
-            </p>
-            <div
-              v-if="batch.oversized > 0"
-              class="bg-muted grid gap-2 rounded-lg p-3 text-xs"
-              role="alert"
-            >
-              <p class="text-warning m-0">
-                {{ batch.oversized }}
-                {{ batch.oversized === 1 ? 'file is' : 'files are' }} larger than the 16 GiB private
-                file limit and {{ batch.oversized === 1 ? 'was' : 'were' }} skipped.
-              </p>
-              <p v-if="confirmUnencrypted?.batch && confirmUnencrypted.id === batch.id" class="m-0">
-                Their names and contents will be stored unencrypted on the server, in the same
-                folder. Anyone with access to the server can read them.
-              </p>
-              <div class="flex flex-wrap gap-2">
+              <template v-if="group.batch">
+                <UiBadge :tone="stateTone[group.batch.state] ?? 'neutral'">{{
+                  stateLabel[group.batch.state] ?? group.batch.state
+                }}</UiBadge>
                 <UiButton
-                  v-if="confirmUnencrypted?.batch && confirmUnencrypted.id === batch.id"
-                  size="sm"
-                  :disabled="busy"
-                  @click="oversizedChoice(batch.id, true, 'unencrypted')"
-                  >Upload unencrypted</UiButton
-                >
-                <UiButton
-                  v-else
-                  variant="outline"
-                  size="sm"
-                  :disabled="busy"
-                  @click="confirmUnencrypted = { id: batch.id, batch: true }"
-                  >Upload unencrypted…</UiButton
-                >
-                <UiButton
+                  v-if="canPause(group.batch.state)"
                   variant="ghost"
-                  size="sm"
+                  size="icon-sm"
                   :disabled="busy"
-                  @click="oversizedChoice(batch.id, true, 'keep_skipped')"
-                  >Keep skipped</UiButton
-                >
-              </div>
+                  :aria-label="`Pause ${group.name}`"
+                  title="Pause"
+                  @click="emit('action', group.batch.id, true, 'pause')"
+                  ><Pause aria-hidden="true"
+                /></UiButton>
+                <UiButton
+                  v-if="group.batch.state === 'paused'"
+                  variant="ghost"
+                  size="icon-sm"
+                  :disabled="busy"
+                  :aria-label="`Resume ${group.name}`"
+                  title="Resume"
+                  @click="emit('action', group.batch.id, true, 'resume')"
+                  ><Play aria-hidden="true"
+                /></UiButton>
+                <UiButton
+                  v-if="['failed', 'partial', 'cancelled'].includes(group.batch.state)"
+                  variant="ghost"
+                  size="icon-sm"
+                  :disabled="busy"
+                  :aria-label="`Retry ${group.name}`"
+                  title="Retry unresolved"
+                  @click="emit('action', group.batch.id, true, 'retry')"
+                  ><RotateCcw aria-hidden="true"
+                /></UiButton>
+                <UiButton
+                  v-if="canCancel(group.batch.state)"
+                  variant="ghost"
+                  size="icon-sm"
+                  :aria-label="`Cancel ${group.name}`"
+                  title="Cancel"
+                  @click="emit('action', group.batch.id, true, 'cancel')"
+                  ><X aria-hidden="true"
+                /></UiButton>
+              </template>
             </div>
-            <details v-if="batch.skipped > 0" class="text-xs">
-              <summary class="text-muted-foreground hover:text-foreground cursor-pointer">
-                Review skipped items ({{ batch.skipped }})
-              </summary>
-              <ul class="m-0 mt-2 grid list-none gap-2 p-0" aria-label="Skipped paths and reasons">
-                <li
-                  v-for="(skipped, index) in (batch.skippedItems ?? []).slice(0, 100)"
-                  :key="index"
-                  class="grid gap-0.5"
+
+            <div v-if="group.batch" class="grid gap-2 px-5 empty:hidden">
+              <UiProgress
+                v-if="!group.batch.finishedAt && group.batch.files"
+                :value="percent(group.batch.completed, group.batch.files)"
+              />
+              <p v-if="group.batch.state === 'all_skipped'" class="text-warning m-0 text-xs">
+                Zero files transferred. Every selected item was skipped.
+              </p>
+              <p v-if="group.batch.error" class="text-destructive m-0 text-xs wrap-anywhere">
+                {{ group.batch.error }}
+              </p>
+              <div
+                v-if="group.batch.oversized > 0"
+                class="bg-muted grid gap-2 rounded-lg p-3 text-xs"
+                role="alert"
+              >
+                <p class="text-warning m-0">
+                  {{ group.batch.oversized }}
+                  {{ group.batch.oversized === 1 ? 'file is' : 'files are' }} larger than the 16 GiB
+                  private file limit and {{ group.batch.oversized === 1 ? 'was' : 'were' }} skipped.
+                </p>
+                <p
+                  v-if="confirmUnencrypted?.batch && confirmUnencrypted.id === group.batch.id"
+                  class="m-0"
                 >
-                  <span class="font-mono wrap-anywhere">{{ skipped.path }}</span>
-                  <span class="text-muted-foreground wrap-anywhere">{{ skipped.reason }}</span>
-                  <div v-if="skipped.unencrypted" class="flex flex-wrap items-center gap-2">
-                    <template
-                      v-if="!confirmUnencrypted?.batch && confirmUnencrypted?.id === skipped.id"
-                    >
-                      <span>Store this file unencrypted on the server?</span>
-                      <UiButton
-                        size="sm"
-                        :disabled="busy"
-                        @click="oversizedChoice(skipped.id, false, 'unencrypted')"
-                        >Upload unencrypted</UiButton
+                  Their names and contents will be stored unencrypted on the server, in the same
+                  folder. Anyone with access to the server can read them.
+                </p>
+                <div class="flex flex-wrap gap-2">
+                  <UiButton
+                    v-if="confirmUnencrypted?.batch && confirmUnencrypted.id === group.batch.id"
+                    size="sm"
+                    :disabled="busy"
+                    @click="oversizedChoice(group.batch.id, true, 'unencrypted')"
+                    >Upload unencrypted</UiButton
+                  >
+                  <UiButton
+                    v-else
+                    variant="outline"
+                    size="sm"
+                    :disabled="busy"
+                    @click="confirmUnencrypted = { id: group.batch.id, batch: true }"
+                    >Upload unencrypted…</UiButton
+                  >
+                  <UiButton
+                    variant="ghost"
+                    size="sm"
+                    :disabled="busy"
+                    @click="oversizedChoice(group.batch.id, true, 'keep_skipped')"
+                    >Keep skipped</UiButton
+                  >
+                </div>
+              </div>
+              <details v-if="group.batch.skipped > 0" class="text-xs">
+                <summary class="text-muted-foreground hover:text-foreground cursor-pointer">
+                  Review skipped items ({{ group.batch.skipped }})
+                </summary>
+                <ul
+                  class="m-0 mt-2 grid list-none gap-2 p-0"
+                  aria-label="Skipped paths and reasons"
+                >
+                  <li
+                    v-for="(skipped, index) in (group.batch.skippedItems ?? []).slice(0, 100)"
+                    :key="index"
+                    class="grid gap-0.5"
+                  >
+                    <span class="font-mono wrap-anywhere">{{ skipped.path }}</span>
+                    <span class="text-muted-foreground wrap-anywhere">{{ skipped.reason }}</span>
+                    <div v-if="skipped.unencrypted" class="flex flex-wrap items-center gap-2">
+                      <template
+                        v-if="!confirmUnencrypted?.batch && confirmUnencrypted?.id === skipped.id"
                       >
-                      <UiButton variant="ghost" size="sm" @click="confirmUnencrypted = null"
-                        >Cancel</UiButton
-                      >
-                    </template>
-                    <template v-else>
-                      <UiButton
-                        variant="outline"
-                        size="sm"
-                        :disabled="busy"
-                        @click="confirmUnencrypted = { id: skipped.id, batch: false }"
-                        >Upload unencrypted…</UiButton
-                      >
-                      <UiButton
-                        variant="ghost"
-                        size="sm"
-                        :disabled="busy"
-                        @click="oversizedChoice(skipped.id, false, 'keep_skipped')"
-                        >Keep skipped</UiButton
-                      >
-                    </template>
-                  </div>
+                        <span>Store this file unencrypted on the server?</span>
+                        <UiButton
+                          size="sm"
+                          :disabled="busy"
+                          @click="oversizedChoice(skipped.id, false, 'unencrypted')"
+                          >Upload unencrypted</UiButton
+                        >
+                        <UiButton variant="ghost" size="sm" @click="confirmUnencrypted = null"
+                          >Cancel</UiButton
+                        >
+                      </template>
+                      <template v-else>
+                        <UiButton
+                          variant="outline"
+                          size="sm"
+                          :disabled="busy"
+                          @click="confirmUnencrypted = { id: skipped.id, batch: false }"
+                          >Upload unencrypted…</UiButton
+                        >
+                        <UiButton
+                          variant="ghost"
+                          size="sm"
+                          :disabled="busy"
+                          @click="oversizedChoice(skipped.id, false, 'keep_skipped')"
+                          >Keep skipped</UiButton
+                        >
+                      </template>
+                    </div>
+                  </li>
+                </ul>
+                <p
+                  v-if="group.batch.skipped > (group.batch.skippedItems?.length ?? 0)"
+                  class="text-muted-foreground m-0 mt-2"
+                >
+                  Showing {{ Math.min(100, group.batch.skippedItems?.length ?? 0) }} of
+                  {{ group.batch.skipped }} skipped paths.
+                </p>
+              </details>
+            </div>
+
+            <template v-if="expanded(group)">
+              <!-- Five one-line rows are visible; the rest scroll. -->
+              <ul
+                v-if="group.items.length"
+                class="bg-muted/40 mx-5 my-0 max-h-[calc(5*2.25rem+4px)] list-none divide-y overflow-y-auto rounded-md border p-0"
+                :aria-label="`Files: ${group.name}`"
+              >
+                <li
+                  v-for="item in group.items"
+                  :key="item.id"
+                  class="flex h-9 items-center gap-2 pr-1 pl-3 text-sm"
+                >
+                  <span class="min-w-0 flex-1 truncate" :title="item.name">{{ item.name }}</span>
+                  <span
+                    class="max-w-[45%] truncate text-xs tabular-nums"
+                    :class="item.state === 'failed' ? 'text-destructive' : 'text-muted-foreground'"
+                    :title="status(item)"
+                  >
+                    <template v-if="combined && !group.batch"
+                      >{{ scopeName(item.scope) }} · </template
+                    >{{ status(item) }}
+                  </span>
+                  <UiProgress
+                    v-if="item.state === 'active'"
+                    class="w-16! shrink-0"
+                    :value="percent(item.done, item.total)"
+                  />
+                  <UiBadge :tone="stateTone[item.state] ?? 'neutral'" dot>
+                    {{ stateLabel[item.state] ?? item.state }}
+                  </UiBadge>
+                  <UiButton
+                    v-if="canPause(item.state)"
+                    variant="ghost"
+                    size="icon-sm"
+                    :disabled="busy"
+                    :aria-label="`Pause ${item.name}`"
+                    title="Pause"
+                    @click="emit('action', item.id, false, 'pause')"
+                    ><Pause aria-hidden="true"
+                  /></UiButton>
+                  <UiButton
+                    v-if="canResume(item.state)"
+                    variant="ghost"
+                    size="icon-sm"
+                    :disabled="busy"
+                    :aria-label="`Resume ${item.name}`"
+                    title="Resume"
+                    @click="emit('action', item.id, false, 'resume')"
+                    ><Play aria-hidden="true"
+                  /></UiButton>
+                  <UiButton
+                    v-if="item.state === 'failed' || item.state === 'cancelled'"
+                    variant="ghost"
+                    size="icon-sm"
+                    :disabled="busy"
+                    :aria-label="`Retry ${item.name}`"
+                    title="Retry"
+                    @click="emit('action', item.id, false, 'retry')"
+                    ><RotateCcw aria-hidden="true"
+                  /></UiButton>
+                  <UiButton
+                    v-if="canCancel(item.state)"
+                    variant="ghost"
+                    size="icon-sm"
+                    :disabled="busy"
+                    :aria-label="`Cancel ${item.name}`"
+                    title="Cancel"
+                    @click="emit('action', item.id, false, 'cancel')"
+                    ><X aria-hidden="true"
+                  /></UiButton>
                 </li>
               </ul>
-              <p
-                v-if="batch.skipped > (batch.skippedItems?.length ?? 0)"
-                class="text-muted-foreground m-0 mt-2"
-              >
-                Showing {{ Math.min(100, batch.skippedItems?.length ?? 0) }} of
-                {{ batch.skipped }} skipped paths.
+              <p v-else class="text-muted-foreground m-0 px-5 text-xs">
+                No file details are listed for this {{ section.direction }}.
               </p>
-            </details>
+            </template>
           </li>
         </ul>
-      </UiCard>
-
-      <UiCard as="section" class="min-w-0" aria-label="Files">
-        <div class="p-5 pb-3">
-          <UiCardHeader
-            title="Files"
-            description="Running files first, then what is queued, then recently finished."
-          />
-        </div>
-        <UiEmpty v-if="transfers.length === 0" title="No transfers yet">
-          <template #icon><ArrowLeftRight /></template>
-          Saved uploads and downloads appear here.
-        </UiEmpty>
-        <ul v-else class="m-0 list-none border-t p-0" aria-label="Transfer queue">
-          <li
-            v-for="item in transfers"
-            :key="item.id"
-            class="grid gap-1.5 border-b px-5 py-2.5 last:border-b-0"
-          >
-            <div class="flex items-center gap-2">
-              <ArrowUpFromLine
-                v-if="item.direction === 'upload'"
-                class="text-chart-up size-4 shrink-0"
-                aria-hidden="true"
-              />
-              <ArrowDownToLine v-else class="text-chart-down size-4 shrink-0" aria-hidden="true" />
-              <div class="grid min-w-0 flex-1">
-                <span class="truncate text-sm">{{ item.name }}</span>
-                <span
-                  class="truncate text-xs tabular-nums"
-                  :class="item.state === 'failed' ? 'text-destructive' : 'text-muted-foreground'"
-                >
-                  <template v-if="combined">{{ scopeName(item.scope) }} · </template
-                  >{{ status(item) }}
-                </span>
-              </div>
-              <UiBadge :tone="stateTone[item.state] ?? 'neutral'" dot>
-                {{ stateLabel[item.state] ?? item.state }}
-              </UiBadge>
-              <UiButton
-                v-if="canPause(item.state)"
-                variant="ghost"
-                size="icon-sm"
-                :disabled="busy"
-                :aria-label="`Pause ${item.name}`"
-                title="Pause"
-                @click="emit('action', item.id, false, 'pause')"
-                ><Pause aria-hidden="true"
-              /></UiButton>
-              <UiButton
-                v-if="canResume(item.state)"
-                variant="ghost"
-                size="icon-sm"
-                :disabled="busy"
-                :aria-label="`Resume ${item.name}`"
-                title="Resume"
-                @click="emit('action', item.id, false, 'resume')"
-                ><Play aria-hidden="true"
-              /></UiButton>
-              <UiButton
-                v-if="item.state === 'failed' || item.state === 'cancelled'"
-                variant="ghost"
-                size="icon-sm"
-                :disabled="busy"
-                :aria-label="`Retry ${item.name}`"
-                title="Retry"
-                @click="emit('action', item.id, false, 'retry')"
-                ><RotateCcw aria-hidden="true"
-              /></UiButton>
-              <UiButton
-                v-if="canCancel(item.state)"
-                variant="ghost"
-                size="icon-sm"
-                :disabled="busy"
-                :aria-label="`Cancel ${item.name}`"
-                title="Cancel"
-                @click="emit('action', item.id, false, 'cancel')"
-                ><X aria-hidden="true"
-              /></UiButton>
-            </div>
-            <UiProgress v-if="item.state === 'active'" :value="percent(item.done, item.total)" />
-          </li>
-        </ul>
-        <p
-          v-if="transfers.length >= 200"
-          class="text-muted-foreground m-0 border-t px-5 py-3 text-xs"
-        >
-          Showing up to 200 recent transfers. Selection summaries include all files.
-        </p>
       </UiCard>
     </div>
+    <p v-if="transfers.length >= 200" class="text-muted-foreground m-0 text-xs">
+      File lists show up to 200 recent transfers. Summaries include all files.
+    </p>
   </div>
 </template>

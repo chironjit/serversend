@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -56,9 +57,10 @@ func desktopAsset(req updater.CheckRequest, assets []github.ReleaseAsset) int {
 	return found
 }
 
-func configureUpdater(app *application.App) error {
+// configureUpdater returns the manual update check, or nil when updating is disabled.
+func configureUpdater(app *application.App) (func(), error) {
 	if currentVersion == "dev" {
-		return nil
+		return nil, nil
 	}
 	gh, err := github.New(github.Config{
 		Repository:    updateRepository,
@@ -68,14 +70,14 @@ func configureUpdater(app *application.App) error {
 		HTTPClient: &http.Client{Timeout: 30 * time.Minute},
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := app.Updater.Init(updater.Config{
 		CurrentVersion: currentVersion,
 		Providers:      []updater.Provider{checksumProvider{gh}},
 		Window:         updater.WindowNone,
 	}); err != nil {
-		return err
+		return nil, err
 	}
 
 	flow := &updateFlow{engine: app.Updater, report: func(err error) { app.Logger.Error("update", "error", err) }}
@@ -127,13 +129,18 @@ func configureUpdater(app *application.App) error {
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
 		go flow.check(app.Context(), false)
 	})
-	menu := app.Menu.New()
-	app.Menu.SetApplicationMenu(menu)
-	appMenu := menu.AddSubmenu("ServerSend")
-	appMenu.Add("Check for Updates…").OnClick(func(*application.Context) { go flow.check(app.Context(), true) })
-	appMenu.AddSeparator()
-	appMenu.Add("Quit").OnClick(func(*application.Context) { app.Quit() })
-	return nil
+	check := func() { go flow.check(app.Context(), true) }
+	// Linux and Windows would draw an application menu inside every window;
+	// there the tray menu carries the manual check instead.
+	if runtime.GOOS == "darwin" {
+		menu := app.Menu.New()
+		app.Menu.SetApplicationMenu(menu)
+		appMenu := menu.AddSubmenu("ServerSend")
+		appMenu.Add("Check for Updates…").OnClick(func(*application.Context) { check() })
+		appMenu.AddSeparator()
+		appMenu.Add("Quit").OnClick(func(*application.Context) { app.Quit() })
+	}
+	return check, nil
 }
 
 //go:embed frontend/src/update.html
@@ -195,7 +202,7 @@ func (f *updateFlow) check(parent context.Context, manual bool) {
 	if err != nil {
 		f.report(err)
 		if manual {
-			f.display(updateView{State: "error", Current: currentVersion, Message: "Could not check for updates. Check your connection and try again from the ServerSend menu."})
+			f.display(updateView{State: "error", Current: currentVersion, Message: "Could not check for updates. Check your connection and try again."})
 		}
 		return
 	}

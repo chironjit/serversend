@@ -11,6 +11,13 @@
 // @ts-ignore: Unused imports
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
+/**
+ * CheckForUpdates starts a manual check; results appear in the update popup.
+ */
+export function CheckForUpdates(): $CancellablePromise<void> {
+    return $Call.ByID(1459137224);
+}
+
 export function LaunchAtLogin(): $CancellablePromise<boolean> {
     return $Call.ByID(1589287216);
 }
@@ -45,4 +52,11 @@ export function SetPaused(paused: boolean): $CancellablePromise<void> {
  */
 export function ShowWindow(): $CancellablePromise<void> {
     return $Call.ByID(619873984);
+}
+
+/**
+ * UpdatesEnabled reports whether this build can check for updates.
+ */
+export function UpdatesEnabled(): $CancellablePromise<boolean> {
+    return $Call.ByID(3509345566);
 }

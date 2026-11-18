@@ -11,6 +11,8 @@ const bridge = vi.hoisted(() => ({
     SetPaused: vi.fn<(paused: boolean) => Promise<void>>().mockResolvedValue(),
     LaunchAtLogin: vi.fn<() => Promise<boolean>>().mockResolvedValue(false),
     SetLaunchAtLogin: vi.fn<(enabled: boolean) => Promise<void>>().mockResolvedValue(),
+    UpdatesEnabled: vi.fn<() => Promise<boolean>>().mockResolvedValue(true),
+    CheckForUpdates: vi.fn<() => Promise<void>>().mockResolvedValue(),
     Quit: vi.fn<() => Promise<void>>().mockResolvedValue(),
   },
   service: {
@@ -363,12 +365,14 @@ describe('desktop app', () => {
   it('shows live transfer progress, a running indicator, failures and refreshed files', async () => {
     const wrapper = await onboard();
     await goto(wrapper, 'Transfers');
-    expect(wrapper.text()).toContain('Saved uploads and downloads appear here.');
+    expect(wrapper.text()).toContain('Files and folders you upload appear here.');
     const emit = (item: object) => bridge.listener?.({ data: [item] });
     const video = { id: 1, name: 'video.mp4', direction: 'upload', error: '', total: 1048576 };
     emit({ ...video, state: 'active', done: 524288 });
     await flushPromises();
-    expect(wrapper.get('[aria-label="Transfer queue"] progress').attributes('value')).toBe('50');
+    expect(wrapper.get('[aria-label="Files: Other files"] progress').attributes('value')).toBe(
+      '50',
+    );
     expect(wrapper.text()).toContain('512.0 KiB of 1.0 MiB');
     expect(wrapper.get('nav[aria-label="Main"]').find('[aria-label="1 running"]').exists()).toBe(
       true,
@@ -388,7 +392,7 @@ describe('desktop app', () => {
       error: 'Sign in again to continue',
     });
     await flushPromises();
-    expect(wrapper.find('[aria-label="Transfer queue"] progress').exists()).toBe(false);
+    expect(wrapper.find('[aria-label="Files: Other files"] progress').exists()).toBe(false);
     expect(wrapper.text()).toContain('Sign in again to continue');
     expect(wrapper.find('[aria-label$=" running"]').exists()).toBe(false);
     await goto(wrapper, 'Library');
@@ -505,7 +509,7 @@ describe('desktop app', () => {
     ]);
     const wrapper = await onboard();
     await goto(wrapper, 'Transfers');
-    const selections = wrapper.get('[aria-label="Transfer selections"]');
+    const selections = wrapper.get('[aria-label="Uploads"]');
     expect(selections.text()).toContain('Completed with skipped items');
     expect(selections.text()).toContain('2 of 2 files · 103 skipped');
     expect(selections.text()).toContain('Zero files transferred. Every selected item was skipped.');
@@ -543,7 +547,7 @@ describe('desktop app', () => {
     expect(wrapper.get('[role="alert"]').text()).toContain('Read directory: permission denied');
     expect(button(wrapper, 'Upload').attributes('disabled')).toBeUndefined();
     await goto(wrapper, 'Transfers');
-    const selections = wrapper.get('[aria-label="Transfer selections"]');
+    const selections = wrapper.get('[aria-label="Uploads"]');
     expect(selections.text()).toContain('Failed');
     expect(selections.text()).toContain('Read directory: permission denied');
     expect(selections.text()).not.toContain('Completed with skipped items');
@@ -581,7 +585,7 @@ describe('desktop app', () => {
     ]);
     const wrapper = await onboard();
     await goto(wrapper, 'Transfers');
-    const selections = () => wrapper.get('[aria-label="Transfer selections"]');
+    const selections = () => wrapper.get('[aria-label="Uploads"]');
     expect(selections().text()).toContain('2 files are larger than the 16 GiB private file limit');
     await selections()
       .findAll('button')
@@ -608,11 +612,10 @@ describe('desktop app', () => {
     bridge.service.Batches.mockRejectedValueOnce(new Error('Summary unavailable'));
     const wrapper = await onboard();
     await goto(wrapper, 'Transfers');
-    const selections = () => wrapper.get('[aria-label="Transfer selections"]');
-    expect(selections().text()).toContain('Transfer summaries unavailable: Summary unavailable');
+    expect(wrapper.text()).toContain('Transfer summaries unavailable: Summary unavailable');
     await button(wrapper, 'Retry summaries').trigger('click');
     await flushPromises();
-    expect(selections().text()).not.toContain('Transfer summaries unavailable');
+    expect(wrapper.text()).not.toContain('Transfer summaries unavailable');
     wrapper.unmount();
   });
 
@@ -638,17 +641,51 @@ describe('desktop app', () => {
     });
     bridge.listener?.({ data: [item(503, 'done')] });
     await flushPromises();
-    const queue = wrapper.get('[aria-label="Transfer queue"]');
+    const queue = wrapper.get('[aria-label="Files: Other files"]');
     expect(queue.findAll(':scope > li')).toHaveLength(200);
     expect(queue.text()).toContain('active-1');
     expect(queue.text()).toContain('queued-600');
     expect(queue.text()).not.toContain('queued-620');
     expect(queue.text()).toContain('done-503');
     expect(queue.text()).not.toContain('done-2');
-    expect(wrapper.text()).toContain('Showing up to 200 recent transfers');
+    expect(wrapper.text()).toContain('File lists show up to 200 recent transfers');
     // Completed uploads refresh the listing at most once per interval.
     expect(bridge.service.Files).toHaveBeenCalledTimes(1);
     wrapper.unmount();
+  });
+
+  it('lists uploads newest first whatever order summaries arrive in', async () => {
+    const batch = (id: number) => ({
+      id,
+      name: `selection-${id}`,
+      direction: 'upload',
+      state: 'done',
+      files: 1,
+      completed: 1,
+      failed: 0,
+      cancelled: 0,
+      directories: 0,
+      skipped: 0,
+      skippedItems: [],
+      error: '',
+      bytes: 1,
+      startedAt: 1,
+      finishedAt: 2,
+    });
+    for (const order of [
+      [1, 2, 3],
+      [3, 2, 1],
+    ]) {
+      bridge.service.Batches.mockResolvedValue(order.map(batch));
+      const wrapper = await onboard();
+      await goto(wrapper, 'Transfers');
+      const names = wrapper
+        .get('[aria-label="Uploads started"]')
+        .findAll(':scope > li')
+        .map((li) => li.get('span.truncate').text());
+      expect(names).toEqual(['selection-3', 'selection-2', 'selection-1']);
+      wrapper.unmount();
+    }
   });
 
   it('cancels running selections and individual transfers', async () => {
@@ -690,7 +727,7 @@ describe('desktop app', () => {
       ],
     });
     await flushPromises();
-    const selections = wrapper.get('[aria-label="Transfer selections"]');
+    const selections = wrapper.get('[aria-label="Uploads"]');
     expect(selections.text()).toContain('1 cancelled');
     expect(selections.find('progress').attributes('value')).toBe('33');
     await selections.get('[aria-label="Cancel Photos"]').trigger('click');
@@ -698,7 +735,7 @@ describe('desktop app', () => {
     await flushPromises();
     bridge.listener?.({ data: [queued] });
     await flushPromises();
-    const queue = wrapper.get('[aria-label="Transfer queue"]');
+    const queue = wrapper.get('[aria-label="Files: Other files"]');
     expect(queue.find('[aria-label="Cancel b.jpg"]').exists()).toBe(false);
     await queue.get('[aria-label="Cancel a.jpg"]').trigger('click');
     expect(bridge.service.QueueAction).toHaveBeenCalledWith(3, false, 'cancel');
@@ -876,7 +913,8 @@ describe('desktop app', () => {
     await goto(wrapper, 'Transfers');
     expect(wrapper.text()).toContain('Waiting for connection');
     expect(wrapper.text()).toContain('Connection unavailable');
-    expect((wrapper.get('#bandwidth').element as HTMLInputElement).value).toBe('1.5');
+    expect(wrapper.get('[aria-label="Downloads"]').text()).toContain('offline.txt');
+    expect(wrapper.get('[aria-label="Uploads"]').text()).not.toContain('offline.txt');
     await wrapper.get('[aria-label="Pause Documents"]').trigger('click');
     await flushPromises();
     expect(bridge.service.QueueAction).toHaveBeenLastCalledWith(7, true, 'pause');
@@ -886,6 +924,17 @@ describe('desktop app', () => {
     await wrapper.get('[aria-label="Retry failed.txt"]').trigger('click');
     await flushPromises();
     expect(bridge.service.QueueAction).toHaveBeenLastCalledWith(3, false, 'retry');
+    bridge.background.Paused.mockResolvedValueOnce(true);
+    await button(wrapper, 'Pause all transfers').trigger('click');
+    await flushPromises();
+    expect(bridge.background.SetPaused).toHaveBeenLastCalledWith(true);
+    await button(wrapper, 'Resume all transfers').trigger('click');
+    await flushPromises();
+    expect(bridge.background.SetPaused).toHaveBeenLastCalledWith(false);
+    await wrapper.get('header [aria-label="Check for updates"]').trigger('click');
+    expect(bridge.background.CheckForUpdates).toHaveBeenCalled();
+    await goto(wrapper, 'Settings');
+    expect((wrapper.get('#bandwidth').element as HTMLInputElement).value).toBe('1.5');
     await wrapper.get('#bandwidth').setValue('2.25');
     expect(
       wrapper
@@ -904,11 +953,6 @@ describe('desktop app', () => {
         .findAll('label')
         .find((label) => label.text() === text)!
         .get('input');
-    bridge.background.Paused.mockResolvedValueOnce(true);
-    await toggle('Pause all transfers').setValue(true);
-    await flushPromises();
-    expect(bridge.background.SetPaused).toHaveBeenLastCalledWith(true);
-    expect((toggle('Pause all transfers').element as HTMLInputElement).checked).toBe(true);
     bridge.background.SetLaunchAtLogin.mockRejectedValueOnce(new Error('Autostart unavailable'));
     await toggle('Launch at login in the tray').setValue(true);
     await flushPromises();
@@ -919,6 +963,7 @@ describe('desktop app', () => {
       .find((button) => button.text() === 'Quit ServerSend')!
       .trigger('click');
     expect(bridge.background.Quit).toHaveBeenCalled();
+    await goto(wrapper, 'Transfers');
     bridge.service.QueueAction.mockRejectedValueOnce(new Error('Queue update failed'));
     await wrapper.get('[aria-label="Resume paused.txt"]').trigger('click');
     await flushPromises();
@@ -1000,17 +1045,21 @@ describe('desktop app', () => {
         error: '',
       },
     ]);
-    const label = wrapper
-      .findAll('label')
-      .find((l) => l.text().includes('Show all signed-in servers'))!;
-    await label.get('input').setValue(true);
-    await flushPromises();
+    const combined = async (value: boolean) => {
+      await goto(wrapper, 'Settings');
+      await wrapper
+        .findAll('label')
+        .find((l) => l.text().includes('Show all signed-in servers'))!
+        .get('input')
+        .setValue(value);
+      await goto(wrapper, 'Transfers');
+    };
+    await combined(true);
     expect(wrapper.text()).toContain('other-server-file');
     await wrapper.get('[aria-label="Resume other-server-file"]').trigger('click');
     await flushPromises();
     expect(bridge.service.QueueActionScoped).toHaveBeenCalledWith('s2/a1', 55, false, 'resume');
-    await label.get('input').setValue(false);
-    await flushPromises();
+    await combined(false);
     expect(wrapper.text()).not.toContain('other-server-file');
     wrapper.unmount();
   });

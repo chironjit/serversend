@@ -28,6 +28,8 @@ type BackgroundService struct {
 	pause    *application.MenuItem
 	login    *application.MenuItem
 	trayMenu *application.Menu
+	// checkUpdates is the manual update check; nil when updating is disabled.
+	checkUpdates func()
 }
 
 func startedInBackground(args []string) bool { return slices.Contains(args, backgroundArg) }
@@ -55,6 +57,9 @@ func (b *BackgroundService) attach(window *application.WebviewWindow) {
 	b.login = menu.AddCheckbox("Launch at login", b.LaunchAtLogin()).OnClick(func(ctx *application.Context) {
 		_ = b.SetLaunchAtLogin(ctx.ClickedMenuItem().Checked())
 	})
+	if b.checkUpdates != nil {
+		menu.Add("Check for Updates…").OnClick(func(*application.Context) { b.checkUpdates() })
+	}
 	menu.AddSeparator()
 	menu.Add("Quit ServerSend").OnClick(func(*application.Context) { b.app.Quit() })
 	b.trayMenu = menu
@@ -75,6 +80,16 @@ func (b *BackgroundService) ShowWindow() {
 		b.window.UnMinimise()
 		b.window.Focus()
 	})
+}
+
+// UpdatesEnabled reports whether this build can check for updates.
+func (b *BackgroundService) UpdatesEnabled() bool { return b.checkUpdates != nil }
+
+// CheckForUpdates starts a manual check; results appear in the update popup.
+func (b *BackgroundService) CheckForUpdates() {
+	if b.checkUpdates != nil {
+		b.checkUpdates()
+	}
 }
 
 // Quit stops transfers at their checkpoints and exits the application.

@@ -425,6 +425,7 @@ func (s *durableStore) batches(ctx context.Context, scope protocol.Scope) ([]Bat
 			return nil, err
 		}
 		b.SkippedItems = []SkippedItem{}
+		b.Direction = "upload"
 		batches = append(batches, b)
 	}
 	err = rows.Err()
@@ -451,6 +452,9 @@ func (s *durableStore) batches(ctx context.Context, scope protocol.Scope) ([]Bat
 				return nil, err
 			}
 			isScan := kind == "scan_upload" || kind == "scan_restore"
+			if kind == "download" || kind == "scan_restore" {
+				b.Direction = "download"
+			}
 			if !isScan {
 				b.Files += n
 			}

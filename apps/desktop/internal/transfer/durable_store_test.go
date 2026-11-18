@@ -331,3 +331,19 @@ func TestSecondQueueInitializationCannotRecoverActiveOwner(t *testing.T) {
 		t.Fatalf("second startup reset owner state: %s %v", state, err)
 	}
 }
+func TestDurableBatchDirection(t *testing.T) {
+	s, scope := queueFixture(t)
+	if _, err := s.create(t.Context(), scope, "up", []durableTask{{Kind: "upload", Name: "a", Payload: durablePayload{Path: "a"}}}); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	restore := durableTask{Kind: "scan_restore", Name: "b", Payload: durablePayload{Path: filepath.Join(root, "b"), Root: root, Policy: "fail"}}
+	restore.Payload.Entry.ID = "b"
+	if _, err := s.create(t.Context(), scope, "down", []durableTask{restore}); err != nil {
+		t.Fatal(err)
+	}
+	batches, err := s.batches(t.Context(), scope)
+	if err != nil || len(batches) != 2 || batches[0].Direction != "download" || batches[1].Direction != "upload" {
+		t.Fatalf("batches=%+v err=%v", batches, err)
+	}
+}
