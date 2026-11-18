@@ -35,6 +35,8 @@ The workflow does not enforce registry immutability; use an image digest if you 
 
 After restoring pinned dependencies and building `apps/desktop/frontend`, run `bash scripts/package-desktop.sh X.Y.Z` on each native OS. Outputs go to root `dist/`; `GITHUB_REPOSITORY` defaults to `chironjit/serversend` locally and is embedded from Actions for forks. The existing Release workflow builds all three platforms and publishes them with `SHA256SUMS` only after checks succeed. Do not publish a tag until these changes are merged and pushed.
 
+macOS builds target 12.0 (Monterey), using the [shared desktop build setting](desktop-development.md#validation). Packaging verifies the executable's deployment minimum before signing and sets matching bundle metadata. Native CI on a newer macOS version does not replace testing the packaged app on macOS 12.
+
 Linux packaging downloads the scaffold's existing linuxdeploy tool and verifies its pinned SHA-256 before execution. Its upstream `continuous` URL can change: a changed artifact deliberately fails the build until its digest is reviewed and updated in `apps/desktop/build/linux/appimage/build.sh`.
 
 Desktop checks include consent, postponement, retries, failure handling and prompt rendering tests, plus a native fixture that uses the actual Wails helper to replace the installed binary and relaunch into the new version. The existing Windows/macOS/Linux CI matrix runs that fixture using a Windows executable zip, a signed macOS app bundle zip, or a Linux executable. Linux CI additionally packages and updates two real AppImages using extract-and-run mode. Local Linux executable and AppImage swap/relaunch tests pass; native Windows/macOS results require the hosted matrix to run.

@@ -8,6 +8,7 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 for tool in go node npm; do
   command -v "$tool" >/dev/null 2>&1 || { echo "$tool is required; see docs/desktop-development.md" >&2; exit 1; }
 done
+source scripts/build_env.sh
 
 printf '\n\033[1m%s\033[0m\n' "Step 1 of 3: frontend dependencies"
 if [[ ! -d frontend/node_modules ]]; then
@@ -19,7 +20,8 @@ fi
 printf '\n\033[1m%s\033[0m\n' "Step 2 of 3: build"
 (cd frontend && npm run build >/dev/null)
 # Native toolkit deprecation warnings are noise here; real errors still stop the build.
-go build -mod=readonly -tags production -o bin/desktop . 2>/dev/null || go build -mod=readonly -tags production -o bin/desktop .
+go build -mod=readonly -tags production -ldflags="$desktop_ldflags" -o bin/desktop . 2>/dev/null || go build -mod=readonly -tags production -ldflags="$desktop_ldflags" -o bin/desktop .
+verify_macos_binary bin/desktop
 echo "Built apps/desktop/bin/desktop"
 
 printf '\n\033[1m%s\033[0m\n' "Step 3 of 3: start"

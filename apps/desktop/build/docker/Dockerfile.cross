@@ -74,7 +74,7 @@ for arg in "$@"; do
         *) ARGS="$ARGS $arg" ;;
     esac
 done
-exec zig cc -fno-sanitize=all -target aarch64-macos-none -isysroot /opt/macos-sdk -I/opt/macos-sdk/usr/include -L/opt/macos-sdk/usr/lib -F/opt/macos-sdk/System/Library/Frameworks -w $ARGS
+exec zig cc -fno-sanitize=all -target "aarch64-macos.${MACOSX_DEPLOYMENT_TARGET:?}.0" -isysroot /opt/macos-sdk -I/opt/macos-sdk/usr/include -L/opt/macos-sdk/usr/lib -F/opt/macos-sdk/System/Library/Frameworks -w $ARGS
 ZIGWRAP
 RUN chmod +x /usr/local/bin/zcc-darwin-arm64
 
@@ -94,7 +94,7 @@ for arg in "$@"; do
         *) ARGS="$ARGS $arg" ;;
     esac
 done
-exec zig cc -fno-sanitize=all -target x86_64-macos-none -isysroot /opt/macos-sdk -I/opt/macos-sdk/usr/include -L/opt/macos-sdk/usr/lib -F/opt/macos-sdk/System/Library/Frameworks -w $ARGS
+exec zig cc -fno-sanitize=all -target "x86_64-macos.${MACOSX_DEPLOYMENT_TARGET:?}.0" -isysroot /opt/macos-sdk -I/opt/macos-sdk/usr/include -L/opt/macos-sdk/usr/lib -F/opt/macos-sdk/System/Library/Frameworks -w $ARGS
 ZIGWRAP
 RUN chmod +x /usr/local/bin/zcc-darwin-amd64
 
@@ -140,7 +140,7 @@ RUN chmod +x /usr/local/bin/zcc-windows-arm64
 
 # Build script
 COPY <<'SCRIPT' /usr/local/bin/build.sh
-#!/bin/sh
+#!/bin/bash
 set -e
 
 OS=${1:-darwin}
@@ -187,6 +187,7 @@ esac
 
 export CGO_ENABLED=1
 export CGO_CFLAGS="-w"
+source scripts/build_env.sh
 
 # Build frontend if exists and not already built (host may have built it)
 if [ -d "frontend" ] && [ -f "frontend/package.json" ] && [ ! -d "frontend/dist" ]; then
@@ -198,7 +199,7 @@ APP=${APP_NAME:-$(basename $(pwd))}
 mkdir -p bin
 
 EXT=""
-LDFLAGS="-s -w"
+LDFLAGS="-s -w $desktop_ldflags"
 if [ "$GOOS" = "windows" ]; then
     EXT=".exe"
     LDFLAGS="-s -w -H windowsgui"

@@ -8,8 +8,10 @@ trap 'rm -rf -- "$fixture"' EXIT
 # the child shell instead of comparing /tmp//... against /tmp/....
 fixture="$(cd -- "$fixture" && pwd -P)"
 fixture_desktop="$fixture/desktop with spaces"
-mkdir -p "$fixture_desktop/scripts" "$fixture_desktop/frontend/node_modules/.bin" "$fixture/bin"
+mkdir -p "$fixture_desktop/scripts" "$fixture_desktop/build/darwin" "$fixture_desktop/frontend/node_modules/.bin" "$fixture/bin"
 cp "$script_dir/check.sh" "$fixture_desktop/scripts/check.sh"
+cp "$script_dir/build_env.sh" "$fixture_desktop/scripts/build_env.sh"
+cp "$script_dir/../build/darwin/minimum-version" "$fixture_desktop/build/darwin/minimum-version"
 for tool in vue-tsc vite oxlint tsgolint oxfmt vitest; do
   touch "$fixture_desktop/frontend/node_modules/.bin/$tool"
 done
@@ -30,6 +32,15 @@ case "$name" in
     else
       [[ "$GOTOOLCHAIN" == local && "$GOPROXY" == off && "$GOSUMDB" == off ]]
       [[ "$*" == *-mod=readonly* ]]
+      if [[ "${CHECK_TEST_GOOS:-linux}" == darwin ]]; then
+        [[ "$MACOSX_DEPLOYMENT_TARGET" == 12.0 ]]
+        [[ "$CGO_CFLAGS" == '-DKEEP_C -mmacosx-version-min=12.0' ]]
+        [[ "$CGO_CXXFLAGS" == '-DKEEP_CXX -mmacosx-version-min=12.0' ]]
+        [[ "$CGO_LDFLAGS" == '-Lkeep -mmacosx-version-min=12.0' ]]
+        if [[ "$1" == test || "$1" == build ]]; then
+          [[ "$*" == *'-ldflags=-extldflags=-mmacosx-version-min=12.0'* ]]
+        fi
+      fi
       if [[ "${CHECK_TEST_FAIL:-}" == "$1" ]]; then exit 23; fi
     fi
     ;;
@@ -38,10 +49,19 @@ case "$name" in
     if [[ "${CHECK_TEST_FAIL:-}" == format ]]; then printf './main.go\n'; fi
     ;;
   pkg-config) [[ "${CHECK_TEST_FAIL:-}" != libraries ]] || exit 25 ;;
+  otool)
+    case "${CHECK_TEST_MACHO:-modern}" in
+      modern) printf 'cmd LC_BUILD_VERSION\n minos %s\n' "${CHECK_TEST_MACOS_VERSION:-12.0}" ;;
+      legacy) printf 'cmd LC_VERSION_MIN_MACOSX\n version %s\n' "${CHECK_TEST_MACOS_VERSION:-12.0.0}" ;;
+      universal) printf 'cmd LC_BUILD_VERSION\n minos 12.0\ncmd LC_BUILD_VERSION\n minos 15.0\n' ;;
+      missing) printf 'cmd LC_UUID\n' ;;
+      failure) exit 26 ;;
+    esac
+    ;;
 esac
 STUB
 chmod +x "$fixture/bin/tool"
-for tool in go gofmt npm node pkg-config; do
+for tool in go gofmt npm node pkg-config otool; do
   ln -s tool "$fixture/bin/$tool"
 done
 
@@ -61,7 +81,7 @@ run_case
 [[ "$result" == 0 ]]
 grep -F 'Desktop checks passed' "$fixture/output" >/dev/null
 grep -F "npm:run build:$fixture_desktop/frontend" "$CHECK_TEST_LOG" >/dev/null
-grep -F 'go:test -mod=readonly -race ./...' "$CHECK_TEST_LOG" >/dev/null
+grep -F 'go:test -mod=readonly -race -ldflags= ./...' "$CHECK_TEST_LOG" >/dev/null
 grep -F 'go:build -mod=readonly -tags production' "$CHECK_TEST_LOG" >/dev/null
 printf 'PASS: all stages run from the component directory with offline read-only Go settings\n'
 
@@ -126,7 +146,29 @@ printf 'PASS: missing frontend dependency is reported without installation\n'
 
 export CHECK_TEST_GOOS=darwin
 export CHECK_TEST_FAIL=libraries
+export CGO_CFLAGS=-DKEEP_C CGO_CXXFLAGS=-DKEEP_CXX CGO_LDFLAGS=-Lkeep
+export MACOSX_DEPLOYMENT_TARGET=15.0
 run_case
 [[ "$result" == 0 ]]
 if grep -F 'pkg-config:' "$CHECK_TEST_LOG" >/dev/null; then exit 1; fi
 printf 'PASS: non-Linux checks do not require Linux libraries\n'
+printf 'PASS: macOS compile/link targets override host defaults and preserve caller flags\n'
+
+export CHECK_TEST_MACHO=legacy
+run_case
+[[ "$result" == 0 ]]
+printf 'PASS: legacy Mach-O deployment metadata is accepted\n'
+
+export CHECK_TEST_MACHO=modern CHECK_TEST_MACOS_VERSION=11.0
+run_case
+[[ "$result" != 0 ]]
+grep -F 'expected 12.0' "$fixture/output" >/dev/null
+unset CHECK_TEST_MACOS_VERSION
+
+for metadata in universal missing failure; do
+  export CHECK_TEST_MACHO="$metadata"
+  run_case
+  [[ "$result" != 0 ]]
+  if grep -F 'Desktop checks passed' "$fixture/output" >/dev/null; then exit 1; fi
+done
+printf 'PASS: incorrect architecture targets, missing metadata and inspection errors fail validation\n'

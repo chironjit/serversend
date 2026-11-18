@@ -9,6 +9,7 @@ fi
 # Discover an existing installation only; checks never install tools. An
 # explicit override or PATH selection remains authoritative, even if invalid.
 export GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off
+source scripts/build_env.sh
 wails_cli="${WAILS3:-}"
 if [[ -z "$wails_cli" ]]; then
   wails_cli="$(command -v wails3 || true)"

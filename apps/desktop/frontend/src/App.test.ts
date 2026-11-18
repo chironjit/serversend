@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
 import App from './App.vue';
+import UiInput from './components/ui/UiInput.vue';
 
 type Listener = (event: { data: unknown }) => void;
 const bridge = vi.hoisted(() => ({
@@ -884,6 +885,12 @@ describe('desktop transfer slice', () => {
     await flushPromises();
     expect(bridge.service.QueueAction).toHaveBeenLastCalledWith(3, false, 'retry');
     await wrapper.get('#bandwidth').setValue('2.25');
+    expect(
+      wrapper
+        .findAllComponents(UiInput)
+        .find((input) => input.attributes('id') === 'bandwidth')
+        ?.props(),
+    ).toMatchObject({ modelValue: '2.25' });
     await wrapper
       .findAll('form')
       .find((form) => form.find('#bandwidth').exists())!

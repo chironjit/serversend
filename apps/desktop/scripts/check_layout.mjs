@@ -48,10 +48,33 @@ for (const path of [
 ])
   exists(desktop + path);
 
+const macosMinimum = read(`${desktop}build/darwin/minimum-version`).trim();
+assert.match(macosMinimum, /^\d+\.\d+$/);
+for (const path of [
+  `${desktop}scripts/check.sh`,
+  `${desktop}scripts/check_bindings.sh`,
+  `${desktop}scripts/local_test_desktop.sh`,
+  `${desktop}build/darwin/Taskfile.yml`,
+  `${desktop}build/docker/Dockerfile.cross`,
+  'scripts/package-desktop.sh',
+]) {
+  assert.match(
+    read(path),
+    /source scripts\/build_env\.sh/,
+    `${path} must use the desktop build environment`,
+  );
+}
 for (const name of ['Info.plist', 'Info.dev.plist']) {
   assert.match(
     read(`${desktop}build/darwin/${name}`),
     /<key>CFBundleExecutable<\/key>\s*<string>desktop<\/string>/,
+  );
+  assert.equal(
+    read(`${desktop}build/darwin/${name}`).match(
+      /<key>LSMinimumSystemVersion<\/key>\s*<string>([^<]+)<\/string>/,
+    )?.[1],
+    `${macosMinimum}.0`,
+    `${name} must match build/darwin/minimum-version`,
   );
 }
 assert.match(read(`${desktop}build/linux/desktop.desktop`), /^Exec=desktop$/m);

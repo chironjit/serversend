@@ -22,6 +22,7 @@ done
 export GOTOOLCHAIN=local
 export GOPROXY=off
 export GOSUMDB=off
+source scripts/build_env.sh
 
 if [[ "$(go env GOOS)" == linux ]]; then
   if ! command -v pkg-config >/dev/null 2>&1; then
@@ -49,9 +50,10 @@ printf 'Checking desktop frontend formatting, types, lint, tests and production 
 
 printf 'Checking desktop Go code\n'
 go vet -mod=readonly ./...
-go test -mod=readonly -race ./...
+go test -mod=readonly -race -ldflags="$desktop_ldflags" ./...
 
 build_dir="$(mktemp -d "${TMPDIR:-/tmp}/serversend-desktop-check.XXXXXX")"
 trap 'rm -rf -- "$build_dir"' EXIT
-go build -mod=readonly -tags production -o "$build_dir/desktop" .
+go build -mod=readonly -tags production -ldflags="$desktop_ldflags" -o "$build_dir/desktop" .
+verify_macos_binary "$build_dir/desktop"
 printf 'Desktop checks passed\n'

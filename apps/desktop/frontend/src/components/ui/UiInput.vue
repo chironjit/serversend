@@ -1,5 +1,9 @@
 <script setup lang="ts">
-const model = defineModel<string>({ default: '' });
+const model = defineModel<string>({
+  default: '',
+  // Native v-model coerces number inputs; keep the component's string contract.
+  set: (value) => String(value),
+});
 </script>
 
 <template>

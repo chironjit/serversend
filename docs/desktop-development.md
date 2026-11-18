@@ -16,6 +16,8 @@ Use the Go version required by root `go.work` and Node.js 26 with npm (the versi
 
 Linux is the primary development target. Native validation requires CGO, a C compiler, `pkg-config`, and the GTK4 and WebKitGTK 6.0 development libraries. Windows and macOS require their native Wails build prerequisites and must be validated on those platforms before release. The Bash entry point is usable on Linux/macOS and in Git Bash on Windows; it does not replace native platform testing.
 
+The macOS deployment minimum is **12.0 (Monterey)**, defined in `apps/desktop/build/darwin/minimum-version`. Desktop checks, local builds, release packaging and Wails tasks share `scripts/build_env.sh`, which sets native compiler flags and an explicit final Go external-linker target while preserving caller flags. Native builds inspect Mach-O metadata with `otool` and reject a different minimum; `check-layout` keeps both app plists aligned. For manual Go builds on macOS, run from `apps/desktop`: `source scripts/build_env.sh`, then `go build -ldflags="$desktop_ldflags" .`. Building on a newer macOS runner does not qualify Monterey runtime support; test the packaged app on macOS 12 before release qualification. Go 1.27 raises its minimum to macOS 13, so a toolchain upgrade must revisit this setting.
+
 For a restricted environment, `GOCACHE` may be set to a writable cache directory before running checks. If the C compiler uses ccache, set `CCACHE_DIR` to a writable cache directory as well. Missing cached Go dependencies produce an error because validation deliberately runs offline. Integration/smoke checks need temporary loopback TCP listeners. A successful scaffold check does not establish product-level UI coverage.
 
 ## Frontend checks

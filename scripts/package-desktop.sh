@@ -8,6 +8,7 @@ cd "$root/apps/desktop"
 export CGO_ENABLED=1 GOWORK=off GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off
 os="$(go env GOOS)"
 arch="$(go env GOARCH)"
+source scripts/build_env.sh
 output="$root/dist"
 mkdir -p "$output"
 stage="$(mktemp -d)"
@@ -44,11 +45,13 @@ JS
   darwin)
     app="$stage/ServerSend.app/Contents"
     mkdir -p "$app/MacOS" "$app/Resources"
-    go build -mod=readonly -tags production -trimpath -ldflags="$ldflags" -o "$app/MacOS/desktop" .
+    go build -mod=readonly -tags production -trimpath -ldflags="$ldflags $desktop_ldflags" -o "$app/MacOS/desktop" .
+    verify_macos_binary "$app/MacOS/desktop"
     cp build/darwin/Info.plist "$app/Info.plist"
     cp build/darwin/icons.icns "$app/Resources/"
     if [[ -f build/darwin/Assets.car ]]; then cp build/darwin/Assets.car "$app/Resources/"; fi
     /usr/libexec/PlistBuddy -c "Set :CFBundleName ServerSend" "$app/Info.plist"
+    /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $desktop_macos_minimum.0" "$app/Info.plist"
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $version" "$app/Info.plist"
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$app/Info.plist"
     xattr -cr "$stage/ServerSend.app"
