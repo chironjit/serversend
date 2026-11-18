@@ -14,7 +14,14 @@ func (m *Manager) CreateDirectory(ctx context.Context, parent, name string) erro
 	if err != nil {
 		return err
 	}
-	_, err = c.CreateDirectory(ctx, protocol.ID(parent), name)
+	m.mu.Lock()
+	private := m.privateMode
+	m.mu.Unlock()
+	create := c.CreateDirectory
+	if private {
+		create = c.CreatePrivateDirectory
+	}
+	_, err = create(ctx, protocol.ID(parent), name)
 	return message(err)
 }
 

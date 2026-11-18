@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/chironjit/serversend/shared/vault"
 	"io"
 	"os"
 	"path/filepath"
@@ -58,6 +59,20 @@ func (c *Client) DownloadWithPolicy(ctx context.Context, entry api.CatalogEntry,
 		return e
 	}); err != nil {
 		return err
+	}
+	var privateKey vault.Key
+	var privateMeta vault.Metadata
+	if manifest.Mode == protocol.Private {
+		master, e := c.VaultKey()
+		if e != nil {
+			return e
+		}
+		privateMeta, privateKey, err = vault.ReadMetadata(master, manifest)
+		clear(master[:])
+		if err != nil {
+			return err
+		}
+		defer clear(privateKey[:])
 	}
 	// Scope, version and destination bind partial data without putting remote
 	// names or credentials into the checkpoint filename.
@@ -191,12 +206,62 @@ func (c *Client) DownloadWithPolicy(ctx context.Context, entry api.CatalogEntry,
 	if err = checkRestoreDestination(root, name, destination, policy); err != nil {
 		return err
 	}
+	publish := partial
+	if manifest.Mode == protocol.Private {
+		encrypted, e := root.Open(partial)
+		if e != nil {
+			return e
+		}
+		defer encrypted.Close()
+		publish = ".serversend-" + string(randomID()) + ".tmp"
+		plain, e := root.OpenFile(publish, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if e != nil {
+			return e
+		}
+		defer plain.Close()
+		defer root.Remove(publish)
+		hash := sha256.New()
+		var total int64
+		for _, chunk := range manifest.Chunks {
+			if e = ctx.Err(); e != nil {
+				return e
+			}
+			if _, e = c.VaultKey(); e != nil {
+				return e
+			}
+			data := make([]byte, chunk.Bytes)
+			if _, e = io.ReadFull(encrypted, data); e != nil {
+				return e
+			}
+			b := vault.Binding{Scope: manifest.Scope, FileID: manifest.FileID, VersionID: manifest.VersionID, Kind: "chunk", Index: chunk.Index}
+			decoded, e := vault.Open(privateKey, data, b.Bytes())
+			if e != nil {
+				return e
+			}
+			total += int64(len(decoded))
+			hash.Write(decoded)
+			_, e = plain.Write(decoded)
+			clear(decoded)
+			if e != nil {
+				return e
+			}
+		}
+		if total != privateMeta.Bytes || hex.EncodeToString(hash.Sum(nil)) != string(privateMeta.SHA256) {
+			return errors.New("private plaintext length mismatch")
+		}
+		if e = plain.Sync(); e != nil {
+			return e
+		}
+		if e = plain.Close(); e != nil {
+			return e
+		}
+	}
 	if policy == "replace" {
-		if err = root.Rename(partial, name); err != nil {
+		if err = root.Rename(publish, name); err != nil {
 			return err
 		}
 	} else {
-		if err = root.Link(partial, name); err != nil {
+		if err = root.Link(publish, name); err != nil {
 			if os.IsExist(err) {
 				if policy == "skip" {
 					return &source.SkipError{Path: destination, Reason: "Existing file skipped"}
@@ -208,6 +273,9 @@ func (c *Client) DownloadWithPolicy(ctx context.Context, entry api.CatalogEntry,
 		if err = root.Remove(partial); err != nil {
 			return err
 		}
+	}
+	if manifest.Mode == protocol.Private {
+		_ = root.Remove(partial)
 	}
 	return syncRestoreDirectory(root)
 }
@@ -260,6 +328,45 @@ func (c *Client) DownloadMatches(ctx context.Context, entry api.CatalogEntry, de
 	var manifest protocol.Manifest
 	if err = retryTransfer(ctx, func() error { var e error; manifest, e = c.Manifest(ctx, entry); return e }); err != nil {
 		return false, err
+	}
+	if manifest.Mode == protocol.Private {
+		master, err := c.VaultKey()
+		if err != nil {
+			return false, err
+		}
+		defer clear(master[:])
+		meta, k, err := vault.ReadMetadata(master, manifest)
+		clear(k[:])
+		if err != nil {
+			return false, err
+		}
+		if info.Size() != meta.Bytes {
+			return false, nil
+		}
+		hash := sha256.New()
+		buffer := make([]byte, 1<<20)
+		var size int64
+		for {
+			if err = ctx.Err(); err != nil {
+				return false, err
+			}
+			if _, err = c.VaultKey(); err != nil {
+				return false, err
+			}
+			n, e := file.Read(buffer)
+			if n > 0 {
+				size += int64(n)
+				hash.Write(buffer[:n])
+			}
+			if e == io.EOF {
+				break
+			}
+			if e != nil {
+				return false, e
+			}
+		}
+		clear(buffer)
+		return size == meta.Bytes && hex.EncodeToString(hash.Sum(nil)) == string(meta.SHA256), nil
 	}
 	if info.Size() != manifest.TotalBytes {
 		return false, nil

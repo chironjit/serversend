@@ -2,9 +2,12 @@ package transfer
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/chironjit/serversend/shared/vault"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,12 +20,15 @@ import (
 )
 
 type durablePayload struct {
-	Path   string
-	Parent protocol.ID
-	Entry  api.CatalogEntry
-	Cursor string
-	Policy string
-	Upload *client.UploadCheckpoint
+	Private     bool
+	Sealed      []byte
+	SealedScope protocol.Scope
+	Path        string
+	Parent      protocol.ID
+	Entry       api.CatalogEntry
+	Cursor      string
+	Policy      string
+	Upload      *client.UploadCheckpoint
 	// Root is the selected, canonical local destination, retained for every child.
 	Root              string
 	DownloadReady     bool
@@ -30,6 +36,7 @@ type durablePayload struct {
 	CancelReason      string
 }
 type durableTask struct {
+	secret                   vault.Key
 	Scope                    protocol.Scope
 	ID, BatchID              int
 	Kind, Name, State, Error string
@@ -37,7 +44,11 @@ type durableTask struct {
 	Done, Total, RetryAt     int64
 	Attempts                 int
 }
-type durableStore struct{ db *sql.DB }
+type durableStore struct {
+	dir string
+	db  *sql.DB
+	key func(protocol.Scope) (vault.Key, error)
+}
 
 func openDurable(ctx context.Context, dir string) (*durableStore, error) {
 	db, err := database.Open(ctx, dir)
@@ -50,11 +61,17 @@ func openDurable(ctx context.Context, dir string) (*durableStore, error) {
 		db.Close()
 		return nil, err
 	}
-	return &durableStore{db}, nil
+	return &durableStore{db: db, dir: dir}, nil
 }
 func (s *durableStore) create(ctx context.Context, scope protocol.Scope, name string, tasks []durableTask) (int, error) {
 	if err := scope.Validate(); err != nil {
 		return 0, err
+	}
+	for _, t := range tasks {
+		if t.Payload.Private {
+			name = "Private batch"
+			break
+		}
 	}
 	var id int64
 	err := sqlite.Write(ctx, s.db, func(tx *sql.Tx) error {
@@ -68,7 +85,8 @@ func (s *durableStore) create(ctx context.Context, scope protocol.Scope, name st
 		}
 		for _, task := range tasks {
 			task.BatchID = int(id)
-			if err := insertTask(ctx, tx, task); err != nil {
+			task.Scope = scope
+			if err := s.insertTask(ctx, tx, task); err != nil {
 				return err
 			}
 		}
@@ -76,12 +94,16 @@ func (s *durableStore) create(ctx context.Context, scope protocol.Scope, name st
 	})
 	return int(id), err
 }
-func insertTask(ctx context.Context, tx *sql.Tx, t durableTask) error {
-	payload, err := json.Marshal(t.Payload)
+func (s *durableStore) insertTask(ctx context.Context, tx *sql.Tx, t durableTask) error {
+	payload, err := s.encode(t.Payload)
 	if err != nil {
 		return err
 	}
 	key := t.Payload.Path
+	if t.Payload.Private {
+		key = fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
+		t.Name = "Private item"
+	}
 	var target any
 	if t.Kind == "download" || t.Kind == "scan_restore" {
 		key = string(t.Payload.Entry.ID)
@@ -89,7 +111,7 @@ func insertTask(ctx context.Context, tx *sql.Tx, t durableTask) error {
 		e := tx.QueryRowContext(ctx, `SELECT payload FROM transfer_tasks WHERE batch_id=? AND source_key=?`, t.BatchID, key).Scan(&prior)
 		if e == nil {
 			var previous durablePayload
-			if err := json.Unmarshal(prior, &previous); err != nil {
+			if err := s.decode(prior, &previous); err != nil {
 				return err
 			}
 			if previous.Path != t.Payload.Path || previous.Entry.Kind != t.Payload.Entry.Kind || previous.Entry.HeadVersionID != t.Payload.Entry.HeadVersionID {
@@ -103,6 +125,9 @@ func insertTask(ctx context.Context, tx *sql.Tx, t durableTask) error {
 			return err
 		}
 		target = canonical
+		if t.Payload.Private {
+			target = fmt.Sprintf("%x", sha256.Sum256([]byte(canonical)))
+		}
 		var existing string
 		err = tx.QueryRowContext(ctx, `SELECT source_key FROM transfer_tasks WHERE batch_id=? AND target_key=?`, t.BatchID, target).Scan(&existing)
 		if err == nil && existing != key {
@@ -116,36 +141,57 @@ func insertTask(ctx context.Context, tx *sql.Tx, t durableTask) error {
 	if state == "" {
 		state = "queued"
 	}
+	if t.Payload.Private && t.Error != "" {
+		t.Error = "Private source could not be read"
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO transfer_tasks(batch_id,source_key,target_key,kind,name,state,payload,total,error) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(batch_id,source_key) DO NOTHING`, t.BatchID, key, target, t.Kind, t.Name, state, payload, t.Total, t.Error)
 	return err
 }
 
 const taskColumns = `t.id,t.batch_id,t.kind,t.name,t.state,t.payload,t.done,t.total,t.error,t.retry_at,t.attempts`
 
-func readTask(row interface{ Scan(...any) error }) (durableTask, error) {
+func (s *durableStore) readTask(row interface{ Scan(...any) error }) (durableTask, error) {
 	var t durableTask
 	var payload []byte
 	err := row.Scan(&t.ID, &t.BatchID, &t.Kind, &t.Name, &t.State, &payload, &t.Done, &t.Total, &t.Error, &t.RetryAt, &t.Attempts)
 	if err == nil {
-		err = json.Unmarshal(payload, &t.Payload)
+		err = s.decode(payload, &t.Payload, &t.secret)
+		if errors.Is(err, vault.ErrLocked) {
+			t.Payload = durablePayload{Private: true}
+			err = nil
+		}
 	}
 	return t, err
 }
 func (s *durableStore) claim(ctx context.Context, scope protocol.Scope, exclude ...int) (durableTask, error) {
+	return s.claimWithPrivate(ctx, scope, true, exclude...)
+}
+func (s *durableStore) claimWithPrivate(ctx context.Context, scope protocol.Scope, allowPrivate bool, exclude ...int) (durableTask, error) {
 	var task durableTask
 	err := sqlite.Write(ctx, s.db, func(tx *sql.Tx) error {
 		var err error
 		filter := ""
+		if !allowPrivate {
+			filter = " AND coalesce(json_extract(t.payload,'$.Private'),0)=0"
+		}
+		if s.key != nil {
+			if _, e := s.key(scope); e != nil {
+				filter = " AND coalesce(json_extract(t.payload,'$.Private'),0)=0"
+			}
+		}
 		args := []any{scope.ServerID, scope.AccountID, time.Now().UnixMilli(), time.Now().UnixMilli()}
 		if len(exclude) > 0 {
-			filter = " AND t.id NOT IN (" + strings.TrimSuffix(strings.Repeat("?,", len(exclude)), ",") + ")"
+			filter += " AND t.id NOT IN (" + strings.TrimSuffix(strings.Repeat("?,", len(exclude)), ",") + ")"
 			for _, id := range exclude {
 				args = append(args, id)
 			}
 		}
-		task, err = readTask(tx.QueryRowContext(ctx, `SELECT `+taskColumns+` FROM transfer_tasks t JOIN transfer_batches b ON b.id=t.batch_id WHERE b.server_id=? AND b.account_id=? AND ((b.state NOT IN ('paused','cancelled') AND t.state IN ('queued','waiting_network','waiting_capacity','waiting_authentication','retry_scheduled') AND t.retry_at<=?) OR (t.state='cancel_pending' AND t.retry_at<=?))`+filter+` ORDER BY b.served_at,t.id LIMIT 1`, args...))
+		task, err = s.readTask(tx.QueryRowContext(ctx, `SELECT `+taskColumns+` FROM transfer_tasks t JOIN transfer_batches b ON b.id=t.batch_id WHERE b.server_id=? AND b.account_id=? AND ((b.state NOT IN ('paused','cancelled') AND t.state IN ('queued','waiting_network','waiting_capacity','waiting_authentication','retry_scheduled','waiting_vault') AND t.retry_at<=?) OR (t.state='cancel_pending' AND t.retry_at<=?))`+filter+` ORDER BY b.served_at,t.id LIMIT 1`, args...))
 		if err != nil {
 			return err
+		}
+		if task.Payload.Private && task.Payload.Path == "" {
+			return vault.ErrLocked
 		}
 		// Keep cancellation intent distinct while its server reservation is released.
 		if task.State != "cancel_pending" {
@@ -163,7 +209,18 @@ func (s *durableStore) claim(ctx context.Context, scope protocol.Scope, exclude 
 	return task, err
 }
 func (s *durableStore) save(ctx context.Context, t durableTask) error {
-	payload, err := json.Marshal(t.Payload)
+	var payload []byte
+	var err error
+	if t.Payload.Private && t.secret != (vault.Key{}) {
+		raw, e := json.Marshal(t.Payload)
+		if e != nil {
+			return e
+		}
+		payload, err = json.Marshal(durablePayload{Private: true, SealedScope: t.Payload.SealedScope, Sealed: vault.Seal(t.secret, raw, []byte("serversend-private-queue-v1"))})
+		clear(raw)
+	} else {
+		payload, err = s.encode(t.Payload)
+	}
 	if err != nil {
 		return err
 	}
@@ -173,6 +230,9 @@ func (s *durableStore) save(ctx context.Context, t durableTask) error {
 	return err
 }
 func (s *durableStore) finish(ctx context.Context, t durableTask, state, msg string, retry int64) error {
+	if t.Payload.Private && msg != "" {
+		msg = "Private transfer needs attention; unlock and retry"
+	}
 	_, err := s.db.ExecContext(ctx, `UPDATE transfer_tasks SET state=?,error=?,retry_at=?,attempts=attempts+1,done=?,total=? WHERE id=? AND state='active'`, state, msg, retry, t.Done, t.Total, t.ID)
 	return err
 }
@@ -187,11 +247,11 @@ func (s *durableStore) children(ctx context.Context, parent durableTask, childre
 		}
 		for _, t := range children {
 			t.BatchID = parent.BatchID
-			if err := insertTask(ctx, tx, t); err != nil {
+			if err := s.insertTask(ctx, tx, t); err != nil {
 				return err
 			}
 		}
-		payload, err := json.Marshal(parent.Payload)
+		payload, err := s.encode(parent.Payload)
 		if err != nil {
 			return err
 		}
@@ -207,12 +267,13 @@ func (s *durableStore) items(ctx context.Context, scope protocol.Scope) ([]Item,
 	defer rows.Close()
 	items := []Item{}
 	for rows.Next() {
-		t, err := readTask(rows)
+		t, err := s.readTask(rows)
 		if err != nil {
 			return nil, err
 		}
 		t.Scope = scope
 		items = append(items, t.item())
+		clear(t.secret[:])
 	}
 	return items, rows.Err()
 }
@@ -244,7 +305,7 @@ func (s *durableStore) control(ctx context.Context, scope protocol.Scope, id int
 				return err
 			}
 		case "resume":
-			_, err := tx.ExecContext(ctx, `UPDATE transfer_tasks SET state='queued',error='',retry_at=0 WHERE `+filter+` AND state IN ('paused','waiting_network','waiting_authentication','waiting_capacity','retry_scheduled')`, args...)
+			_, err := tx.ExecContext(ctx, `UPDATE transfer_tasks SET state='queued',error='',retry_at=0 WHERE `+filter+` AND state IN ('paused','waiting_network','waiting_authentication','waiting_capacity','retry_scheduled','waiting_vault')`, args...)
 			if err != nil {
 				return err
 			}
@@ -400,7 +461,7 @@ func (s *durableStore) batches(ctx context.Context, scope protocol.Scope) ([]Bat
 				return nil, err
 			}
 			var p durablePayload
-			if err := json.Unmarshal(raw, &p); err != nil {
+			if err := s.decode(raw, &p); err != nil {
 				details.Close()
 				return nil, err
 			}
@@ -415,3 +476,50 @@ func (s *durableStore) batches(ctx context.Context, scope protocol.Scope) ([]Bat
 	return batches, nil
 }
 func taskName(path string) string { return filepath.Base(path) }
+
+func (s *durableStore) encode(p durablePayload) ([]byte, error) {
+	if !p.Private {
+		return json.Marshal(p)
+	}
+	if s.key == nil {
+		return nil, vault.ErrLocked
+	}
+	k, err := s.key(p.SealedScope)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(k[:])
+	p.Sealed = nil
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(raw)
+	return json.Marshal(durablePayload{Private: true, SealedScope: p.SealedScope, Sealed: vault.Seal(k, raw, []byte("serversend-private-queue-v1"))})
+}
+func (s *durableStore) decode(raw []byte, p *durablePayload, keys ...*vault.Key) error {
+	if err := json.Unmarshal(raw, p); err != nil {
+		return err
+	}
+	if !p.Private {
+		return nil
+	}
+	if s.key == nil {
+		return vault.ErrLocked
+	}
+	k, err := s.key(p.SealedScope)
+	if err != nil {
+		return err
+	}
+	defer clear(k[:])
+	plain, err := vault.Open(k, p.Sealed, []byte("serversend-private-queue-v1"))
+	if err != nil {
+		return err
+	}
+	defer clear(plain)
+	err = json.Unmarshal(plain, p)
+	if err == nil && len(keys) > 0 {
+		*keys[0] = k
+	}
+	return err
+}

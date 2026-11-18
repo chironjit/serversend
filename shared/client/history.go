@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
+	"github.com/chironjit/serversend/shared/vault"
 	"net/url"
 )
 
@@ -15,7 +16,7 @@ func (c *Client) findUploadTarget(ctx context.Context, parent protocol.ID, name 
 		return c.exchange(ctx, call{method: "GET", path: "/catalog/target?parent_id=" + url.QueryEscape(string(parent)) + "&name=" + url.QueryEscape(name), token: c.token()}, nil, &result)
 	})
 	if err == nil && result.Entry != nil {
-		err = result.Entry.Validate(nil)
+		err = result.Entry.Validate(vault.Formats)
 		if err == nil && (result.Entry.ParentID != parent || result.Entry.Standard == nil || result.Entry.Standard.Name != name) {
 			return nil, api.Error{Code: api.InvalidRequest, Message: "Server returned a different upload destination"}
 		}
@@ -35,7 +36,7 @@ func (c *Client) History(ctx context.Context, file protocol.ID, cursor api.Curso
 func (c *Client) TrashPage(ctx context.Context, cursor api.Cursor) (p api.CatalogPage, err error) {
 	err = c.exchange(ctx, call{method: "GET", path: "/trash?limit=100&cursor=" + url.QueryEscape(string(cursor)), token: c.token()}, nil, &p)
 	if err == nil {
-		err = p.Validate(nil)
+		err = p.Validate(vault.Formats)
 	}
 	return
 }

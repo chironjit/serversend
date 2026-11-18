@@ -36,6 +36,7 @@ import BrandMark from './components/ui/BrandMark.vue';
 import ThemeSwitch from './components/ui/ThemeSwitch.vue';
 import StorageDashboard from './components/StorageDashboard.vue';
 import RecoveryPanel from './components/RecoveryPanel.vue';
+import VaultPanel from './components/VaultPanel.vue';
 const recovery = ref<{ id?: string; name?: string }>();
 import UiAlert from './components/ui/UiAlert.vue';
 import UiBadge from './components/ui/UiBadge.vue';
@@ -1221,6 +1222,18 @@ onUnmounted(() => {
           <UiButton variant="outline" class="m-4" :disabled="busy" @click="recovery = {}"
             >Trash</UiButton
           >
+          <VaultPanel
+            @changed="refresh"
+            @locked="
+              () => {
+                files = [];
+                folders = [];
+                pendingDelete = undefined;
+                recovery = undefined;
+                refresh();
+              }
+            "
+          />
           <RecoveryPanel
             v-if="recovery"
             :file-id="recovery.id"

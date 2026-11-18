@@ -29,3 +29,5 @@ When planning, thinking, building, coding or implementing - ensure that you aim 
 ## Documentation
 Documentation is important, but also, too much does not serve the purpose. Humans don't read it, and it seems agents also ignore it unless specifically prompted. Please read the documentation before starting and before ending your task, review the documentation and see if it needs to be updated. Delete any documentation that will not serve to help agents or humans in the future. 
 
+
+- `golang.org/x/crypto/argon2`: desktop/shared vault key derivation (2026-11-18).

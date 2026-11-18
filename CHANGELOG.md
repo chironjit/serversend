@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add experimental private vaults, encrypted names/content and durable tasks, recovery exports, rewrap/lock controls and private backup recovery. Current private ciphertext staging limits each file to 1 GiB; see `docs/private-storage.md`.
+
 - Added desktop version history, downloads and revision-checked restore/conflict resolution, stable overwrite IDs, recoverable file/folder trash with explicit purge, and administrator retention controls (30-day trash; versions kept indefinitely by default). Schema 12 preserves existing versions and exposes earlier hidden displacements in trash. Previously permanently deleted content cannot be recovered. See [lifecycle semantics](docs/protocol-transfers.md#standard-versions-trash-and-retention).
 
 - Added standard account/server storage allocation and reservation dashboards, deduplicated filesystem capacity, useful upload/payload/retry rates and bounded replayable events with stale/offline indicators. See [visibility semantics](docs/protocol-transfers.md#implemented-standard-visibility).

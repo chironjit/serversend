@@ -6,6 +6,8 @@ type Listener = (event: { data: unknown }) => void;
 const bridge = vi.hoisted(() => ({
   listener: undefined as Listener | undefined,
   service: {
+    VaultUnlocked: vi.fn<() => Promise<boolean>>().mockResolvedValue(false),
+    PrivateMode: vi.fn<() => Promise<boolean>>().mockResolvedValue(false),
     FilesPage: vi.fn<
       (
         parent: string,

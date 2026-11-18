@@ -1,6 +1,6 @@
 # Transfer, catalog and queue contract
 
-This is the v1 specification for the later storage/client implementations. Shared wire types, structural validation and the standard transfer/catalog runtime are implemented. Private storage and catalog/session mutation events remain later features. Standard version/trash controls are described below. Periodic statistics events are implemented as described below. General encoding, errors, ownership and pagination follow [protocol foundation](protocol-foundation.md); credentials and trust follow [identity](protocol-identity.md).
+This is the v1 specification for the later storage/client implementations. Shared wire types, structural validation and the standard transfer/catalog runtime are implemented. Experimental [private storage](private-storage.md) is implemented; catalog/session mutation events remain later features. Standard version/trash controls are described below. Periodic statistics events are implemented as described below. General encoding, errors, ownership and pagination follow [protocol foundation](protocol-foundation.md); credentials and trust follow [identity](protocol-identity.md).
 
 ## Route and authorization table
 

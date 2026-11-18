@@ -19,6 +19,9 @@ import (
 
 // Profile contains public connection preferences; credentials live in the OS keychain.
 type Profile struct {
+	PrivateDefault bool         `json:"private_default,omitempty"`
+	RememberVault  bool         `json:"remember_vault,omitempty"`
+	VaultMinutes   int          `json:"vault_minutes,omitempty"`
 	Trust          client.Trust `json:"trust"`
 	AccountID      protocol.ID  `json:"account_id,omitempty"`
 	InstallationID protocol.ID  `json:"installation_id,omitempty"`
@@ -184,6 +187,11 @@ func (m *Manager) saveLogin(c *client.Client) error {
 				return err
 			}
 		}
+		if p.AccountID != state.Session.AccountID {
+			p.PrivateDefault = false
+			p.RememberVault = false
+		}
+		m.privateMode = p.PrivateDefault
 		p.Username = state.Session.Username
 		p.AccountID = state.Session.AccountID
 		if p.Remember {
@@ -241,6 +249,7 @@ func (m *Manager) OpenProfile(ctx context.Context, origin string) (Account, erro
 		m.client.Close()
 	}
 	m.client = c
+	m.privateMode = profile.PrivateDefault
 	c.SetAppVersion(m.version)
 	c.SetInstallationID(profile.InstallationID)
 	m.configureStoreLocked(c)
@@ -291,6 +300,12 @@ func (m *Manager) RemoveProfile(origin string) error {
 		m.catalog = map[string]api.CatalogEntry{}
 	}
 	for i, p := range m.profiles {
+		if p.Origin == origin && p.RememberVault {
+			err := keyring.Delete("ServerSend-vault", credentialID("vault", string(p.Trust.Identity.ServerID), string(p.AccountID)))
+			if err != nil && !errors.Is(err, keyring.ErrNotFound) {
+				return errors.New("unlock the native credential store to remove the remembered vault key")
+			}
+		}
 		if p.Origin == origin {
 			m.profiles = append(m.profiles[:i], m.profiles[i+1:]...)
 			break

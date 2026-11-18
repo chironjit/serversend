@@ -103,6 +103,10 @@ export function CompleteSignIn(code: string): $CancellablePromise<transfer$0.Acc
     return $Call.ByID(622641127, code);
 }
 
+export function ConfigureVault(minutes: number, remember: boolean): $CancellablePromise<void> {
+    return $Call.ByID(2264017734, minutes, remember);
+}
+
 export function ConfirmEnrollment(code: string): $CancellablePromise<string[] | null> {
     return $Call.ByID(3707993690, code);
 }
@@ -119,6 +123,10 @@ export function Devices(before: string): $CancellablePromise<api$0.DeviceInfo[] 
     return $Call.ByID(103921701, before);
 }
 
+export function ExportVaultRecovery(data: string): $CancellablePromise<boolean> {
+    return $Call.ByID(3670506955, data);
+}
+
 export function Files(parent: string): $CancellablePromise<transfer$0.File[] | null> {
     return $Call.ByID(3648180037, parent);
 }
@@ -131,8 +139,16 @@ export function History(id: string, cursor: string): $CancellablePromise<api$0.V
     return $Call.ByID(398689074, id, cursor);
 }
 
+export function LockVault(): $CancellablePromise<void> {
+    return $Call.ByID(1164261959);
+}
+
 export function OpenProfile(origin: string): $CancellablePromise<transfer$0.Account> {
     return $Call.ByID(1263544311, origin);
+}
+
+export function PrivateMode(): $CancellablePromise<boolean> {
+    return $Call.ByID(1085687950);
 }
 
 export function Probe(address: string): $CancellablePromise<client$0.ServerProbe> {
@@ -171,6 +187,10 @@ export function RevokeDevice(id: string): $CancellablePromise<void> {
     return $Call.ByID(446332298, id);
 }
 
+export function RewrapVault(pass: string): $CancellablePromise<void> {
+    return $Call.ByID(2829236081, pass);
+}
+
 export function SelectVersion(id: string, version: string): $CancellablePromise<void> {
     return $Call.ByID(2299457142, id, version);
 }
@@ -183,8 +203,16 @@ export function SetBandwidth(bytesPerSecond: number): $CancellablePromise<void> 
     return $Call.ByID(1328107891, bytesPerSecond);
 }
 
+export function SetPrivateMode($private: boolean): $CancellablePromise<void> {
+    return $Call.ByID(504426654, $private);
+}
+
 export function SetRemember(remember: boolean): $CancellablePromise<void> {
     return $Call.ByID(1707932493, remember);
+}
+
+export function SetupVault(pass: string, ack: boolean): $CancellablePromise<string> {
+    return $Call.ByID(2816531945, pass, ack);
 }
 
 export function SignIn(username: string, password: string): $CancellablePromise<transfer$0.Step> {
@@ -205,4 +233,16 @@ export function Transfers(): $CancellablePromise<transfer$0.Item[] | null> {
 
 export function TrashPage(cursor: string): $CancellablePromise<api$0.CatalogPage> {
     return $Call.ByID(3796950147, cursor);
+}
+
+export function UnlockRememberedVault(): $CancellablePromise<void> {
+    return $Call.ByID(2097423820);
+}
+
+export function UnlockVault(pass: string, recovery: string): $CancellablePromise<void> {
+    return $Call.ByID(1276080626, pass, recovery);
+}
+
+export function VaultUnlocked(): $CancellablePromise<boolean> {
+    return $Call.ByID(3125375627);
 }

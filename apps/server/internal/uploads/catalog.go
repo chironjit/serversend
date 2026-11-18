@@ -104,6 +104,11 @@ func (s *Service) CatalogPage(ctx context.Context, account, parent protocol.ID, 
 		}
 		page.Entries = append(page.Entries, api.CatalogEntry{ID: file.ID, ParentID: file.ParentID, Kind: kind, Mode: protocol.Standard, HeadVersionID: file.HeadVersionID, HeadRevision: revision(file.HeadRevision), Standard: &protocol.StandardMetadata{Name: file.Name}})
 	}
+	for i := range page.Entries {
+		if err := s.repo.PrivateCatalog(ctx, account, &page.Entries[i]); err != nil {
+			return api.CatalogPage{}, err
+		}
+	}
 	if more {
 		cursor.After = files[len(files)-1].ID
 		cursor.Revision = current

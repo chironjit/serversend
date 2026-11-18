@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/chironjit/serversend/shared/vault"
 	"time"
 
 	"github.com/chironjit/serversend/shared/api"
@@ -63,7 +64,7 @@ func (c *Client) Manifest(ctx context.Context, entry api.CatalogEntry) (protocol
 		return protocol.Manifest{}, err
 	}
 	defer response.Body.Close()
-	manifest, err := api.DecodeManifest(response.Body, limits, nil)
+	manifest, err := api.DecodeManifest(response.Body, limits, vault.Formats)
 	if err != nil {
 		return protocol.Manifest{}, fmt.Errorf("reading file manifest: %w", err)
 	}

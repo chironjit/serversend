@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"github.com/chironjit/serversend/apps/server/internal/layout"
 	"github.com/chironjit/serversend/apps/server/internal/storage"
@@ -165,6 +166,11 @@ func (r *Repository) History(ctx context.Context, account, file, after protocol.
 		if err = rows.Scan(&v.ID, &v.TransmittedBytes, &manifest, &created, &v.Conflicted); err != nil {
 			return nil, err
 		}
+		var m protocol.Manifest
+		if err = json.Unmarshal(manifest, &m); err != nil {
+			return nil, err
+		}
+		v.Mode = m.Mode
 		d := sha256.Sum256(manifest)
 		v.ManifestSHA256 = protocol.Digest(hex.EncodeToString(d[:]))
 		v.CreatedAt = time.UnixMilli(created).UTC()

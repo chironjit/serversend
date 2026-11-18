@@ -19,7 +19,10 @@ var initialSchema string
 //go:embed queue.sql
 var queueSchema string
 
-var migrations = []sqlite.Migration{{Version: 1, SQL: initialSchema}, {Version: 2, SQL: queueSchema}}
+//go:embed vault.sql
+var vaultSchema string
+
+var migrations = []sqlite.Migration{{Version: 1, SQL: initialSchema}, {Version: 2, SQL: queueSchema}, {Version: 3, SQL: vaultSchema}}
 
 // Open requires an existing private application directory. Windows callers must
 // provision a user-only ACL. Startup does not create directories or repair access.

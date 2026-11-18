@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
+	"github.com/chironjit/serversend/shared/vault"
 )
 
 type FilePage struct {
@@ -29,6 +30,16 @@ func (m *Manager) FilesPage(ctx context.Context, parent, cursor string) (FilePag
 	files := make([]File, 0, len(page.Entries))
 	catalog := make(map[string]api.CatalogEntry, len(page.Entries))
 	for _, entry := range page.Entries {
+		if entry.Mode == protocol.Private {
+			name, e := c.PrivateName(ctx, entry)
+			if errors.Is(e, vault.ErrLocked) {
+				continue
+			}
+			if e != nil {
+				return FilePage{}, e
+			}
+			entry.Standard = &protocol.StandardMetadata{Name: name}
+		}
 		if entry.Standard == nil || entry.Trashed {
 			continue
 		}
@@ -36,6 +47,17 @@ func (m *Manager) FilesPage(ctx context.Context, parent, cursor string) (FilePag
 		files = append(files, File{ID: string(entry.ID), Name: entry.Standard.Name, Directory: entry.Kind == api.Directory})
 	}
 	m.mu.Lock()
+	if _, err := c.VaultKey(); err != nil {
+		filtered := files[:0]
+		for _, f := range files {
+			if catalog[f.ID].Mode != protocol.Private {
+				filtered = append(filtered, f)
+			} else {
+				delete(catalog, f.ID)
+			}
+		}
+		files = filtered
+	}
 	m.catalog = catalog
 	m.mu.Unlock()
 	sortFiles(files)

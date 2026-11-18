@@ -25,6 +25,7 @@ import (
 
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
+	"github.com/chironjit/serversend/shared/vault"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 )
@@ -101,6 +102,7 @@ func Probe(ctx context.Context, origin string) (ServerProbe, error) {
 }
 
 type Client struct {
+	vault          vaultState
 	identity       *identityVerifier
 	installationID protocol.ID
 	appVersion     string
@@ -152,6 +154,7 @@ func NewWithOptions(origin, approvedFingerprint string, options TransportOptions
 }
 
 func (c *Client) Close() {
+	c.LockVault()
 	c.http.CloseIdleConnections()
 	if closer, ok := c.http.Transport.(io.Closer); ok {
 		_ = closer.Close()
@@ -299,6 +302,7 @@ func (c *Client) SignIn(ctx context.Context, challenge, code, deviceName string)
 
 // SignOut always forgets the local session, even if the server is unreachable.
 func (c *Client) SignOut(ctx context.Context) error {
+	c.LockVault()
 	c.refreshMu.Lock()
 	defer c.refreshMu.Unlock()
 	c.mu.Lock()
@@ -372,7 +376,7 @@ func (c *Client) catalogFolder(ctx context.Context, parent protocol.ID, cursor a
 			return e
 		}
 		defer response.Body.Close()
-		page, e = api.DecodeCatalogPage(response.Body, nil)
+		page, e = api.DecodeCatalogPage(response.Body, vault.Formats)
 		if e != nil {
 			return fmt.Errorf("the server sent an unreadable file list: %w", e)
 		}
@@ -402,7 +406,7 @@ func (c *Client) CatalogChanges(ctx context.Context, after protocol.Revision) (a
 			return e
 		}
 		defer response.Body.Close()
-		changes, e = api.DecodeCatalogChanges(response.Body, nil)
+		changes, e = api.DecodeCatalogChanges(response.Body, vault.Formats)
 		if e == nil && changes.FromRevision != after {
 			return errors.New("the server sent an unrelated catalog interval")
 		}

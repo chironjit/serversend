@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/chironjit/serversend/shared/vault"
 	"io"
 	"net"
 	"net/url"
@@ -22,10 +23,12 @@ import (
 )
 
 type activeDurable struct {
-	batch  int
-	cancel context.CancelFunc
+	private bool
+	batch   int
+	cancel  context.CancelFunc
 }
 type durableQueue struct {
+	privateGate  sync.Mutex
 	closed       chan struct{}
 	storageError string
 	manager      *Manager
@@ -70,6 +73,7 @@ func (m *Manager) enableDurable(dir string) error {
 	}
 	q.bandwidth = bandwidth
 	m.durable = q
+	store.key = m.privateKey
 	for range workers {
 		q.wg.Add(1)
 		go q.work()
@@ -110,14 +114,18 @@ func (q *durableQueue) work() {
 			q.manager.mu.Unlock()
 			if err == nil && !pendingLogin {
 				q.mu.Lock()
+				allowPrivate := true
 				exclude := make([]int, 0, len(q.active))
-				for id := range q.active {
+				for id, a := range q.active {
+					if a.private {
+						allowPrivate = false
+					}
 					exclude = append(exclude, id)
 				}
-				t, e := q.store.claim(q.manager.base(), scope, exclude...)
+				t, e := q.store.claimWithPrivate(q.manager.base(), scope, allowPrivate, exclude...)
 				if e == nil {
 					ctx, cancel := context.WithCancel(q.manager.base())
-					q.active[t.ID] = activeDurable{t.BatchID, cancel}
+					q.active[t.ID] = activeDurable{private: t.Payload.Private, batch: t.BatchID, cancel: cancel}
 					q.mu.Unlock()
 					q.manager.connectionMu.Unlock()
 					q.run(ctx, c, t)
@@ -143,6 +151,7 @@ func (q *durableQueue) work() {
 	}
 }
 func (q *durableQueue) run(ctx context.Context, c *client.Client, t durableTask) {
+	defer clear(t.secret[:])
 	if t.State == "cancel_pending" {
 		var err error
 		if t.Payload.Upload != nil {
@@ -170,6 +179,9 @@ func (q *durableQueue) run(ctx context.Context, c *client.Client, t durableTask)
 		if err == nil && t.Kind == "download" && state != "done" {
 			err = c.CancelDownload(ctx, t.Payload.Entry, t.Payload.Path)
 		}
+		if err == nil && t.Payload.Private {
+			_ = os.Remove(q.stagePath(t.ID))
+		}
 		if err == nil && t.Payload.Upload != nil && t.Payload.Upload.Result != nil {
 			state = "done"
 			t.Done = t.Total
@@ -189,6 +201,9 @@ func (q *durableQueue) run(ctx context.Context, c *client.Client, t durableTask)
 			state = "cancel_pending"
 			retry = time.Now().Add(30 * time.Second).UnixMilli()
 			msg = message(err).Error()
+		}
+		if t.Payload.Private && msg != "" {
+			msg = "Private transfer needs attention; unlock and retry"
 		}
 		q.persist(func() error {
 			if e := q.store.save(q.manager.base(), t); e != nil {
@@ -237,7 +252,46 @@ func (q *durableQueue) run(ctx context.Context, c *client.Client, t durableTask)
 		if t.Payload.Upload == nil {
 			t.Payload.Upload = &client.UploadCheckpoint{}
 		}
-		_, err = c.UploadResumable(requestCtx, t.Payload.Path, t.Payload.Parent, t.Payload.Upload, func(cp *client.UploadCheckpoint) error {
+		upload := c.UploadResumable
+		if t.Payload.Private {
+			upload = func(ctx context.Context, path string, parent protocol.ID, cp *client.UploadCheckpoint, save func(*client.UploadCheckpoint) error, p client.Progress) (api.FinalizeResult, error) {
+				q.privateGate.Lock()
+				defer q.privateGate.Unlock()
+				stage := q.stagePath(t.ID)
+				if cp.Manifest.FileID == "" {
+					_ = os.Remove(stage)
+					var used int64
+					entries, e := os.ReadDir(filepath.Dir(stage))
+					if e != nil && !os.IsNotExist(e) {
+						return api.FinalizeResult{}, e
+					}
+					for _, entry := range entries {
+						info, e := entry.Info()
+						if e != nil {
+							return api.FinalizeResult{}, e
+						}
+						used += info.Size()
+					}
+					src, e := source.Open(path)
+					if e != nil {
+						return api.FinalizeResult{}, e
+					}
+					info, e := src.Stat()
+					src.Close()
+					if e != nil {
+						return api.FinalizeResult{}, e
+					}
+					if used+min(info.Size(), client.MaxPrivateStage)+65536 > 8*client.MaxPrivateStage {
+						return api.FinalizeResult{}, api.Error{Code: api.CapacityExhausted, Message: "Private staging budget is full; resume or cancel paused private uploads"}
+					}
+				}
+				if err := os.MkdirAll(filepath.Dir(stage), 0700); err != nil {
+					return api.FinalizeResult{}, err
+				}
+				return c.UploadPrivateResumable(ctx, path, stage, parent, cp, save, p)
+			}
+		}
+		_, err = upload(requestCtx, t.Payload.Path, t.Payload.Parent, t.Payload.Upload, func(cp *client.UploadCheckpoint) error {
 			t.Payload.Upload = cp
 			t.Done, t.Total = cp.AcknowledgedBytes, cp.Manifest.TotalBytes
 			// Writes are bounded by a chunk acknowledgement or admission, not every
@@ -302,6 +356,9 @@ func (q *durableQueue) run(ctx context.Context, c *client.Client, t durableTask)
 				t.Payload.CancelReason = msg
 				state = "cancel_pending"
 			}
+		case errors.Is(err, vault.ErrLocked):
+			state = "waiting_vault"
+			retry = time.Now().Add(time.Second).UnixMilli()
 		case errors.Is(err, client.ErrTOTPRequired):
 			state = "waiting_authentication"
 			retry = time.Now().Add(30 * time.Second).UnixMilli()
@@ -337,6 +394,9 @@ func (q *durableQueue) run(ctx context.Context, c *client.Client, t durableTask)
 		}
 	}
 	if err == nil {
+		if t.Payload.Private {
+			_ = os.Remove(q.stagePath(t.ID))
+		}
 		t.Done = t.Total
 	}
 	if !q.persist(func() error {
@@ -400,7 +460,11 @@ func (q *durableQueue) scanUpload(ctx context.Context, c *client.Client, t *dura
 	if !info.IsDir() {
 		return errors.New("selected upload directory changed or disappeared")
 	}
-	folder, err := c.CreateDirectory(ctx, t.Payload.Parent, info.Name())
+	create := c.CreateDirectory
+	if t.Payload.Private {
+		create = c.CreatePrivateDirectory
+	}
+	folder, err := create(ctx, t.Payload.Parent, info.Name())
 	if err != nil {
 		return err
 	}
@@ -412,7 +476,7 @@ func (q *durableQueue) scanUpload(ctx context.Context, c *client.Client, t *dura
 				return err
 			}
 			path := filepath.Join(t.Payload.Path, entry.Name())
-			child := durableTask{Name: entry.Name(), Kind: "upload", Payload: durablePayload{Path: path, Parent: folder.ID}}
+			child := durableTask{Name: entry.Name(), Kind: "upload", Payload: durablePayload{Private: t.Payload.Private, SealedScope: t.Payload.SealedScope, Path: path, Parent: folder.ID}}
 			opened, err := source.Open(path)
 			if err != nil {
 				if isSkipped(err) {
@@ -455,7 +519,7 @@ func (q *durableQueue) scanRestore(ctx context.Context, c *client.Client, t *dur
 	}
 	children := make([]durableTask, 0, len(page.Tasks))
 	for _, child := range page.Tasks {
-		children = append(children, durableTask{Kind: child.Kind, Name: child.Entry.Standard.Name, Payload: durablePayload{Path: child.Path, Root: t.Payload.Root, Entry: child.Entry, Policy: t.Payload.Policy}})
+		children = append(children, durableTask{Kind: child.Kind, Name: filepath.Base(child.Path), Payload: durablePayload{Private: t.Payload.Private || child.Entry.Mode == protocol.Private, SealedScope: t.Scope, Path: child.Path, Root: t.Payload.Root, Entry: child.Entry, Policy: t.Payload.Policy}})
 	}
 	t.Payload.Cursor = page.NextCursor
 	if err := q.store.children(ctx, *t, children); err != nil {
@@ -472,12 +536,20 @@ func (m *Manager) queueUploads(paths []string, parent string, folder bool) error
 	if m.durableErr != nil {
 		return m.durableErr
 	}
-	scope, _, err := m.durableScope()
+	scope, c, err := m.durableScope()
 	if err != nil {
 		return err
 	}
 	if parent != "" && protocol.ID(parent).Validate() != nil {
 		return errors.New("invalid destination folder")
+	}
+	m.mu.Lock()
+	private := m.privateMode
+	m.mu.Unlock()
+	if private {
+		if _, err := c.VaultKey(); err != nil {
+			return err
+		}
 	}
 	tasks := make([]durableTask, 0, len(paths))
 	for _, path := range paths {
@@ -489,11 +561,14 @@ func (m *Manager) queueUploads(paths []string, parent string, folder bool) error
 		if folder {
 			kind = "scan_upload"
 		}
-		tasks = append(tasks, durableTask{Kind: kind, Name: taskName(path), Payload: durablePayload{Path: absolute, Parent: protocol.ID(parent)}})
+		tasks = append(tasks, durableTask{Kind: kind, Name: taskName(path), Payload: durablePayload{Private: private, SealedScope: scope, Path: absolute, Parent: protocol.ID(parent)}})
 	}
 	name := "Selected files"
 	if len(paths) == 1 {
 		name = taskName(paths[0])
+	}
+	if private {
+		name = "Private batch"
 	}
 	_, err = m.durable.store.create(m.base(), scope, name, tasks)
 	m.durable.notify()
@@ -503,7 +578,7 @@ func (m *Manager) queueDownload(entry api.CatalogEntry, path, policy string) err
 	if m.durableErr != nil {
 		return m.durableErr
 	}
-	scope, _, err := m.durableScope()
+	scope, c, err := m.durableScope()
 	if err != nil {
 		return err
 	}
@@ -516,8 +591,16 @@ func (m *Manager) queueDownload(entry api.CatalogEntry, path, policy string) err
 	if entry.Kind == api.Directory {
 		kind = "scan_restore"
 	}
-	task := durableTask{Kind: kind, Name: entry.Standard.Name, Payload: durablePayload{Path: path, Root: root, Entry: entry, Policy: policy}}
-	_, err = m.durable.store.create(m.base(), scope, entry.Standard.Name, []durableTask{task})
+	name := "Private item"
+	if entry.Mode == protocol.Private {
+		if _, err := c.VaultKey(); err != nil {
+			return err
+		}
+	} else {
+		name = entry.Standard.Name
+	}
+	task := durableTask{Kind: kind, Name: name, Payload: durablePayload{Private: entry.Mode == protocol.Private, SealedScope: scope, Path: path, Root: root, Entry: entry, Policy: policy}}
+	_, err = m.durable.store.create(m.base(), scope, name, []durableTask{task})
 	m.durable.notify()
 	return err
 }
@@ -650,7 +733,7 @@ func (m *Manager) Restore(ids []string, destination, policy string) error {
 		if entry.Kind == api.Directory {
 			kind = "scan_restore"
 		}
-		tasks = append(tasks, durableTask{Kind: kind, Name: entry.Standard.Name, Payload: durablePayload{Path: filepath.Join(root, entry.Standard.Name), Root: root, Entry: entry, Policy: policy}})
+		tasks = append(tasks, durableTask{Kind: kind, Name: entry.Standard.Name, Payload: durablePayload{Private: entry.Mode == protocol.Private, SealedScope: scope, Path: filepath.Join(root, entry.Standard.Name), Root: root, Entry: entry, Policy: policy}})
 	}
 	m.mu.Unlock()
 	if m.durable == nil {
@@ -724,4 +807,8 @@ func (m *Manager) wakeAuthenticated(c *client.Client) {
 		q.mu.Unlock()
 	}
 	q.notify()
+}
+
+func (q *durableQueue) stagePath(id int) string {
+	return filepath.Join(q.store.dir, "private-staging", fmt.Sprintf("%d", id))
 }

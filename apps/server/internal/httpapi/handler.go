@@ -5,6 +5,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"github.com/chironjit/serversend/shared/vault"
 	"net/http"
 	"strings"
 	"time"
@@ -24,7 +25,8 @@ func Capabilities() api.Capabilities {
 			MinChunkBytes: 1 << 20, MaxChunkBytes: 8 << 20,
 			MaxRequestBytes: 8 << 20, MaxManifestBytes: 1 << 20, MaxChunks: 1 << 20,
 		},
-		Features: []string{api.FeatureBatchUpload},
+		Features:         []string{api.FeatureBatchUpload},
+		ManifestVersions: []uint16{1}, PrivateFormats: vault.Formats,
 	}
 }
 

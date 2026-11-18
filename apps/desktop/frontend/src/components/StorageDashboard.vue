@@ -38,7 +38,8 @@ onUnmounted(() => {
     <p v-if="stale" role="status">Offline or unavailable · values are stale</p>
     <template v-if="stats">
       <p>
-        Logical content {{ bytes(stats.logical_bytes) }} · quota
+        Standard content {{ bytes(stats.logical_bytes) }} · private ciphertext
+        {{ bytes(stats.private_ciphertext_bytes ?? 0) }} · quota
         {{ stats.quota_bytes ? bytes(stats.quota_bytes) : 'Unlimited' }}
       </p>
       <p>

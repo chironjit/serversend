@@ -241,7 +241,7 @@ func TestDesktopSchemaUpgradeAndFutureGuard(t *testing.T) {
 	}
 	defer db.Close()
 	var version int
-	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 3 {
 		t.Fatalf("version=%d error=%v", version, err)
 	}
 	if _, err := Open(ctx, filepath.Join(fresh, "missing")); err == nil {

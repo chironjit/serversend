@@ -99,6 +99,9 @@ export interface Item {
  * Profile contains public connection preferences; credentials live in the OS keychain.
  */
 export interface Profile {
+    "private_default"?: boolean;
+    "remember_vault"?: boolean;
+    "vault_minutes"?: number;
     "trust": client$0.Trust;
     "account_id"?: protocol$0.ID;
     "installation_id"?: protocol$0.ID;

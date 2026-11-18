@@ -10,10 +10,11 @@ import (
 // is reserved for the server administrator, enforced by the HTTP layer.
 func (r *Repository) StorageStatistics(ctx context.Context, account protocol.ID) (s api.StorageStatistics, err error) {
 	err = r.db.QueryRowContext(ctx, `SELECT
- (SELECT coalesce(sum(total_bytes),0) FROM versions WHERE (?1='' OR account_id=?1)),
+ (SELECT coalesce(sum(total_bytes),0) FROM versions WHERE (?1='' OR account_id=?1) AND json_extract(CAST(manifest AS TEXT),'$.mode')='standard'),
+ (SELECT coalesce(sum(total_bytes),0) FROM versions WHERE (?1='' OR account_id=?1) AND json_extract(CAST(manifest AS TEXT),'$.mode')='private'),
  (SELECT coalesce(sum(bytes),0) FROM reservations WHERE (?1='' OR account_id=?1)),
  (SELECT coalesce(sum(byte_count),0) FROM chunks c JOIN reservations r ON r.account_id=c.account_id AND r.upload_id=c.upload_id WHERE (?1='' OR c.account_id=?1)),
- (SELECT count(*) FROM uploads WHERE state='open' AND (?1='' OR account_id=?1))`, account).Scan(&s.LogicalBytes, &s.ReservedBytes, &s.UnwrittenBytes, &s.ActiveUploads)
+ (SELECT count(*) FROM uploads WHERE state='open' AND (?1='' OR account_id=?1))`, account).Scan(&s.LogicalBytes, &s.PrivateCiphertextBytes, &s.ReservedBytes, &s.UnwrittenBytes, &s.ActiveUploads)
 	s.UnwrittenBytes = max(0, s.ReservedBytes-s.UnwrittenBytes)
 	return
 }

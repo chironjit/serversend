@@ -214,3 +214,42 @@ func (s *TransferService) ChooseAndDownloadVersion(id, version string) (bool, er
 	}
 	return true, s.manager.DownloadVersion(id, version, destination)
 }
+
+func (s *TransferService) SetupVault(ctx context.Context, pass string, ack bool) (string, error) {
+	return s.manager.SetupVault(ctx, pass, ack)
+}
+func (s *TransferService) UnlockVault(ctx context.Context, pass, recovery string) error {
+	return s.manager.UnlockVault(ctx, pass, recovery)
+}
+func (s *TransferService) LockVault()          { s.manager.LockVault() }
+func (s *TransferService) VaultUnlocked() bool { return s.manager.VaultUnlocked() }
+func (s *TransferService) SetPrivateMode(private bool) error {
+	return s.manager.SetPrivateMode(private)
+}
+func (s *TransferService) RewrapVault(ctx context.Context, pass string) error {
+	return s.manager.RewrapVault(ctx, pass)
+}
+func (s *TransferService) ExportVaultRecovery(data string) (bool, error) {
+	if len(data) > 8192 {
+		return false, errors.New("invalid recovery package")
+	}
+	path, err := application.Get().Dialog.SaveFile().SetFilename("serversend-vault-recovery.json").PromptForSingleSelection()
+	if err != nil || path == "" {
+		return false, err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	if _, err = f.WriteString(data); err != nil {
+		return false, err
+	}
+	return true, f.Sync()
+}
+func (s *TransferService) ConfigureVault(minutes int, remember bool) error {
+	return s.manager.ConfigureVault(minutes, remember)
+}
+func (s *TransferService) UnlockRememberedVault() error { return s.manager.UnlockRememberedVault() }
+
+func (s *TransferService) PrivateMode() bool { return s.manager.PrivateMode() }

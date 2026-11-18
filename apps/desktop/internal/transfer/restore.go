@@ -31,7 +31,7 @@ func ValidateRestorePath(path string) error            { return client.ValidateR
 // next page. A unique batch/canonical-path claim detects collisions across
 // pages, directory selections and restarts.
 func PlanRestoreDirectory(ctx context.Context, c *client.Client, entry api.CatalogEntry, destination, cursor, policy string) (RestorePage, error) {
-	if entry.Kind != api.Directory || entry.Standard == nil || entry.Mode != protocol.Standard || entry.Trashed {
+	if entry.Kind != api.Directory || entry.Standard == nil || entry.Trashed {
 		return RestorePage{}, errors.New("only live standard directories can be restored")
 	}
 	if policy != "replace" && policy != "skip" && policy != "fail" {
@@ -50,7 +50,14 @@ func PlanRestoreDirectory(ctx context.Context, c *client.Client, entry api.Catal
 		if child.Trashed {
 			continue
 		}
-		if child.ParentID != entry.ID || child.Standard == nil || child.Mode != protocol.Standard {
+		if child.Mode == protocol.Private {
+			name, err := c.PrivateName(ctx, child)
+			if err != nil {
+				return RestorePage{}, err
+			}
+			child.Standard = &protocol.StandardMetadata{Name: name}
+		}
+		if child.ParentID != entry.ID || child.Standard == nil {
 			return RestorePage{}, errors.New("server returned an unexpected restore child")
 		}
 		if err := client.ValidateRestoreName(child.Standard.Name); err != nil {

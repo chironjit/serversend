@@ -364,7 +364,7 @@ func (checkpoint *UploadCheckpoint) validate(limits protocol.TransferLimits) err
 		return err
 	}
 	intent := checkpoint.Intent
-	if intent.Validate(limits) != nil || checkpoint.SourceFingerprint.Validate() != nil || checkpoint.IdempotencyKey == "" || intent.FileID != manifest.FileID || intent.VersionID != manifest.VersionID || intent.Mode != manifest.Mode || intent.ChunkCount != int64(len(manifest.Chunks)) || intent.TransmittedBytes != manifest.TotalBytes || intent.ManifestBytes != int64(len(body)) || checkpoint.SourceSize != manifest.TotalBytes {
+	if intent.Validate(limits) != nil || (manifest.Mode == protocol.Standard && checkpoint.SourceFingerprint.Validate() != nil) || checkpoint.IdempotencyKey == "" || intent.FileID != manifest.FileID || intent.VersionID != manifest.VersionID || intent.Mode != manifest.Mode || intent.ChunkCount != int64(len(manifest.Chunks)) || intent.TransmittedBytes != manifest.TotalBytes || intent.ManifestBytes != int64(len(body)) || (manifest.Mode == protocol.Standard && checkpoint.SourceSize != manifest.TotalBytes) {
 		return errors.New("invalid upload checkpoint intent or source fingerprint")
 	}
 	if checkpoint.UploadID != "" && checkpoint.UploadID.Validate() != nil {

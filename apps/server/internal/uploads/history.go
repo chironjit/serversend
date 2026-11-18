@@ -69,6 +69,11 @@ func (s *Service) TrashPage(ctx context.Context, account protocol.ID, request ap
 	if err != nil {
 		return api.CatalogPage{}, err
 	}
+	for i := range entries {
+		if err := s.repo.PrivateCatalog(ctx, account, &entries[i]); err != nil {
+			return api.CatalogPage{}, err
+		}
+	}
 	rev, err := s.repo.CatalogRevision(ctx, account)
 	page := api.CatalogPage{Page: api.Page{Snapshot: cursor.Snapshot}, CatalogRevision: revision(rev), Entries: entries}
 	if len(entries) > request.Limit {

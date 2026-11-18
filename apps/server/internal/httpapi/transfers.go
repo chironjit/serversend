@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"github.com/chironjit/serversend/shared/vault"
 	"io"
 	"mime"
 	"net/http"
@@ -135,6 +136,8 @@ type accountHandler func(w http.ResponseWriter, r *http.Request, account protoco
 func newTransferRoutes(accounts *auth.Service, service *uploads.Service) *transferRoutes {
 	t := &transferRoutes{accounts: accounts, service: service, mux: http.NewServeMux()}
 	for pattern, handler := range map[string]accountHandler{
+		"GET " + api.BasePath + "/vault":                                          t.vault,
+		"PUT " + api.BasePath + "/vault":                                          t.vault,
 		"GET " + api.BasePath + "/catalog/target":                                 t.uploadTarget,
 		"GET " + api.BasePath + "/trash":                                          t.trash,
 		"POST " + api.BasePath + "/trash/{entry}/restore":                         t.restoreTrash,
@@ -182,7 +185,7 @@ func newTransferRoutes(accounts *auth.Service, service *uploads.Service) *transf
 // typed errors instead of the mux's plain-text defaults.
 func (t *transferRoutes) serve(w http.ResponseWriter, r *http.Request) bool {
 	inside := false
-	for _, prefix := range []string{"/trash", "/uploads", "/catalog", "/files", "/directories"} {
+	for _, prefix := range []string{"/vault", "/trash", "/uploads", "/catalog", "/files", "/directories"} {
 		inside = inside || r.URL.Path == api.BasePath+prefix || strings.HasPrefix(r.URL.Path, api.BasePath+prefix+"/")
 	}
 	if !inside {
@@ -378,7 +381,7 @@ func (t *transferRoutes) chunk(w http.ResponseWriter, r *http.Request, account p
 }
 
 func (t *transferRoutes) directory(w http.ResponseWriter, r *http.Request, account protocol.ID) error {
-	request, err := api.DecodeCreateDirectory(http.MaxBytesReader(w, r.Body, api.MaxControlBytes), nil)
+	request, err := api.DecodeCreateDirectory(http.MaxBytesReader(w, r.Body, api.MaxControlBytes), vault.Formats)
 	if err != nil {
 		return api.Error{Code: api.InvalidRequest, Message: "Send a valid directory name and parent"}
 	}

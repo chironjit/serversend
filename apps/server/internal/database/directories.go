@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 
 	"github.com/chironjit/serversend/apps/server/internal/storage"
@@ -26,6 +27,10 @@ func (r *Repository) CheckDirectory(ctx context.Context, account, parent protoco
 // name, so uploading a folder again merges into it. The folder appears in
 // the data directory once the journal is applied.
 func (r *Repository) CreateDirectory(ctx context.Context, account protocol.ID, request api.CreateDirectoryRequest) (api.CatalogEntry, error) {
+	original := request.Private
+	if original != nil {
+		request.Standard = &protocol.StandardMetadata{Name: string(request.ID)}
+	}
 	entry := api.CatalogEntry{ID: request.ID, ParentID: request.ParentID, Mode: protocol.Standard, Kind: api.Directory, Standard: request.Standard}
 	err := r.write(ctx, func(tx *sql.Tx) error {
 		if err := activeEntry(ctx, tx, account, request.ParentID); err != nil {
@@ -64,11 +69,22 @@ func (r *Repository) CreateDirectory(ctx context.Context, account protocol.ID, r
 		if _, err = tx.ExecContext(ctx, `INSERT INTO directories(account_id,id,parent_id,name,revision) VALUES(?,?,?,?,?)`, account, request.ID, request.ParentID, request.Standard.Name, entry.HeadRevision); err != nil {
 			return err
 		}
+		if original != nil {
+			body, _ := json.Marshal(original)
+			if _, err := tx.ExecContext(ctx, `INSERT INTO private_directories VALUES(?,?,?)`, account, request.ID, body); err != nil {
+				return err
+			}
+		}
 		path, err := dirPath(ctx, tx, account, request.ID)
 		if err != nil {
 			return err
 		}
 		return journal(ctx, tx, storage.Op{Kind: "mkdir", Target: path})
 	})
+	if original != nil {
+		entry.Mode = protocol.Private
+		entry.Standard = nil
+		entry.Private = original
+	}
 	return entry, err
 }

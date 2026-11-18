@@ -68,6 +68,7 @@ export interface FilesystemCapacity {
  * ReservedBytes are not allocated bytes and must not be added to disk usage.
  */
 export interface StorageStatistics {
+    "private_ciphertext_bytes": number;
     "available_bytes": number;
     "updated_at": string;
     "logical_bytes": number;

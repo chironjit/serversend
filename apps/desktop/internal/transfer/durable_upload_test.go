@@ -441,7 +441,7 @@ func TestDurableFolderScanReenumeratesWithoutDuplicatingCompletedWork(t *testing
 			t.Fatalf("symlink not reported: %s %v", state, err)
 		}
 	}
-	empty, err := readTask(store.db.QueryRowContext(t.Context(), `SELECT `+taskColumns+` FROM transfer_tasks t WHERE batch_id=? AND kind='scan_upload' AND name='empty'`, batch))
+	empty, err := store.readTask(store.db.QueryRowContext(t.Context(), `SELECT `+taskColumns+` FROM transfer_tasks t WHERE batch_id=? AND kind='scan_upload' AND name='empty'`, batch))
 	if err != nil {
 		t.Fatal(err)
 	}

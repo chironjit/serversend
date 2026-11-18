@@ -5,20 +5,21 @@ import "time"
 // StorageStatistics separates file allocations from logical content and promises.
 // ReservedBytes are not allocated bytes and must not be added to disk usage.
 type StorageStatistics struct {
-	AvailableBytes int64                `json:"available_bytes"`
-	UpdatedAt      time.Time            `json:"updated_at"`
-	LogicalBytes   int64                `json:"logical_bytes"`
-	CommittedBytes int64                `json:"committed_bytes"`
-	RetainedBytes  int64                `json:"retained_bytes"`
-	StagedBytes    int64                `json:"staged_bytes"`
-	TrashBytes     int64                `json:"trash_bytes"`
-	OtherBytes     int64                `json:"other_bytes"`
-	ReservedBytes  int64                `json:"reserved_bytes"`
-	UnwrittenBytes int64                `json:"unwritten_bytes"`
-	QuotaBytes     int64                `json:"quota_bytes"`
-	ActiveUploads  int64                `json:"active_uploads"`
-	Filesystems    []FilesystemCapacity `json:"filesystems,omitempty"`
-	Transfer       TransferStatistics   `json:"transfer"`
+	PrivateCiphertextBytes int64                `json:"private_ciphertext_bytes"`
+	AvailableBytes         int64                `json:"available_bytes"`
+	UpdatedAt              time.Time            `json:"updated_at"`
+	LogicalBytes           int64                `json:"logical_bytes"`
+	CommittedBytes         int64                `json:"committed_bytes"`
+	RetainedBytes          int64                `json:"retained_bytes"`
+	StagedBytes            int64                `json:"staged_bytes"`
+	TrashBytes             int64                `json:"trash_bytes"`
+	OtherBytes             int64                `json:"other_bytes"`
+	ReservedBytes          int64                `json:"reserved_bytes"`
+	UnwrittenBytes         int64                `json:"unwritten_bytes"`
+	QuotaBytes             int64                `json:"quota_bytes"`
+	ActiveUploads          int64                `json:"active_uploads"`
+	Filesystems            []FilesystemCapacity `json:"filesystems,omitempty"`
+	Transfer               TransferStatistics   `json:"transfer"`
 }
 type FilesystemCapacity struct {
 	ID             string   `json:"id"`

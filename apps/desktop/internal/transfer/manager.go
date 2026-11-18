@@ -89,6 +89,7 @@ type Manager struct {
 	nextBatch   int
 	profilePath string
 	profiles    []Profile
+	privateMode bool
 	durable     *durableQueue
 	durableErr  error
 }
@@ -417,6 +418,11 @@ func (m *Manager) FileName(id string) (string, bool) {
 	entry, ok := m.catalog[id]
 	if !ok || entry.Kind != api.File {
 		return "", false
+	}
+	if entry.Mode == protocol.Private {
+		if _, err := m.client.VaultKey(); err != nil {
+			return "", false
+		}
 	}
 	return entry.Standard.Name, true
 }

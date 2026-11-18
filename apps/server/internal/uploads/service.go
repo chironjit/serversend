@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/chironjit/serversend/shared/vault"
 	"io"
 	"strconv"
 	"sync"
@@ -160,7 +161,12 @@ func (s *Service) Create(ctx context.Context, account protocol.ID, key string, r
 	if err := request.Validate(s.limits); err != nil {
 		return api.Upload{}, false, api.Error{Code: api.InvalidRequest, Message: "Upload request is outside the server's advertised limits"}
 	}
-	if request.Mode != protocol.Standard {
+	if request.Mode == protocol.Private {
+		if _, err := s.repo.Vault(ctx, account); err != nil {
+			return api.Upload{}, false, err
+		}
+	}
+	if request.Mode != protocol.Standard && request.Mode != protocol.Private {
 		return api.Upload{}, false, api.Error{Code: api.UnsupportedFormat, Message: "This server does not accept private uploads yet"}
 	}
 	if err := s.repo.CheckDirectory(ctx, account, request.ParentID); err != nil {
@@ -399,13 +405,13 @@ func (s *Service) Finalize(ctx context.Context, account, upload protocol.ID, bod
 	if api.ValidateManifestBodyLength(int64(len(body)), intent) != nil {
 		return api.FinalizeResult{}, invalid
 	}
-	manifest, err := api.DecodeManifest(bytes.NewReader(body), s.limits, nil)
+	manifest, err := api.DecodeManifest(bytes.NewReader(body), s.limits, vault.Formats)
 	if err != nil {
 		return api.FinalizeResult{}, invalid
 	}
 	finished := t.State == protocol.UploadCommitted || t.State == protocol.UploadConflicted
 	if !finished {
-		if api.ValidateFinalize(manifest, intent, protocol.Scope{ServerID: s.serverID, AccountID: account}, s.limits, nil) != nil {
+		if api.ValidateFinalize(manifest, intent, protocol.Scope{ServerID: s.serverID, AccountID: account}, s.limits, vault.Formats) != nil {
 			if t.State != protocol.UploadOpen {
 				return api.FinalizeResult{}, errGone
 			}
@@ -434,7 +440,11 @@ func (s *Service) Finalize(ctx context.Context, account, upload protocol.ID, bod
 			return api.FinalizeResult{}, err
 		}
 	}
-	result, err := s.repo.CommitUpload(ctx, account, upload, manifest.Standard.Name, body, s.now().UTC())
+	name := string(manifest.FileID)
+	if manifest.Standard != nil {
+		name = manifest.Standard.Name
+	}
+	result, err := s.repo.CommitUpload(ctx, account, upload, name, body, s.now().UTC())
 	if err == nil {
 		err = s.applyJournal(ctx)
 	}

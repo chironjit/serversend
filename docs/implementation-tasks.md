@@ -187,17 +187,19 @@ For every feature:
 
 **Outcome:** optional private contents and names leave the desktop only as ciphertext, and a clean device can recover them.
 
-**Existing:** outer contracts and explicit unsupported-format rejection; no production private encryption or vault workflow.
+**Implemented (experimental):** authenticated private objects, account vault envelopes, desktop setup/unlock/recovery export and native-store preferences, encrypted durable tasks, private catalog/folder restore, history/trash and backup recovery. See [format, usage and bounds](private-storage.md). Server schema 13 and desktop schema 3 preserve existing data.
 
 **Early prerequisite work:** run the format/library evaluation, bounded-object prototype, test vectors and initial small-file impact review before feature 3 freezes contracts. Obtain approvals for new dependencies or new crypto usage. Measure encryption/KDF cost and bounded concurrency as part of this work. Full integration depends on features 4, 5, 6, 8. Use the server/account scope established by feature 4; extend to simultaneous profiles when feature 10 arrives.
 
-- [ ] Specify and review authenticated, versioned objects/manifests, key hierarchy, associated data and nonce/randomness rules; test swaps, duplication, truncation, wrong keys and tampering.
-- [ ] Create optional per-account vaults with bounded KDF parameters, passphrase and recovery wrappers, creation races and revision-checked atomic rewrap.
-- [ ] Add setup/unlock/recovery export, explicit loss acknowledgement, optional remembered unlock and auto-lock policy separate from account login.
-- [ ] Integrate encryption/decryption with resumable queues: retransmit identical persisted ciphertext, use fresh randomness for fresh attempts and bound staging space.
-- [ ] Encrypt names, paths, sensitive metadata and the local private index; add client-assisted private-name conflict resolution and clear decrypted views on lock.
-- [ ] Support per-batch mode and per-profile defaults without rewriting existing versions; standard work must remain usable with the vault locked or absent.
-- [ ] Document rollback/freshness and device-revocation limits; extend backup/restore coverage to envelopes and recovery packages.
+- [x] Specify and review authenticated, versioned objects/manifests, key hierarchy, associated data and nonce/randomness rules; test swaps, duplication, truncation, wrong keys and tampering.
+- [x] Create optional per-account vaults with bounded KDF parameters, passphrase and recovery wrappers, creation races and revision-checked atomic rewrap.
+- [x] Add setup/unlock/recovery export, explicit loss acknowledgement, optional remembered unlock and auto-lock policy separate from account login.
+- [x] Integrate encryption/decryption with resumable queues: retransmit identical persisted ciphertext, use fresh randomness for fresh attempts and bound staging space.
+- [x] Encrypt names, paths, sensitive metadata and the local private index; add client-assisted private-name conflict resolution and clear decrypted views on lock.
+- [x] Support per-batch mode and per-profile defaults without rewriting existing versions; standard work must remain usable with the vault locked or absent.
+- [x] Document rollback/freshness and device-revocation limits; extend backup/restore coverage to envelopes and recovery packages.
+
+**Remaining qualification:** independent crypto review; native Windows/macOS filesystem/credential-store/UI checks; actual Unraid/power-loss drills; streaming staging beyond the current 1 GiB private-file limit. Local integration verifies interrupted ciphertext retransmission, clean-client and backup recovery, revision races and server disk canaries. These limits keep release acceptance open.
 
 **Accept when:** clean-device recovery restores private files using exported recovery material; interrupted transfers and rewraps are safe; plaintext/key canaries never reach server disk/database/logs/API/telemetry; all format vectors and adversarial tests pass. Lost account credentials and lost vault keys remain distinct recovery cases.
 

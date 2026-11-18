@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"github.com/chironjit/serversend/shared/api"
 	"github.com/chironjit/serversend/shared/protocol"
+	"github.com/chironjit/serversend/shared/vault"
 )
 
 // CreateDirectory creates a folder, or returns the existing folder of that
 // name, and creates it in the data directory.
 func (s *Service) CreateDirectory(ctx context.Context, account protocol.ID, request api.CreateDirectoryRequest) (api.CatalogEntry, error) {
-	if request.Validate(nil) != nil || request.Mode != protocol.Standard {
+	if request.Validate(vault.Formats) != nil {
 		return api.CatalogEntry{}, api.Error{Code: api.InvalidRequest, Message: "Only valid standard folders are supported"}
 	}
 	s.mu.Lock()
