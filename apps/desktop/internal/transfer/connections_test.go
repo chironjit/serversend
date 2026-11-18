@@ -88,7 +88,13 @@ func TestSimultaneousProfilesOfflineIsolationAndScopedControls(t *testing.T) {
 	}
 	// Keep the first account signed in but make all its requests fail locally.
 	clients[0].Close()
-	path := filepath.Join(t.TempDir(), "same-name.bin")
+	// macOS temporary directories can have a symlinked /var ancestor, which
+	// the upload source policy deliberately refuses. Use the real fixture path.
+	sourceDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(sourceDir, "same-name.bin")
 	if err := os.WriteFile(path, []byte("isolated contents"), 0600); err != nil {
 		t.Fatal(err)
 	}
