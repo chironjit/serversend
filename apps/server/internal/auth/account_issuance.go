@@ -76,14 +76,7 @@ func (s *Service) issue(ctx context.Context, actor Principal, username, role str
 	now := s.now().UTC()
 	issued := IssuedPassword{AccountID: newID(), Username: username, TemporaryPassword: password, ExpiresAt: now.Add(TemporaryPasswordLifetime)}
 	account := database.Account{ID: issued.AccountID, Username: username, Role: role, Status: protocol.AccountStatus{State: protocol.PasswordRequired}, CreatedAt: now}
-	var protected []byte
-	if role == "user" && s.protector != nil {
-		protected, err = s.protector.SealPassword(protocol.Scope{ServerID: s.serverID, AccountID: account.ID}, password)
-		if err != nil {
-			return IssuedPassword{}, err
-		}
-	}
-	err = s.repo.IssueAccount(ctx, account, hash, issued.ExpiresAt, actor.accountID, actor.epoch, protected)
+	err = s.repo.IssueAccount(ctx, account, hash, issued.ExpiresAt, actor.accountID, actor.epoch)
 	if err != nil {
 		return IssuedPassword{}, err
 	}

@@ -54,3 +54,31 @@ func TestArgon2idProductionParameters(t *testing.T) {
 		t.Fatal("production verification failed")
 	}
 }
+
+// BenchmarkArgon2idVerification measures the production profile per request
+// and with two simultaneous requests, matching the service's KDF worker cap.
+func BenchmarkArgon2idVerification(b *testing.B) {
+	const password = "benchmark password only"
+	hasher := NewArgon2id()
+	encoded, err := hasher.Hash(password)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Run("single", func(b *testing.B) {
+		for b.Loop() {
+			if !hasher.Verify(encoded, password) {
+				b.Fatal("verification failed")
+			}
+		}
+	})
+	b.Run("pair", func(b *testing.B) {
+		verified := make(chan bool, 1)
+		for b.Loop() {
+			go func() { verified <- hasher.Verify(encoded, password) }()
+			local := hasher.Verify(encoded, password)
+			if !<-verified || !local {
+				b.Fatal("verification failed")
+			}
+		}
+	})
+}

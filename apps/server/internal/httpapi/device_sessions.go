@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -111,6 +112,8 @@ func serveDeviceAdmin(w http.ResponseWriter, r *http.Request, service *auth.Serv
 			writeJSON(w, r, 200, issued)
 			return true
 		}
+	case len(parts) == 2 && (action == "disable" || action == "enable"):
+		err = service.SetUserDisabled(r.Context(), bearer(r), target, action == "disable")
 	case len(parts) == 2 && action == "reset-totp":
 		err = service.ResetUserTOTP(r.Context(), bearer(r), target)
 	case len(parts) == 4 && action == "devices" && parts[3] == "revoke":
@@ -119,7 +122,9 @@ func serveDeviceAdmin(w http.ResponseWriter, r *http.Request, service *auth.Serv
 		writeError(w, r, 404, api.NotFound, "Account action not found")
 		return true
 	}
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, r, 404, api.NotFound, "Account or device not found")
+	} else if err != nil {
 		writeAuthenticationError(w, r, err)
 	} else {
 		w.WriteHeader(204)

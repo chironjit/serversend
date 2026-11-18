@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { Loader2, LogOut } from 'lucide-vue-next';
 import Logs from './Logs.vue';
+import AccountAudit from './AccountAudit.vue';
+import AccountSecurity from './AccountSecurity.vue';
 import Dashboard from './Dashboard.vue';
 import RetentionSettings from './RetentionSettings.vue';
 const props = withDefaults(defineProps<{ page?: string; restore?: boolean }>(), {
@@ -35,7 +37,6 @@ type User = {
   storage_bytes?: number;
   recovery_kind?: string;
   disabled: boolean;
-  temporary_password?: string;
   expires_at?: string;
 };
 const users = ref<User[]>([]);
@@ -56,8 +57,28 @@ type Device = {
 const selectedUser = ref('');
 const devices = ref<Device[]>([]);
 const deviceLoading = ref(false);
-const confirmation = ref<{ kind: 'reset-password' | 'reset-totp' | 'revoke'; device?: string }>();
-const resetPassword = ref<{ password: string; expires: string }>();
+const confirmation = ref<{
+  kind: 'reset-password' | 'reset-totp' | 'revoke' | 'enable' | 'disable';
+  device?: string;
+}>();
+const issuedPassword = ref<{ username: string; password: string; expires: string }>();
+const selected = computed(() => users.value.find((user) => user.id === selectedUser.value));
+watch(
+  () => props.page,
+  () => {
+    issuedPassword.value = undefined;
+  },
+);
+const confirmations = {
+  revoke: 'Revoke this device? It will need a full login to access the server again.',
+  'reset-password':
+    'Issue a new temporary password and sign out all devices? The existing authenticator remains required if enrolled.',
+  'reset-totp':
+    'Reset the authenticator and sign out all devices? The user will need their existing password and a new authenticator enrollment.',
+  disable:
+    'Disable this account and sign out all devices? The user will be unable to sign in until you enable the account.',
+  enable: 'Enable this account? The user will need to sign in again.',
+};
 function date(value?: string) {
   return value ? new Date(value).toLocaleString() : 'Unknown';
 }
@@ -87,7 +108,7 @@ async function manage(user: User) {
   selectedUser.value = user.id;
   devices.value = [];
   confirmation.value = undefined;
-  resetPassword.value = undefined;
+  issuedPassword.value = undefined;
   error.value = '';
   try {
     await loadDevices();
@@ -107,11 +128,17 @@ async function confirmAction() {
       selectedUser.value +
       '/' +
       (action.kind === 'revoke' ? 'devices/' + action.device + '/revoke' : action.kind);
+    const user = selected.value;
+    issuedPassword.value = undefined;
     const result = await request(path, {}, token);
     if (current !== generation) return;
     confirmation.value = undefined;
-    if (action.kind === 'reset-password')
-      resetPassword.value = { password: result.temporary_password, expires: result.expires_at };
+    if (action.kind === 'reset-password' && user && props.page === 'accounts')
+      issuedPassword.value = {
+        username: user.username,
+        password: result.temporary_password,
+        expires: result.expires_at,
+      };
     await loadUsers();
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Action failed';
@@ -169,6 +196,7 @@ onMounted(async () => {
     const session = await response.json();
     if (current !== generation || session.role !== 'admin') return;
     csrf = session.csrf_token ?? '';
+    username.value = session.username ?? '';
     step.value = 'users';
     await loadUsers();
     if (current === generation) startRefresh();
@@ -250,9 +278,18 @@ async function submit() {
       await loadUsers();
       startRefresh();
     } else if (step.value === 'users') {
-      await request('/admin/users', { username: newUser.value }, token);
-      await loadUsers();
+      issuedPassword.value = undefined;
+      const current = generation;
+      const result = await request('/admin/users', { username: newUser.value }, token);
+      if (current !== generation) return;
+      if (props.page === 'accounts')
+        issuedPassword.value = {
+          username: result.username,
+          password: result.temporary_password,
+          expires: result.expires_at,
+        };
       newUser.value = '';
+      await loadUsers();
     }
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : 'Request failed';
@@ -261,26 +298,40 @@ async function submit() {
   }
 }
 async function signOut() {
-  const old = token;
-  token = '';
-  generation++;
-  restoreRequest?.abort();
-  clearInterval(refreshTimer);
-  users.value = [];
-  selectedUser.value = '';
-  devices.value = [];
-  resetPassword.value = undefined;
-  confirmation.value = undefined;
-  password.value = '';
-  challenge = '';
-  step.value = 'password';
-  await fetch('/api/v1/sessions/current', {
-    method: 'DELETE',
-    headers: {
-      ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
-      ...(old ? { Authorization: 'Bearer ' + old } : {}),
-    },
-  }).catch(() => {});
+  if (busy.value) return;
+  busy.value = true;
+  error.value = '';
+  issuedPassword.value = undefined;
+  try {
+    const response = await fetch('/api/v1/sessions/current', {
+      method: 'DELETE',
+      headers: {
+        ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+        ...(token ? { Authorization: 'Bearer ' + token } : {}),
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) throw new Error('Sign-out failed');
+    token = '';
+    csrf = '';
+    generation++;
+    restoreRequest?.abort();
+    clearInterval(refreshTimer);
+    users.value = [];
+    selectedUser.value = '';
+    devices.value = [];
+    confirmation.value = undefined;
+    password.value = '';
+    newPassword.value = '';
+    code.value = '';
+    codes.value = [];
+    challenge = '';
+    step.value = 'password';
+  } catch {
+    error.value = 'Could not sign out. Refresh the page or try again.';
+  } finally {
+    busy.value = false;
+  }
 }
 </script>
 <template>
@@ -355,8 +406,10 @@ async function signOut() {
       </UiField>
       <template v-if="step === 'users'">
         <p class="create-note text-muted-foreground m-0 text-xs leading-5">
-          Creating users requires a sign-in within the last five minutes. Sign out and back in if it
-          expires.
+          Account changes require password and second-factor sign-in within the last five minutes.
+          <UiButton variant="ghost" size="sm" :disabled="busy" @click="signOut"
+            >Sign in again</UiButton
+          >
         </p>
         <UiField label="New username">
           <UiInput v-model="newUser" required autocomplete="off" />
@@ -367,22 +420,27 @@ async function signOut() {
         {{ busy ? 'Working…' : step === 'users' ? 'Create user' : 'Continue' }}
       </UiButton>
     </form>
+    <div v-if="step === 'users' && issuedPassword" class="mt-4 rounded border p-4" role="status">
+      <p class="font-semibold">Temporary password for {{ issuedPassword.username }}</p>
+      <p>
+        Copy it now and deliver it outside ServerSend. To issue a replacement, use Reset password.
+      </p>
+      <UiCode>{{ issuedPassword.password }}</UiCode>
+      <p>Expires {{ date(issuedPassword.expires) }}. The user must choose a permanent password.</p>
+      <UiButton variant="ghost" @click="issuedPassword = undefined">Dismiss password</UiButton>
+    </div>
     <div v-if="step === 'users'" class="mt-6">
       <div class="flex items-center gap-2">
         <h3 class="m-0 text-sm font-semibold">All users</h3>
         <UiBadge>{{ users.length }}</UiBadge>
       </div>
-      <p class="text-muted-foreground mt-1.5 text-xs leading-5">
-        Temporary passwords remain available until replaced or expired. Account status refreshes
-        every five seconds.
-      </p>
       <UiTable class="mt-3">
         <thead>
           <tr>
             <th>User</th>
             <th>Status</th>
             <th>Stored file bytes</th>
-            <th>Temporary password</th>
+            <th>Temporary password expiry</th>
             <th>Access and recovery</th>
           </tr>
         </thead>
@@ -415,15 +473,10 @@ async function signOut() {
             </td>
             <td>{{ (user.storage_bytes ?? 0).toLocaleString() }} B</td>
             <td>
-              <template v-if="user.temporary_password">
-                <UiCode>{{ user.temporary_password }}</UiCode>
-                <small class="text-muted-foreground mt-1 block text-xs">
-                  Expires {{ new Date(user.expires_at!).toLocaleString() }}
-                </small>
-              </template>
-              <span v-else class="text-muted-foreground">{{
-                user.state === 'password_required' ? 'Expired or unavailable' : 'Password set'
-              }}</span>
+              <span v-if="user.expires_at">
+                {{ Date.parse(user.expires_at) <= Date.now() ? 'Expired' : date(user.expires_at) }}
+              </span>
+              <span v-else>—</span>
             </td>
             <td>
               <UiButton variant="outline" size="sm" :disabled="busy" @click="manage(user)"
@@ -440,22 +493,21 @@ async function signOut() {
       </UiTable>
     </div>
     <section
-      v-if="step === 'users' && selectedUser"
+      v-if="step === 'users' && selected"
       class="mt-6 border-t pt-5"
       aria-label="User access and recovery"
     >
-      <h3>Access for {{ users.find((user) => user.id === selectedUser)?.username }}</h3>
+      <h3>Access for {{ selected?.username }}</h3>
       <p class="text-muted-foreground text-sm">
-        Device revocation and recovery require administrator sign-in within five minutes. Either
-        reset signs out every device. Complete one recovery before starting the other.
+        Either reset signs out every device. The user must complete recovery before you can reset
+        the other factor. Account recovery leaves private files encrypted. To unlock them, the user
+        still needs their vault passphrase or vault recovery key.
       </p>
       <div class="flex flex-wrap gap-2">
         <UiButton
           variant="outline"
           :disabled="
-            busy ||
-            users.find((user) => user.id === selectedUser)?.recovery_kind === 'totp' ||
-            users.find((user) => user.id === selectedUser)?.state === 'totp_required'
+            busy || selected?.recovery_kind === 'totp' || selected?.state === 'totp_required'
           "
           @click="confirmation = { kind: 'reset-password' }"
           >Reset password</UiButton
@@ -464,36 +516,25 @@ async function signOut() {
           variant="outline"
           :disabled="
             busy ||
-            users.find((user) => user.id === selectedUser)?.recovery_kind === 'password' ||
-            users.find((user) => user.id === selectedUser)?.state === 'password_required'
+            selected?.recovery_kind === 'password' ||
+            selected?.state === 'password_required'
           "
           @click="confirmation = { kind: 'reset-totp' }"
           >Reset TOTP</UiButton
         >
+        <UiButton
+          variant="outline"
+          :disabled="busy"
+          @click="confirmation = { kind: selected.disabled ? 'enable' : 'disable' }"
+          >{{ selected.disabled ? 'Enable account' : 'Disable account' }}</UiButton
+        >
       </div>
       <div v-if="confirmation" class="mt-4 rounded border p-4" role="alert">
-        <p>
-          {{
-            confirmation.kind === 'revoke'
-              ? 'Revoke this device? It will need a full login to access the server again.'
-              : confirmation.kind === 'reset-password'
-                ? 'Reset the password and sign out all devices? The existing authenticator will still be required.'
-                : 'Reset the authenticator and sign out all devices? The existing password will still be required.'
-          }}
-        </p>
+        <p>{{ confirmations[confirmation.kind] }}</p>
         <UiButton :disabled="busy" @click="confirmAction">Confirm</UiButton>
         <UiButton variant="ghost" :disabled="busy" @click="confirmation = undefined"
           >Cancel</UiButton
         >
-      </div>
-      <div v-if="resetPassword" class="mt-4 rounded border p-4">
-        <p>
-          Save this temporary password now. The user must replace it and verify their existing
-          authenticator.
-        </p>
-        <UiCode>{{ resetPassword.password }}</UiCode>
-        <p>Expires {{ date(resetPassword.expires) }}</p>
-        <UiButton variant="ghost" @click="resetPassword = undefined">Dismiss password</UiButton>
       </div>
       <h4 class="mt-6">Devices</h4>
       <p class="text-muted-foreground text-xs">
@@ -550,6 +591,12 @@ async function signOut() {
       Sign out
     </UiButton>
   </UiCard>
+  <AccountAudit v-if="step === 'users' && page === 'audit'" />
+  <template v-if="step === 'users' && page === 'security'">
+    <AccountSecurity :csrf="csrf" />
+    <UiAlert v-if="error" class="mt-4">{{ error }}</UiAlert>
+    <UiButton variant="outline" class="mt-4" :disabled="busy" @click="signOut">Sign out</UiButton>
+  </template>
   <Logs v-if="step === 'users' && page === 'logs'" :token="token" />
   <Dashboard v-if="step === 'users' && page === 'dashboard'" />
   <UiCard v-if="step === 'users' && page === 'settings'" class="p-6">

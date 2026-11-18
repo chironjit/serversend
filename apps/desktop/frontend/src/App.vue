@@ -117,6 +117,7 @@ const openProfile = (origin: string) =>
     samples.clear();
     devices.value = [];
     showDevices.value = false;
+    clearCodeReplacement();
     revokeDeviceID.value = '';
     files.value = [];
     selectedIDs.value = [];
@@ -152,6 +153,30 @@ const previousDevicePages = ref<string[]>([]);
 const showDevices = ref(false);
 const devices = ref<DeviceInfo[]>([]);
 const revokeDeviceID = ref('');
+const replaceCodes = ref(false);
+const replacementPassword = ref('');
+const replacementCode = ref('');
+const replacementCodes = ref<string[]>([]);
+function clearCodeReplacement() {
+  replaceCodes.value = false;
+  replacementPassword.value = '';
+  replacementCode.value = '';
+  replacementCodes.value = [];
+}
+const submitCodeReplacement = () =>
+  attempt(async () => {
+    try {
+      replacementCodes.value =
+        (await TransferService.ReplaceRecoveryCodes(
+          replacementPassword.value,
+          replacementCode.value,
+        )) ?? [];
+      replaceCodes.value = false;
+    } finally {
+      replacementPassword.value = '';
+      replacementCode.value = '';
+    }
+  });
 const loadDevices = () =>
   attempt(async () => {
     devices.value = (await TransferService.Devices('')) ?? [];
@@ -572,12 +597,14 @@ async function checkSession() {
       catalogNotice.value = 'The folder changed. Showing the latest first page.';
     }
     if (status.next === 'reauth') {
+      clearCodeReplacement();
       code.value = '';
       view.value = 'reauth';
     } else if (status.next === 'password') {
       account.value = undefined;
       devices.value = [];
       showDevices.value = false;
+      clearCodeReplacement();
       revokeDeviceID.value = '';
       files.value = [];
       selectedIDs.value = [];
@@ -634,6 +661,7 @@ const signOut = () =>
       account.value = undefined;
       devices.value = [];
       showDevices.value = false;
+      clearCodeReplacement();
       revokeDeviceID.value = '';
       folders.value = [];
       files.value = [];
@@ -1181,7 +1209,62 @@ onUnmounted(() => {
             <UiButton variant="outline" :disabled="busy" @click="revokeDeviceID = 'others'"
               >Sign out other devices</UiButton
             >
-            <UiButton variant="ghost" @click="showDevices = false">Close</UiButton>
+            <UiButton variant="outline" :disabled="busy" @click="replaceCodes = true">
+              Replace recovery codes
+            </UiButton>
+            <UiButton
+              variant="ghost"
+              :disabled="busy"
+              @click="
+                showDevices = false;
+                clearCodeReplacement();
+              "
+              >Close</UiButton
+            >
+          </div>
+          <form
+            v-if="replaceCodes"
+            class="grid gap-3 rounded-md border p-4"
+            @submit.prevent="submitCodeReplacement"
+          >
+            <p>
+              Replacing your account recovery codes invalidates every previous code. Keep your vault
+              recovery key separately for private files.
+            </p>
+            <UiField label="Account password">
+              <UiInput
+                v-model="replacementPassword"
+                type="password"
+                required
+                autocomplete="current-password"
+              />
+            </UiField>
+            <UiField label="Fresh authenticator code">
+              <UiInput
+                v-model="replacementCode"
+                required
+                inputmode="numeric"
+                pattern="[0-9]{6}"
+                autocomplete="one-time-code"
+              />
+            </UiField>
+            <div class="flex gap-2">
+              <UiButton type="submit" :disabled="busy">Generate new codes</UiButton>
+              <UiButton variant="ghost" :disabled="busy" @click="clearCodeReplacement"
+                >Cancel</UiButton
+              >
+            </div>
+          </form>
+          <div v-if="replacementCodes.length" class="rounded-md border p-4">
+            <p>
+              Save these account recovery codes now. This is your only opportunity to copy them.
+            </p>
+            <ul class="grid gap-2 list-none p-0 sm:grid-cols-2">
+              <li v-for="value in replacementCodes" :key="value">
+                <UiCode block>{{ value }}</UiCode>
+              </li>
+            </ul>
+            <UiButton variant="ghost" @click="clearCodeReplacement">Dismiss codes</UiButton>
           </div>
           <div class="my-3 flex gap-2">
             <UiButton

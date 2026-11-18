@@ -316,3 +316,20 @@ func TestLocalBootstrapRecoveryOnlyRepairsIncompleteAdministrator(t *testing.T) 
 		t.Fatal("bootstrap recovery reset an active administrator")
 	}
 }
+
+func TestPasswordWorkRejectsExcessConcurrency(t *testing.T) {
+	s, _, _ := twoFactorFixture(t)
+	first, err := s.acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first()
+	second, err := s.acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second()
+	if _, err := s.AuthenticatePassword(t.Context(), "some-user", "some-password"); !errors.Is(err, ErrOverloaded) {
+		t.Fatalf("third authentication was not rejected: %v", err)
+	}
+}

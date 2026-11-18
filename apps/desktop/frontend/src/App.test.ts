@@ -34,6 +34,7 @@ const bridge = vi.hoisted(() => ({
     ChooseAndRestore: vi.fn<(ids: string[], policy: string) => Promise<boolean>>(),
     Devices: vi.fn<(before: string) => Promise<unknown[]>>(),
     RevokeDevice: vi.fn<(id: string) => Promise<void>>(),
+    ReplaceRecoveryCodes: vi.fn<(password: string, code: string) => Promise<string[]>>(),
     ChooseServerCA: vi.fn<(address: string) => Promise<unknown>>(),
     SessionStatus: vi.fn<() => Promise<{ next: string }>>(),
     CompleteReauthentication: vi.fn<(code: string) => Promise<unknown>>(),
@@ -162,6 +163,20 @@ describe('desktop transfer slice', () => {
     await button('Confirm revocation').trigger('click');
     await flushPromises();
     expect(wrapper.text()).toContain('Device access could not be revoked');
+    bridge.service.ReplaceRecoveryCodes.mockResolvedValue(['RECOVERY-CODE']);
+    await button('Replace recovery codes').trigger('click');
+    const form = wrapper
+      .findAll('form')
+      .find((value) => value.text().includes('Generate new codes'))!;
+    const [passwordInput, codeInput] = form.findAll('input');
+    await passwordInput.setValue('account password');
+    await codeInput.setValue('123456');
+    await form.trigger('submit');
+    await flushPromises();
+    expect(bridge.service.ReplaceRecoveryCodes).toHaveBeenCalledWith('account password', '123456');
+    expect(wrapper.text()).toContain('RECOVERY-CODE');
+    await button('Dismiss codes').trigger('click');
+    expect(wrapper.text()).not.toContain('RECOVERY-CODE');
     wrapper.unmount();
   });
   it('renews a remembered device with TOTP without asking for a password', async () => {

@@ -9,7 +9,7 @@ import UiButton from './components/ui/UiButton.vue';
 import UiCard from './components/ui/UiCard.vue';
 import { checkReadiness } from './readiness';
 
-const pages = ['dashboard', 'accounts', 'logs', 'settings'];
+const pages = ['dashboard', 'accounts', 'security', 'audit', 'logs', 'settings'];
 const page = ref('dashboard');
 function navigate() {
   const value = location.hash.slice(1);
@@ -105,7 +105,7 @@ onUnmounted(() => {
           </p>
         </div>
 
-        <nav class="mb-4 flex gap-4 lg:hidden">
+        <nav class="mb-4 flex flex-wrap gap-4 lg:hidden">
           <a
             v-for="item in pages"
             :key="item"

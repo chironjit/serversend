@@ -172,20 +172,9 @@ func (s *Service) VerifySecondFactor(ctx context.Context, token, code string) (A
 		result.UsedRecoveryCode, result.RecoveryCodesRemaining = true, remaining
 		return result, nil
 	}
-	stored, err := s.repo.TOTPSecret(ctx, c.ID)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && !stored.Confirmed {
-		return Authenticated{}, ErrCredentials
-	}
+	stored, step, err := s.verifyTOTP(ctx, ch, code)
 	if err != nil {
 		return Authenticated{}, err
-	}
-	secret, err := s.protector.Open(s.scope(c.ID), stored.Envelope)
-	if err != nil {
-		return Authenticated{}, ErrTwoFactorUnavailable
-	}
-	step, err := twofactor.Verify(secret, code, s.now(), stored.LastStep)
-	if err != nil {
-		return Authenticated{}, s.secondFactorFailed(ctx, ch)
 	}
 	if err := s.repo.ConsumeTOTPStep(ctx, ch, stored.Envelope, step, s.now().UTC()); err != nil {
 		return Authenticated{}, conflictAsCredentials(err)
@@ -193,26 +182,55 @@ func (s *Service) VerifySecondFactor(ctx context.Context, token, code string) (A
 	return result, nil
 }
 
-// ReplaceRecoveryCodes invalidates every earlier code for the caller's own
-// account. It requires recent reauthentication because the result is a
-// complete set of second-factor bypass credentials.
-func (s *Service) ReplaceRecoveryCodes(ctx context.Context, actor Principal) ([]string, error) {
+func (s *Service) verifyTOTP(ctx context.Context, ch database.AuthChallenge, code string) (database.TOTPSecret, int64, error) {
+	stored, err := s.repo.TOTPSecret(ctx, ch.AccountID)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && !stored.Confirmed {
+		return stored, 0, ErrCredentials
+	}
+	if err != nil {
+		return stored, 0, err
+	}
+	secret, err := s.protector.Open(s.scope(ch.AccountID), stored.Envelope)
+	if err != nil {
+		return stored, 0, ErrTwoFactorUnavailable
+	}
+	step, err := twofactor.Verify(secret, code, s.now(), stored.LastStep)
+	if err != nil {
+		return stored, 0, s.secondFactorFailed(ctx, ch)
+	}
+	return stored, step, nil
+}
+
+func (s *Service) ReplaceRecoveryCodes(ctx context.Context, token, password, code string) ([]string, error) {
+	session, err := s.Authorize(ctx, token)
+	if err != nil {
+		return nil, err
+	}
 	if s.protector == nil {
 		return nil, ErrTwoFactorUnavailable
 	}
-	if !s.reauthenticated(actor) {
-		return nil, ErrForbidden
+	if len(code) != 6 {
+		return nil, ErrCredentials
 	}
-	codes, err := twofactor.GenerateRecoveryCodes(s.scope(actor.accountID))
+	attempt, err := s.AuthenticatePassword(ctx, session.Username, password)
+	if err != nil {
+		return nil, err
+	}
+	_, ch, err := s.secondFactorChallenge(ctx, attempt.Challenge, "second_factor", protocol.AccountActive)
+	if err != nil {
+		return nil, err
+	}
+	stored, step, err := s.verifyTOTP(ctx, ch, code)
+	if err != nil {
+		return nil, err
+	}
+	codes, err := twofactor.GenerateRecoveryCodes(s.scope(session.AccountID))
 	if err != nil {
 		return nil, err
 	}
 	display, hashes := splitRecoveryCodes(codes)
-	if err := s.repo.ReplaceRecoveryCodes(ctx, actor.accountID, actor.epoch, hashes, s.now().UTC()); err != nil {
-		if errors.Is(err, database.ErrAuthConflict) {
-			return nil, ErrForbidden
-		}
-		return nil, err
+	if err := s.repo.ReplaceRecoveryCodes(ctx, ch, stored.Envelope, step, s.now().UTC(), accessHash(token), hashes); err != nil {
+		return nil, refreshError(err)
 	}
 	return display, nil
 }

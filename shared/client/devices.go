@@ -22,3 +22,9 @@ func (c *Client) RevokeDevice(ctx context.Context, id string) error {
 	}
 	return c.exchange(ctx, call{method: "POST", path: "/sessions/devices/" + id + "/revoke", token: c.token()}, struct{}{}, nil)
 }
+
+func (c *Client) ReplaceRecoveryCodes(ctx context.Context, password, code string) ([]string, error) {
+	var result api.RecoveryCodes
+	err := c.exchange(ctx, call{method: "POST", path: "/sessions/recovery-codes", token: c.token()}, api.RecoveryCodeReplacement{Password: password, Code: code}, &result)
+	return result.Codes, err
+}

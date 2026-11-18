@@ -195,6 +195,10 @@ export function ReplacePassword(password: string): $CancellablePromise<transfer$
     return $Call.ByID(699289139, password);
 }
 
+export function ReplaceRecoveryCodes(password: string, code: string): $CancellablePromise<string[] | null> {
+    return $Call.ByID(3071885161, password, code);
+}
+
 export function RestoreTrash(id: string): $CancellablePromise<void> {
     return $Call.ByID(277329122, id);
 }

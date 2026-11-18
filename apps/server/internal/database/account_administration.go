@@ -17,7 +17,7 @@ var (
 
 // IssueAccount atomically closes bootstrap or checks live administrator status,
 // inserts a hashed temporary credential, and records an audit event.
-func (r *Repository) IssueAccount(ctx context.Context, account Account, passwordHash string, expires time.Time, actor protocol.ID, epoch int64, protected ...[]byte) error {
+func (r *Repository) IssueAccount(ctx context.Context, account Account, passwordHash string, expires time.Time, actor protocol.ID, epoch int64) error {
 	if account.ID.Validate() != nil || account.CreatedAt.UnixMilli() < 0 || account.CreatedAt.IsZero() || !expires.After(account.CreatedAt) || passwordHash == "" || account.Status != (protocol.AccountStatus{State: protocol.PasswordRequired}) {
 		return ErrAuthConflict
 	}
@@ -46,11 +46,6 @@ func (r *Repository) IssueAccount(ctx context.Context, account Account, password
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO accounts(id,username,role,state,password_hash,created_at,temporary_expires_at) VALUES(?,?,?,'password_required',?,?,?)`, account.ID, account.Username, account.Role, passwordHash, account.CreatedAt.UnixMilli(), expires.UnixMilli()); err != nil {
 			return err
-		}
-		if len(protected) > 0 {
-			if _, err := tx.ExecContext(ctx, `UPDATE accounts SET temporary_password=? WHERE id=?`, protected[0], account.ID); err != nil {
-				return err
-			}
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,target_id,action,created_at) VALUES(?,?,?,?)`, actorValue, account.ID, action, account.CreatedAt.UnixMilli())
 		return err
@@ -116,7 +111,7 @@ func (r *Repository) ResetPassword(ctx context.Context, actor protocol.ID, epoch
 		if err := checkRecovery(ctx, tx, target, "password"); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE accounts SET recovery_kind='password',temporary_password=NULL,password_hash=?,temporary_expires_at=?,state='password_required',credential_revision=credential_revision+1,auth_epoch=auth_epoch+1,failed_attempts=0,blocked_until=0 WHERE id=?`, passwordHash, expires.UnixMilli(), target)
+		result, err := tx.ExecContext(ctx, `UPDATE accounts SET recovery_kind='password',password_hash=?,temporary_expires_at=?,state='password_required',credential_revision=credential_revision+1,auth_epoch=auth_epoch+1,failed_attempts=0,blocked_until=0 WHERE id=?`, passwordHash, expires.UnixMilli(), target)
 		if err != nil {
 			return err
 		}
@@ -132,12 +127,15 @@ func (r *Repository) SetDisabled(ctx context.Context, actor protocol.ID, epoch i
 		if err := checkAdmin(ctx, tx, actor, epoch); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE accounts SET disabled=?,auth_epoch=auth_epoch+1 WHERE id=?`, disabled, target)
-		if err != nil {
+		var current bool
+		if err := tx.QueryRowContext(ctx, `SELECT disabled FROM accounts WHERE id=? AND role='user'`, target).Scan(&current); err != nil {
 			return err
 		}
-		if n, _ := result.RowsAffected(); n != 1 {
-			return sql.ErrNoRows
+		if current == disabled {
+			return nil
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET disabled=?,auth_epoch=auth_epoch+1 WHERE id=?`, disabled, target); err != nil {
+			return err
 		}
 		action := "enable"
 		if disabled {

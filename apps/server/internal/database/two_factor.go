@@ -126,6 +126,16 @@ func (r *Repository) ActivateTOTP(ctx context.Context, ch AuthChallenge, envelop
 // ConsumeTOTPStep advances the replay watermark and spends the challenge
 // atomically. Of any concurrent requests presenting the same code, one wins.
 func (r *Repository) ConsumeTOTPStep(ctx context.Context, ch AuthChallenge, envelope []byte, step int64, now time.Time) error {
+	return r.consumeTOTPStep(ctx, ch, envelope, step, now, "", nil)
+}
+
+// ReplaceRecoveryCodes consumes fresh TOTP and replaces the hashes in the
+// same transaction. The current session must still belong to the challenge.
+func (r *Repository) ReplaceRecoveryCodes(ctx context.Context, ch AuthChallenge, envelope []byte, step int64, now time.Time, accessHash string, hashes [][]byte) error {
+	return r.consumeTOTPStep(ctx, ch, envelope, step, now, accessHash, hashes)
+}
+
+func (r *Repository) consumeTOTPStep(ctx context.Context, ch AuthChallenge, envelope []byte, step int64, now time.Time, accessHash string, hashes [][]byte) error {
 	return r.write(ctx, func(tx *sql.Tx) error {
 		if err := liveChallenge(ctx, tx, ch, "second_factor", protocol.AccountActive, now); err != nil {
 			return err
@@ -136,6 +146,21 @@ func (r *Repository) ConsumeTOTPStep(ctx context.Context, ch AuthChallenge, enve
 		}
 		if n, _ := result.RowsAffected(); n != 1 {
 			return ErrAuthConflict
+		}
+		if hashes != nil {
+			session, err := sessionByToken(ctx, tx, accessHash, now)
+			if err != nil {
+				return err
+			}
+			if session.AccountID != ch.AccountID || session.Epoch != ch.Epoch || ch.DeviceID != "" {
+				return ErrAuthConflict
+			}
+			if err := replaceRecoveryCodes(ctx, tx, ch.AccountID, hashes); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,target_id,action,created_at,device_id) VALUES(?,?,'replace_recovery_codes',?,?)`, ch.AccountID, ch.AccountID, now.UnixMilli(), session.ID); err != nil {
+				return err
+			}
 		}
 		return finishSecondFactor(ctx, tx, ch.AccountID)
 	})
@@ -183,25 +208,6 @@ func (r *Repository) RecordSecondFactorFailure(ctx context.Context, ch AuthChall
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `UPDATE auth_challenges SET failures=failures+1 WHERE token_hash=?`, ch.TokenHash)
-		return err
-	})
-}
-
-// ReplaceRecoveryCodes swaps the whole set for a live, fully enrolled account.
-// No earlier code remains usable after the transaction commits.
-func (r *Repository) ReplaceRecoveryCodes(ctx context.Context, account protocol.ID, epoch int64, codeHashes [][]byte, now time.Time) error {
-	return r.write(ctx, func(tx *sql.Tx) error {
-		var count int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM accounts WHERE id=? AND state='active' AND totp_enrolled=1 AND disabled=0 AND auth_epoch=?`, account, epoch).Scan(&count); err != nil {
-			return err
-		}
-		if count != 1 {
-			return ErrAuthConflict
-		}
-		if err := replaceRecoveryCodes(ctx, tx, account, codeHashes); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO audit_events(actor_id,target_id,action,created_at) VALUES(?,?,'replace_recovery_codes',?)`, account, account, now.UnixMilli())
 		return err
 	})
 }

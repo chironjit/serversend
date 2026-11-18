@@ -253,7 +253,7 @@ func TestSecondFactorSkewExpiryAndConcurrentUse(t *testing.T) {
 
 func TestRecoveryCodesAreSingleUseAndReplaceable(t *testing.T) {
 	s, db, clock := twoFactorFixture(t)
-	_, codes := onboard(t, s, clock, "admin", bootstrapFixture(t, s).TemporaryPassword)
+	secret, codes := onboard(t, s, clock, "admin", bootstrapFixture(t, s).TemporaryPassword)
 
 	token := login(t, s, "admin", fixturePassword, "second_factor")
 	if _, err := s.VerifySecondFactor(t.Context(), token, strings.Repeat("0", 32)); !errors.Is(err, ErrCredentials) {
@@ -292,18 +292,23 @@ func TestRecoveryCodesAreSingleUseAndReplaceable(t *testing.T) {
 	}
 
 	clock.Advance(time.Minute)
-	actor := principalFor(t, s, "admin")
-	stale := actor
-	stale.reauthenticatedAt = clock.Now().Add(-6 * time.Minute)
-	if _, err := s.ReplaceRecoveryCodes(t.Context(), stale); !errors.Is(err, ErrForbidden) {
-		t.Fatal("recovery codes replaced without recent reauthentication")
+	session, err := s.CreateSession(t.Context(), login(t, s, "admin", fixturePassword, "second_factor"), codeAt(t, secret, clock.Now()), "Test browser")
+	if err != nil {
+		t.Fatal(err)
 	}
-	revoked := actor
-	revoked.epoch++
-	if _, err := s.ReplaceRecoveryCodes(t.Context(), revoked); !errors.Is(err, ErrForbidden) {
-		t.Fatal("recovery codes replaced with a stale authorization epoch")
+	clock.Advance(6 * time.Minute)
+	code := codeAt(t, secret, clock.Now())
+	if _, err := s.ReplaceRecoveryCodes(t.Context(), "invalid", fixturePassword, code); !errors.Is(err, ErrCredentials) {
+		t.Fatal("recovery codes replaced without an active session")
 	}
-	replacement, err := s.ReplaceRecoveryCodes(t.Context(), actor)
+	if _, err := s.ReplaceRecoveryCodes(t.Context(), session.AccessToken, fixturePassword, codes[2]); !errors.Is(err, ErrCredentials) {
+		t.Fatal("a recovery code authorized replacement")
+	}
+	if _, err := s.ReplaceRecoveryCodes(t.Context(), session.AccessToken, "wrong password", code); !errors.Is(err, ErrCredentials) {
+		t.Fatal("wrong password authorized replacement")
+	}
+	clock.Advance(time.Second)
+	replacement, err := s.ReplaceRecoveryCodes(t.Context(), session.AccessToken, fixturePassword, codeAt(t, secret, clock.Now()))
 	if err != nil || len(replacement) != twofactor.RecoveryCodeCount {
 		t.Fatal(err)
 	}

@@ -17,7 +17,7 @@ import (
 	"github.com/pquerna/otp/totp"
 )
 
-func enrollmentHandler(t *testing.T, configured bool) (http.Handler, string) {
+func enrollmentHandler(t *testing.T, configured bool, now func() time.Time) (http.Handler, string) {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0700); err != nil {
@@ -36,7 +36,7 @@ func enrollmentHandler(t *testing.T, configured bool) (http.Handler, string) {
 		}
 		options = append(options, auth.WithTwoFactor("0123456789abcdef0123456789abcdef", protector))
 	}
-	service, err := auth.New(database.NewRepository(db), adapterTestHasher{}, nil, options...)
+	service, err := auth.New(database.NewRepository(db), adapterTestHasher{}, now, options...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,8 @@ func enrollmentHandler(t *testing.T, configured bool) (http.Handler, string) {
 }
 
 func TestTOTPEnrollmentHTTPFlow(t *testing.T) {
-	h, challenge := enrollmentHandler(t, true)
+	now := time.Now().Truncate(30 * time.Second)
+	h, challenge := enrollmentHandler(t, true, func() time.Time { return now })
 	if w := authRequest(h, totpEnrollPath, `{}`, ""); w.Code != 401 {
 		t.Fatal("enrollment without a challenge accepted")
 	}
@@ -86,7 +87,7 @@ func TestTOTPEnrollmentHTTPFlow(t *testing.T) {
 	if len(enrollment.Secret) != 32 || !strings.HasPrefix(enrollment.URI, "otpauth://totp/") || !bytes.HasPrefix(enrollment.QRPNG, []byte("\x89PNG")) {
 		t.Fatal("enrollment response is incomplete")
 	}
-	code, err := totp.GenerateCode(enrollment.Secret, time.Now())
+	code, err := totp.GenerateCode(enrollment.Secret, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,7 @@ func TestTOTPEnrollmentHTTPFlow(t *testing.T) {
 	if strings.Contains(w.Body.String(), enrollment.Secret) {
 		t.Fatal("confirmation echoed the TOTP secret")
 	}
-	// The service admits a burst of ten attempts; this flow stays within it.
+	// Advance the fake clock before the session tests to refill the attempt budget.
 	if w := authRequest(h, totpConfirmPath, `{"code":"`+code+`"}`, challenge); w.Code != 401 {
 		t.Fatal("spent enrollment challenge accepted")
 	}
@@ -111,10 +112,45 @@ func TestTOTPEnrollmentHTTPFlow(t *testing.T) {
 	if w := authRequest(h, totpEnrollPath, `{}`, attempt.Challenge); w.Code != 401 {
 		t.Fatal("login challenge replaced an active enrollment")
 	}
+	now = now.Add(time.Second)
+	w = authRequest(h, sessionsPath, `{"code":"`+codes.Codes[0]+`","device_name":"Test browser"}`, attempt.Challenge)
+	var session api.Session
+	if w.Code != 201 || json.Unmarshal(w.Body.Bytes(), &session) != nil {
+		t.Fatalf("failed to open session: %d", w.Code)
+	}
+	now = now.Add(30 * time.Second)
+	code, err = totp.GenerateCode(enrollment.Secret, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"password":"a long permanent password","code":"` + code + `"}`
+	request := httptest.NewRequest(http.MethodPost, "https://server.test"+recoveryCodesPath, strings.NewReader(body))
+	request.AddCookie(&http.Cookie{Name: adminCookie, Value: session.AccessToken})
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "https://server.test")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, request)
+	if w.Code != 403 {
+		t.Fatal("recovery codes replaced without CSRF token", w.Code)
+	}
+	if w = authRequest(h, recoveryCodesPath, body, attempt.Challenge); w.Code != 401 {
+		t.Fatal("login challenge replaced recovery codes", w.Code)
+	}
+	w = authRequest(h, recoveryCodesPath, body, session.AccessToken)
+	var replacement api.RecoveryCodes
+	if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" ||
+		json.Unmarshal(w.Body.Bytes(), &replacement) != nil || len(replacement.Codes) != twofactor.RecoveryCodeCount ||
+		replacement.Codes[1] == codes.Codes[1] {
+		t.Fatalf("recovery-code replacement failed: %d", w.Code)
+	}
+	if w = authRequest(h, recoveryCodesPath, body, session.AccessToken); w.Code != 401 {
+		t.Fatal("authenticator code reused for replacement", w.Code)
+	}
+
 }
 
 func TestTOTPEnrollmentHTTPUnavailableAndMethodBoundaries(t *testing.T) {
-	h, challenge := enrollmentHandler(t, false)
+	h, challenge := enrollmentHandler(t, false, nil)
 	w := authRequest(h, totpEnrollPath, `{}`, challenge)
 	if w.Code != 503 || strings.Contains(w.Body.String(), "key") {
 		t.Fatalf("unconfigured enrollment: %d %s", w.Code, w.Body)

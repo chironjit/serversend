@@ -4,7 +4,7 @@ import Accounts from './Accounts.vue';
 
 afterEach(() => vi.unstubAllGlobals());
 const reply = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
-it('signs in an administrator, keeps multiple pending users, and clears passwords on sign-out', async () => {
+it('signs in an administrator, shows only the newly issued password and clears it on sign-out', async () => {
   const request = vi.fn<typeof fetch>();
   vi.stubGlobal('fetch', request);
   request
@@ -12,7 +12,7 @@ it('signs in an administrator, keeps multiple pending users, and clears password
     .mockResolvedValueOnce(reply({ role: 'admin', csrf_token: 'session-csrf' }))
     .mockResolvedValueOnce(reply([]))
     .mockResolvedValueOnce(
-      reply({ username: 'alice', temporary_password: 'ONE-TIME', expires_at: 'tomorrow' }),
+      reply({ username: 'alice', temporary_password: 'ONE-TIME', expires_at: '2099-01-01' }),
     )
     .mockResolvedValueOnce(
       reply([
@@ -20,26 +20,25 @@ it('signs in an administrator, keeps multiple pending users, and clears password
           id: 'a',
           username: 'alice',
           state: 'password_required',
-          temporary_password: 'ONE-TIME',
           expires_at: '2099-01-01',
         },
       ]),
     )
-    .mockResolvedValueOnce(reply({ username: 'bob' }))
+    .mockResolvedValueOnce(
+      reply({ username: 'bob', temporary_password: 'SECOND', expires_at: '2099-01-01' }),
+    )
     .mockResolvedValueOnce(
       reply([
         {
           id: 'a',
           username: 'alice',
           state: 'password_required',
-          temporary_password: 'ONE-TIME',
           expires_at: '2099-01-01',
         },
         {
           id: 'b',
           username: 'bob',
           state: 'password_required',
-          temporary_password: 'SECOND',
           expires_at: '2099-01-01',
         },
       ]),
@@ -65,12 +64,12 @@ it('signs in an administrator, keeps multiple pending users, and clears password
   await wrapper.get('input').setValue('bob');
   await wrapper.get('form').trigger('submit');
   await flushPromises();
-  expect(wrapper.text()).toContain('ONE-TIME');
+  expect(wrapper.text()).not.toContain('ONE-TIME');
   expect(wrapper.text()).toContain('SECOND');
   expect(wrapper.findAll('tbody tr')).toHaveLength(2);
   await wrapper.findAll('button').at(-1)!.trigger('click');
   await flushPromises();
-  expect(wrapper.text()).not.toContain('ONE-TIME');
+  expect(wrapper.text()).not.toContain('SECOND');
   expect(wrapper.text()).toContain('Administrator sign-in');
   wrapper.unmount();
 });
@@ -120,6 +119,7 @@ it('lists offline devices, confirms revocation, and blocks mixed recovery contro
   const request = vi.fn<typeof fetch>();
   vi.stubGlobal('fetch', request);
   let recovery = '';
+  let disabled = false;
   const devices = [
     {
       id: 'device-one',
@@ -141,10 +141,14 @@ it('lists offline devices, confirms revocation, and blocks mixed recovery contro
           id: 'alice',
           username: 'alice',
           state: recovery ? 'password_required' : 'active',
-          disabled: false,
+          disabled,
           recovery_kind: recovery,
         },
       ]);
+    if (path.endsWith('/disable') || path.endsWith('/enable')) {
+      disabled = path.endsWith('/disable');
+      return new Response(null, { status: 204 });
+    }
     if (path.endsWith('/revoke')) return new Response(null, { status: 204 });
     if (path.endsWith('/devices')) return reply(devices);
     if (path.endsWith('/reset-password') && options?.method === 'POST') {
@@ -171,6 +175,14 @@ it('lists offline devices, confirms revocation, and blocks mixed recovery contro
     '/api/v1/admin/users/alice/devices/device-one/revoke',
     expect.objectContaining({ method: 'POST' }),
   );
+  await button('Disable account').trigger('click');
+  await button('Confirm').trigger('click');
+  await flushPromises();
+  expect(wrapper.text()).toContain('Disabled');
+  await button('Enable account').trigger('click');
+  await button('Confirm').trigger('click');
+  await flushPromises();
+  expect(wrapper.text()).toContain('Active');
   await button('Reset password').trigger('click');
   await button('Confirm').trigger('click');
   await flushPromises();

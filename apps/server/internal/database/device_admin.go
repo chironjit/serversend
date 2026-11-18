@@ -86,13 +86,11 @@ func (r *Repository) RevokeDevice(ctx context.Context, actor protocol.ID, epoch 
 // RevokeOwnDevices rechecks the caller inside the same write transaction.
 func (r *Repository) RevokeOwnDevices(ctx context.Context, source DeviceSession, tokenHash string, target protocol.ID, others bool, now time.Time) error {
 	return r.write(ctx, func(tx *sql.Tx) error {
-		var live int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM device_sessions d JOIN accounts a ON a.id=d.account_id WHERE d.id=? AND d.account_id=? AND d.revoked_at IS NULL AND a.auth_epoch=d.auth_epoch AND d.auth_epoch=? AND a.disabled=0 AND a.state='active'
- AND ((d.token_hash=? AND d.expires_at>?) OR d.id IN (SELECT device_id FROM device_access WHERE token_hash=? AND expires_at>?))
- AND (d.refresh_hash IS NULL OR (d.last_refresh>? AND d.last_factor>?))`, source.ID, source.AccountID, source.Epoch, tokenHash, now.UnixMilli(), tokenHash, now.UnixMilli(), now.Add(-RefreshIdleLifetime).UnixMilli(), now.Add(-FactorLifetime).UnixMilli()).Scan(&live); err != nil {
+		live, err := sessionByToken(ctx, tx, tokenHash, now)
+		if err != nil {
 			return err
 		}
-		if live != 1 {
+		if live.ID != source.ID || live.Epoch != source.Epoch {
 			return ErrAuthConflict
 		}
 		predicate := "id=?"
@@ -103,7 +101,8 @@ func (r *Repository) RevokeOwnDevices(ctx context.Context, source DeviceSession,
 		}
 
 		if !others {
-			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM device_sessions WHERE account_id=? AND id=?`, source.AccountID, target).Scan(&live); err != nil {
+			var exists int
+			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM device_sessions WHERE account_id=? AND id=?`, source.AccountID, target).Scan(&exists); err != nil {
 				return err
 			}
 		}

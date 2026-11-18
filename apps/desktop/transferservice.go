@@ -263,3 +263,7 @@ func (s *TransferService) CombinedBatches() []transfer.Batch { return s.manager.
 func (s *TransferService) QueueActionScoped(scope string, id int, batch bool, action string) error {
 	return s.manager.QueueActionScoped(scope, id, batch, action)
 }
+
+func (s *TransferService) ReplaceRecoveryCodes(ctx context.Context, password, code string) ([]string, error) {
+	return s.manager.ReplaceRecoveryCodes(ctx, password, code)
+}

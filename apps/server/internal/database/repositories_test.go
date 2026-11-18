@@ -168,8 +168,15 @@ func TestServerUpgradeEveryPriorSchema(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if prior > 0 {
-				fixture, err := os.ReadFile(fmt.Sprintf("testdata/v%d.sql", prior))
+			fixtures := []int{prior}
+			if prior == 13 {
+				fixtures = []int{12, 13}
+			}
+			for _, version := range fixtures {
+				if version == 0 {
+					continue
+				}
+				fixture, err := os.ReadFile(fmt.Sprintf("testdata/v%d.sql", version))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -191,6 +198,19 @@ func TestServerUpgradeEveryPriorSchema(t *testing.T) {
 				// Pre-release file data is reset, not migrated.
 				if _, err := NewRepository(db).GetUpload(context.Background(), ownerA, uploadID); !errors.Is(err, sql.ErrNoRows) {
 					t.Fatalf("pre-release upload kept: %v", err)
+				}
+			}
+			if prior == 13 {
+				c, err := NewRepository(db).CredentialsByUsername(t.Context(), "pending-user")
+				if err != nil || !c.TemporaryExpiresAt.Valid || c.TemporaryExpiresAt.Int64 != 0 {
+					t.Fatalf("legacy password wasn't expired: %+v %v", c, err)
+				}
+				var count int
+				if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('accounts') WHERE name='temporary_password'`).Scan(&count); err != nil || count != 0 {
+					t.Fatalf("legacy encrypted password column retained: %d %v", count, err)
+				}
+				if err := db.QueryRow(`SELECT count(*) FROM auth_challenges WHERE account_id=?`, c.ID).Scan(&count); err != nil || count != 0 {
+					t.Fatalf("legacy pending challenge retained: %d %v", count, err)
 				}
 			}
 			if prior >= 3 {

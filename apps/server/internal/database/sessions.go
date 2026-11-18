@@ -67,17 +67,26 @@ func (r *Repository) CreateSession(ctx context.Context, s *DeviceSession, tokenH
 // SessionByToken returns sql.ErrNoRows for unknown, expired and revoked
 // sessions alike: disablement, resets and TOTP resets change auth_epoch.
 func (r *Repository) SessionByToken(ctx context.Context, tokenHash string, now time.Time) (DeviceSession, error) {
+	s, err := sessionByToken(ctx, r.db, tokenHash, now)
+	if err == nil {
+		_, err = r.db.ExecContext(ctx, `UPDATE device_sessions SET last_seen=? WHERE id=? AND last_seen<?`, now.UnixMilli(), s.ID, now.Add(-30*time.Second).UnixMilli())
+	}
+	return s, err
+}
+
+type sessionQuery interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func sessionByToken(ctx context.Context, db sessionQuery, tokenHash string, now time.Time) (DeviceSession, error) {
 	var s DeviceSession
 	var expires, created int64
-	err := r.db.QueryRowContext(ctx, `SELECT d.id,d.account_id,a.username,a.role,d.name,d.auth_epoch,d.expires_at,d.created_at FROM device_sessions d JOIN accounts a ON a.id=d.account_id
+	err := db.QueryRowContext(ctx, `SELECT d.id,d.account_id,a.username,a.role,d.name,d.auth_epoch,d.expires_at,d.created_at FROM device_sessions d JOIN accounts a ON a.id=d.account_id
 		WHERE d.id IN (SELECT id FROM device_sessions WHERE token_hash=? AND expires_at>? UNION ALL SELECT device_id FROM device_access WHERE token_hash=? AND expires_at>?)
         AND d.revoked_at IS NULL AND (d.refresh_hash IS NULL OR (d.last_refresh>? AND d.last_factor>?)) AND a.auth_epoch=d.auth_epoch AND a.state='active' AND a.totp_enrolled=1 AND a.disabled=0`,
 		tokenHash, now.UnixMilli(), tokenHash, now.UnixMilli(), now.Add(-RefreshIdleLifetime).UnixMilli(), now.Add(-FactorLifetime).UnixMilli()).Scan(&s.ID, &s.AccountID, &s.Username, &s.Role, &s.Name, &s.Epoch, &expires, &created)
 	s.ExpiresAt = time.UnixMilli(expires).UTC()
 	s.CreatedAt = time.UnixMilli(created).UTC()
-	if err == nil {
-		_, err = r.db.ExecContext(ctx, `UPDATE device_sessions SET last_seen=? WHERE id=? AND last_seen<?`, now.UnixMilli(), s.ID, now.Add(-30*time.Second).UnixMilli())
-	}
 	return s, err
 }
 

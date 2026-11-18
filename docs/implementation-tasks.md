@@ -8,8 +8,6 @@ Already implemented: versioned contracts and identity-proof helpers; SQLite foun
 
 These are existing building blocks, not completed versions of the features below. The desktop queue now persists standard-mode uploads/restores in SQLite; remembered session credentials use the OS credential store. Upload identities, discovered work, retry schedules and controls survive desktop restart. Catalogs use bounded revision-bound pages, and selected files/folders restore from verified checkpoints. Private mode remains open; standard version history, conflict resolution and recoverable trash are implemented. Hosted CI results, actual Unraid qualification and complete native UI workflows must be verified, not inferred from workflow files. This status review uses the current implementation and previously executed checks recorded in the verification map; it does not represent a fresh test run.
 
-Current pending temporary passwords can be retrieved by administrators until replacement or one-hour expiry. The original specification calls for showing them once. Resolve that discrepancy in Complete account administration; do not silently treat the current behavior as the final security policy.
-
 ### Delivery status, 2026-11-17
 
 Delivered work includes consistent no-follow source opening and bounded skipped-item batch reports, desktop summaries, HTTP/3-first connections with verified HTTP/2 fallback, [reproducible performance measurements](performance-baseline.md), deployment-directory instance locks, and a [stopped-server backup command](backup-restore.md). Every replacement connection tries QUIC again; a working HTTP/2 fallback connection has no timed upgrade attempts. The local tmpfs results do not establish Unraid/tailnet performance. The [verification map](requirements-verification.md#feature-roadmap-execution-2026-11-17) records executed checks and remaining native/hardware gates.
@@ -223,18 +221,19 @@ For every feature:
 
 **Outcome:** administrators can manage account recovery and access through the browser without operator intervention for routine tasks.
 
-**Existing:** user list/creation, admin device history/revocation and separate password/TOTP reset UI/API with recovery locking. Disablement services exist; UI, self-service recovery and remaining administration gates are open.
+**Status:** browser and desktop account controls are implemented. Target Unraid Argon2id calibration remains open.
 
 **Depends on:** feature 4; retention controls integrate with feature 8 and capacity views with feature 7.
 
 - [x] Expose audited, role-checked password reset, distinct lost-TOTP recovery and individual device revocation through admin API and UI.
-- [ ] Expose account disable/enable and remaining self-service session controls.
+- [x] Expose account disable/enable and remaining self-service session controls.
 - [x] Prevent mixed password/TOTP resets with a transactional account recovery lock until full recovery login; allow same-kind retry. Both reset types revoke every device while preserving the other factor. Auth/database/HTTP and UI checks cover conflicting administrators and completion rules.
-- [ ] Require fresh administrator reauthentication for sensitive actions; enforce invalidation and preserve the distinction between password and TOTP recovery.
-- [ ] Complete self-service recovery-code replacement and account/device screens.
-- [ ] Restore show-once temporary-password delivery, or obtain an explicit product decision to revise the specification; migrate away from retained pending-password material if show-once is retained.
-- [ ] Add paginated audit history, meaningful empty/error states and reset/recovery guidance; account recovery must never imply vault-key recovery.
-- [ ] Calibrate Argon2id costs on target hardware and verify bounded concurrent authentication resource use.
+- [x] Require fresh administrator reauthentication for sensitive actions; enforce invalidation and preserve the distinction between password and TOTP recovery.
+- [x] Complete self-service recovery-code replacement and account/device screens.
+- [x] Restore show-once temporary-password delivery. Schema 14 removes retained encrypted material and expires credentials that had retained copies.
+- [x] Add paginated audit history, meaningful empty/error states and reset/recovery guidance; account recovery must never imply vault-key recovery.
+- [x] Verify bounded concurrent authentication resource use and provide a repeatable Argon2id benchmark.
+- [ ] Calibrate Argon2id costs on the target Unraid host. See [server development](server-development.md#argon2id-calibration).
 
 **Accept when:** every administration action is available to authorized callers, denied to other users and audited; recovery/revocation invalidates sessions as specified; temporary-password visibility matches the documented policy and expiry behavior.
 
