@@ -50,8 +50,16 @@ func BenchmarkParallelSmallUploads(b *testing.B) {
 	}
 }
 
+// BenchmarkCoalescedSmallUploads measures checkpoint uploads with the same eight
+// in-flight files as the durable queue; persistence callbacks are no-ops here.
+func BenchmarkCoalescedSmallUploads(b *testing.B) {
+	for _, transport := range []string{"http2", "http3"} {
+		b.Run(transport, func(b *testing.B) { benchmarkUpload(b, transport, 1024, 4<<20, 8, true) })
+	}
+}
+
 // Negative workers send batches of up to 256 files per request.
-func benchmarkUpload(b *testing.B, transport string, size int, chunk int64, workers int) {
+func benchmarkUpload(b *testing.B, transport string, size int, chunk int64, workers int, coalesced ...bool) {
 	cfg := fixture(b)
 	s, err := New(b.Context(), cfg)
 	if err != nil {
@@ -65,6 +73,16 @@ func benchmarkUpload(b *testing.B, transport string, size int, chunk int64, work
 	origin := startDualServer(b, s, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == api.BasePath+"/capabilities" {
 			capabilities := httpapi.Capabilities()
+			// Keep individual-upload baselines comparable after coalescing.
+			if workers > 0 && len(coalesced) == 0 {
+				features := []string{}
+				for _, feature := range capabilities.Features {
+					if feature != api.FeatureBatchUpload {
+						features = append(features, feature)
+					}
+				}
+				capabilities.Features = features
+			}
 			capabilities.Transports = append(capabilities.Transports, api.HTTP3)
 			capabilities.Limits.MinChunkBytes = chunk
 			capabilities.Limits.MaxChunkBytes = chunk
@@ -74,6 +92,8 @@ func benchmarkUpload(b *testing.B, transport string, size int, chunk int64, work
 		}
 		stage := "other"
 		switch {
+		case r.URL.Path == api.BasePath+api.BatchUploadPath:
+			stage = "batch"
 		case r.URL.Path == api.BasePath+"/uploads":
 			stage = "create"
 		case strings.Contains(r.URL.Path, "/chunks/"):
@@ -176,7 +196,7 @@ func benchmarkUpload(b *testing.B, transport string, size int, chunk int64, work
 	b.StopTimer()
 	mu.Lock()
 	defer mu.Unlock()
-	for _, stage := range []string{"create", "chunk", "finalize"} {
+	for _, stage := range []string{"create", "chunk", "finalize", "batch"} {
 		b.ReportMetric(float64(durations[stage].Nanoseconds())/float64(b.N), stage+"_ns/file")
 		b.ReportMetric(float64(counts[stage])/float64(b.N), stage+"_requests/file")
 	}

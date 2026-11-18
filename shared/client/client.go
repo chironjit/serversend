@@ -118,6 +118,7 @@ type Client struct {
 	store                   func(CredentialState) error
 	limits                  protocol.TransferLimits
 	batchUploads            bool
+	smallUploads            smallUploadQueue
 }
 
 // New is the legacy leaf-pin client used by transport fixtures and benchmarks.

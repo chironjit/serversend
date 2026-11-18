@@ -3,10 +3,13 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/chironjit/serversend/shared/api"
@@ -97,6 +100,44 @@ func TestBatchUploadEndToEnd(t *testing.T) {
 			t.Fatalf("restored %s differs: %v", entry.Standard.Name, err)
 		}
 	}
+
+	// Recover a crash after batch publication but before its result was saved.
+	var group sync.WaitGroup
+	for i := range 8 {
+		path, _ := writeFixture(t, dir, fmt.Sprintf("durable-%d", i), 1024)
+		group.Go(func() {
+			var cp client.UploadCheckpoint
+			var saved []byte
+			lost := errors.New("simulated exit before result checkpoint")
+			_, err := c.UploadResumable(t.Context(), path, folder.ID, &cp, func(cp *client.UploadCheckpoint) error {
+				if cp.Result != nil {
+					return lost
+				}
+				saved, _ = json.Marshal(cp)
+				return nil
+			}, nil)
+			if !errors.Is(err, lost) {
+				t.Errorf("publication: %v", err)
+				return
+			}
+			result := *cp.Result
+			cp = client.UploadCheckpoint{}
+			if err := json.Unmarshal(saved, &cp); err != nil {
+				t.Error(err)
+				return
+			}
+			recovered, err := c.UploadResumable(t.Context(), path, folder.ID, &cp, func(*client.UploadCheckpoint) error { return nil }, nil)
+			if err != nil || recovered != result {
+				t.Errorf("recovery changed result: %+v / %+v, %v", result, recovered, err)
+				return
+			}
+			history, err := c.History(t.Context(), result.FileID, "")
+			if err != nil || len(history.Versions) != 1 {
+				t.Errorf("recovery duplicated version: %+v, %v", history, err)
+			}
+		})
+	}
+	group.Wait()
 
 	// Deleting the folder removes every batched object.
 	if err := c.DeleteEntry(t.Context(), folder.ID); err != nil {

@@ -169,6 +169,11 @@ func (c *Client) UploadResumable(ctx context.Context, path string, parent protoc
 	if err = save(checkpoint); err != nil {
 		return api.FinalizeResult{}, err
 	}
+	// Persisted identities let a lost batch response recover through the normal
+	// admission/finalization path without publishing a second version.
+	if !resumed && checkpoint.UploadID == "" && checkpoint.Manifest.TotalBytes <= MaxBatchFileBytes && len(checkpoint.Manifest.Chunks) <= 1 && checkpoint.Manifest.TotalBytes+2*checkpoint.Intent.ManifestBytes+2048 <= limits.MaxRequestBytes && c.SupportsBatch(ctx) {
+		return c.uploadSmallCheckpoint(ctx, file, info, checkpoint, save, progress)
+	}
 	if checkpoint.UploadID == "" {
 		if err = c.admitCheckpoint(ctx, checkpoint, save); err != nil {
 			return api.FinalizeResult{}, err

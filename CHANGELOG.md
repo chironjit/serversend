@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Restore small-file batching for durable uploads: concurrently prepared standard files share bounded requests while retaining per-file checkpoints and crash recovery. Eight-worker local disk samples measured about 10× faster than individual requests; deployment throughput remains unqualified.
+
 - Added simultaneous desktop server sessions, isolated catalogs, combined/scoped queue controls, editable profile names/approved routes, bounded verified route failover and explicit trust repair. Profile removal retains local queue/data; identity proofs reject reused nonces.
 
 - Add experimental private vaults, encrypted names/content and durable tasks, recovery exports, rewrap/lock controls and private backup recovery. Current private ciphertext staging limits each file to 1 GiB; see `docs/private-storage.md`.

@@ -2,7 +2,7 @@
 
 Measured on 2026-11-17. This is an initial local baseline for feature 2, not acceptance of transport performance, storage durability, private mode or deployment qualification.
 
-The 2026-11-18 durable desktop queue uses per-file checkpointed requests with eight workers. The batched results below measure the batch API and earlier in-memory queue; they do not establish current durable small-file throughput. Remeasure on the intended deployment before optimizing durable batching.
+The durable desktop queue now coalesces fresh standard small-file uploads from its eight workers into the existing batch API. See the 2026-11-18 measurement below; desktop checkpoint persistence and target-deployment throughput remain unmeasured.
 
 ## Reproduce
 
@@ -131,3 +131,22 @@ Re-ran the same 20-upload loopback benchmark after quota admission, expiry maint
 Batched uploads (`POST /uploads/batch`, up to 256 files per request, one transaction and one concurrent flush round) measured 0.81 ms per 1-KiB file with one worker and 0.37 ms with eight on the same disk, versus 36 and 28 ms for individual uploads (2,048 files, HTTP/2 and HTTP/3 alike).
 
 After the browsable-tree storage change (distinct file names, 2,048 files, HTTP/2, same disk): 28.6 ms per individual 1-KiB upload and 0.45 ms per batched file with eight workers. Applied storage-journal entries are forgotten inside the next transaction, and only directories that gained or lost entries are flushed.
+
+## Durable small-upload coalescing (2026-11-18)
+
+Fresh standard files up to 1 MiB now share requests after a 2-ms collection window. Requests are bounded by 256 files and 4 MiB including framing (or the advertised request limit); the desktop still has only eight active workers. Each identity is checkpointed before sending. A lost response or failed result checkpoint recovers through existing admission/finalization with the same IDs. Individual cancellation before sending excludes that file; after sending, the shared request finishes (30-second overall budget) and records actual outcomes. Private, multi-chunk, resumed and older-server uploads retain their existing paths. No dependencies or archive staging are added.
+
+On the workstation repository disk, 256 distinct random 1-KiB files with eight workers measured:
+
+| Transport | Individual ms/file | Coalesced ms/file | Upload requests/file, before → after |
+| --- | ---: | ---: | ---: |
+| HTTP/2 | 40.97 | 3.87 | 3 → 0.125 |
+| HTTP/3 | 39.86 | 3.97 | 3 → 0.125 |
+
+Target lookup remains one additional request per file. This short loopback sample includes production server durability but uses no-op client checkpoint callbacks; it is not an end-to-end desktop or Unraid result. Other checks ran on the same host. Reproduce with `TMPDIR` on a real disk:
+
+```sh
+go test ./apps/server/internal/server -run '^$' -bench 'BenchmarkCoalescedSmallUploads|BenchmarkParallelSmallUploads/http[23]/workers_8$' -benchtime=256x -count=1
+```
+
+Larger queued batches remain the next candidate: the existing explicit 256-file API measured 1.65/1.29 ms per file in this run, but durable scheduler group claims and grouped local checkpoints need separate recovery/control work. A streamed archive could also reduce framing and allow compression; it would add extraction, validation and partial-recovery complexity. This change first removes per-file server commits without changing the stored file layout. Protocol-window tuning and extra read-ahead are lower priorities for this disk-bound sample. Tens-of-thousands scale and LAN/tailnet measurements remain open.
