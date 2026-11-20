@@ -6,6 +6,7 @@ import AccountAudit from './AccountAudit.vue';
 import AccountSecurity from './AccountSecurity.vue';
 import Dashboard from './Dashboard.vue';
 import RetentionSettings from './RetentionSettings.vue';
+import CertificateAuthority from './CertificateAuthority.vue';
 const props = withDefaults(defineProps<{ page?: string; restore?: boolean }>(), {
   page: 'accounts',
   restore: false,
@@ -602,6 +603,7 @@ async function signOut() {
   <UiCard v-if="step === 'users' && page === 'settings'" class="p-6">
     <h2>Server settings</h2>
     <RetentionSettings :csrf="csrf" />
+    <CertificateAuthority />
     <p>
       Administration uses HTTPS. Sessions last seven days; sensitive account changes require a
       sign-in within five minutes.

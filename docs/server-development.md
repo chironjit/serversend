@@ -61,7 +61,7 @@ Directories/files containing keys require 0700/0600 permissions. TLS paths must 
 
 Leaf certificates last up to 90 days and renew when about 30 days remain, both on startup and on subsequent TLS handshakes. Renewal uses fresh server keys and retains the CA and independent ServerSend identity. Certificate/key bundles are flushed and atomically published before use. Existing connections continue; idle servers renew on the next handshake before serving an expired certificate. Changing the configured IP set reissues the leaf under the same CA on restart. Clients still require explicit approval for new endpoints. The private CA lasts ten years; it is not silently replaced at expiry. Plan an explicit client trust replacement before then. Leaf validity/renewal windows shorten near CA expiry. Clock errors and failed renewal/storage writes are reported, with no insecure fallback.
 
-Clients must verify the private CA and IP normally. Export **only** `ca.crt` through an authenticated operator channel, such as Docker access or a trusted file copy, and compare its SHA-256 certificate fingerprint before trusting it:
+Clients must verify the private CA and IP normally. Export **only** `ca.crt` through an authenticated operator channel: signed-in administrators can download it from **Admin > Settings** (`GET /api/v1/admin/ca.crt`; `/api/v1/admin/ca` returns its fingerprint), or copy it with Docker access. The startup log prints its SHA-256 fingerprint; compare that before trusting a copy:
 
 ```sh
 openssl x509 -in /path/to/ca.crt -noout -fingerprint -sha256

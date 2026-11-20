@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -13,6 +14,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -218,4 +220,19 @@ func (m *Manager) PublicCA() []byte {
 func renewAt(cert *x509.Certificate) time.Time {
 	window := min(renewBefore, cert.NotAfter.Sub(cert.NotBefore)/3)
 	return cert.NotAfter.Add(-window)
+}
+
+// Fingerprint formats a PEM certificate's SHA-256 like `openssl x509
+// -fingerprint -sha256`, so operators can compare it with a trusted copy.
+func Fingerprint(certificatePEM []byte) string {
+	block, _ := pem.Decode(certificatePEM)
+	if block == nil {
+		return ""
+	}
+	sum := sha256.Sum256(block.Bytes)
+	parts := make([]string, len(sum))
+	for i, b := range sum {
+		parts[i] = fmt.Sprintf("%02X", b)
+	}
+	return strings.Join(parts, ":")
 }

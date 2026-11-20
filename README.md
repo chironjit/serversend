@@ -86,7 +86,7 @@ Or copy the versioned template `apps/server/deploy/unraid/serversend.xml` to `/b
 
 | Variable | Key | Value |
 | --- | --- | --- |
-| Server IPs | `SERVER_SEND_TLS_IPS` | Unraid LAN IPv4, e.g. `192.168.1.10`; add the Tailscale IP comma-separated if used (e.g `192.168.1.10,172.100.1.10`) |
+| Server IPs | `SERVER_SEND_TLS_IPS` | Unraid LAN IPv4, e.g. `192.168.1.10`; add the Tailscale IP comma-separated if used (e.g `192.168.1.10,100.101.102.103`) |
 | Upgrade backups | `SERVER_SEND_UPGRADE_BACKUP_DIR` | `/backups` (or `none` if you take your own stopped-server backups) |
 | User quota (optional) | `SERVER_SEND_STORAGE_USER_BYTES` | Bytes per account; `0` = unlimited (default) |
 | Total quota (optional) | `SERVER_SEND_STORAGE_GLOBAL_BYTES` | Bytes for all accounts; `0` = unlimited (default) |
@@ -107,7 +107,7 @@ docker run --rm --network none --read-only \
 docker start serversend
 ```
 
-Save the printed temporary password (valid one hour), open `https://UNRAID_IP:58443/admin/`, accept the private certificate after checking it is your server, then set a password, enrol TOTP and keep the recovery codes. Create user accounts there; in the desktop app connect to `UNRAID_IP` and compare the fingerprint with `docker logs serversend`.
+Save the printed temporary password (valid one hour), open `https://UNRAID_IP:58443/admin/`, accept the private certificate after checking it is your server, then set a password, enrol TOTP and keep the recovery codes. To stop the browser warning, download the CA certificate from **Settings**, check its fingerprint against `docker logs serversend`, and install it as a trusted authority. Create user accounts there; in the desktop app connect to `UNRAID_IP` and compare the fingerprint with `docker logs serversend`.
 
 ### Updating
 

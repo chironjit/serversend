@@ -21,6 +21,7 @@ type options struct {
 	transfers      *uploads.Service
 	http3          bool
 	logs           *applog.Store
+	ca             []byte
 }
 type Option func(*options)
 

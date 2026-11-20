@@ -72,7 +72,7 @@ docker run --rm --network none --read-only \
 docker start serversend
 ```
 
-Replace the sample IP with the same configured address. Save the printed temporary password (valid for one hour). Visit `https://UNRAID_IP:58443/admin/`. The private certificate initially causes a browser warning; verify that you are connecting to your own server. Replace the temporary password, enroll an authenticator, and save the recovery codes. Use a fresh authenticator code or a recovery code to finish sign-in.
+Replace the sample IP with the same configured address. Save the printed temporary password (valid for one hour). Visit `https://UNRAID_IP:58443/admin/`. The private certificate initially causes a browser warning; verify that you are connecting to your own server. Replace the temporary password, enroll an authenticator, and save the recovery codes. Use a fresh authenticator code or a recovery code to finish sign-in. To trust the server, download the CA from **Settings** and compare its fingerprint with the startup line in `docker logs serversend`.
 
 Create a user account in the admin page. Creation requires a full admin sign-in within five minutes; sign out and in again if that window expires. Give the user the displayed temporary password. In the desktop, connect to `UNRAID_IP`, compare its certificate fingerprint against `docker logs serversend`, and sign in as the user. Replace the user's temporary password and enroll their authenticator. Administrators cannot browse, upload, or download files; existing administrator-owned test files remain stored but are no longer accessible through transfer routes.
 

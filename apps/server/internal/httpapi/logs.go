@@ -115,7 +115,7 @@ func requestLogs(next http.Handler, store *applog.Store) http.Handler {
 			}
 			if route == "" {
 				switch r.URL.Path {
-				case "/healthz", "/readyz", "/admin", "/admin/", passwordPath, passwordReplacePath, totpEnrollPath, totpConfirmPath, sessionsPath, currentSessionPath, accountAuditPath, recoveryCodesPath, api.BasePath + "/admin/users", api.BasePath + "/admin/logs", api.BasePath + "/capabilities":
+				case "/healthz", "/readyz", "/admin", "/admin/", passwordPath, passwordReplacePath, totpEnrollPath, totpConfirmPath, sessionsPath, currentSessionPath, accountAuditPath, recoveryCodesPath, api.BasePath + "/admin/users", api.BasePath + "/admin/logs", caInfoPath, caFilePath, api.BasePath + "/capabilities":
 					route = r.URL.Path
 				default:
 					route = "unmatched route"

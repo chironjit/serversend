@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Admin **Settings** shows the private HTTPS CA's SHA-256 fingerprint and a **Download CA certificate** button, so the CA no longer has to be copied from the config share. The startup log prints the same fingerprint for comparison. Servers using external certificates show that no private CA exists.
+
 - Desktop layout: a **Settings** page holds the bandwidth limit, "Show all signed-in servers", launch at login and **Quit ServerSend**. **Transfers** has a prominent **Pause/Resume all transfers** button and separate **Uploads** and **Downloads** cards; each upload or download expands into one-line file rows, five visible before scrolling. **Check for updates** moved to the window header and tray menu. Linux and Windows no longer show an in-window "ServerSend" menu bar; macOS keeps it in the system menu bar.
 
 - Private file limit raised from 1 GiB to 16 GiB. Larger files are skipped with a warning on their selection, where you choose **Upload unencrypted** (confirmed; stored as standard files in the same folder) or **Keep skipped**, per selection or per file. Previously they failed with the generic "needs attention; unlock and retry" message. Skip and private staging-capacity reasons are now shown for private items; other private errors stay masked. The desktop checks free disk space (keeping 1 GiB spare) and a 32 GiB staging budget before encrypting, and removes incomplete stages.

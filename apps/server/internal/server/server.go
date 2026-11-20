@@ -37,6 +37,7 @@ type Server struct {
 	store             *storage.Store
 	locks             *instancelock.Locks
 	tls               *tls.Config
+	ca                []byte
 	identity          identity.Identity
 	accounts          *auth.Service
 	transfers         *uploads.Service
@@ -66,7 +67,7 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 			_ = locks.Close()
 		}
 	}()
-	tlsConfig, err := loadTLS(c, time.Now())
+	tlsConfig, ca, err := loadTLS(c, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +133,7 @@ func New(ctx context.Context, c config.Config) (*Server, error) {
 			}
 		}
 	}()
-	return &Server{maintenanceCancel: maintenanceCancel, maintenanceDone: maintenanceDone, logs: logs, db: db, store: store, locks: locks, tls: httpapi.BindIdentityCertificate(tlsConfig), identity: id, accounts: accounts, transfers: transfers, drainTimeout: shutdownTimeout}, nil
+	return &Server{maintenanceCancel: maintenanceCancel, maintenanceDone: maintenanceDone, logs: logs, db: db, store: store, locks: locks, tls: httpapi.BindIdentityCertificate(tlsConfig), ca: ca, identity: id, accounts: accounts, transfers: transfers, drainTimeout: shutdownTimeout}, nil
 }
 
 // newAccounts loads the TOTP protection key before any account request can be
@@ -173,7 +174,7 @@ func (s *Server) Close() error {
 // unready before draining requests. A timeout forcibly closes active requests.
 // The instance is intended for a single Serve call.
 func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
-	return s.serve(ctx, listener, httpapi.New(s.ready, httpapi.WithIdentity(s.signIdentity), httpapi.WithAuthentication(s.accounts), httpapi.WithTransfers(s.transfers), httpapi.WithLogs(s.logs)))
+	return s.serve(ctx, listener, httpapi.New(s.ready, httpapi.WithIdentity(s.signIdentity), httpapi.WithAuthentication(s.accounts), httpapi.WithTransfers(s.transfers), httpapi.WithLogs(s.logs), httpapi.WithCA(s.ca)))
 }
 
 func (s *Server) ready(ctx context.Context) error {

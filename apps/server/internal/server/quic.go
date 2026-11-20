@@ -25,7 +25,7 @@ func (s *Server) ServeTransports(ctx context.Context, tcp net.Listener, udp net.
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	handler := httpapi.New(s.ready, httpapi.WithIdentity(s.signIdentity), httpapi.WithAuthentication(s.accounts), httpapi.WithTransfers(s.transfers), httpapi.WithHTTP3(), httpapi.WithLogs(s.logs))
+	handler := httpapi.New(s.ready, httpapi.WithIdentity(s.signIdentity), httpapi.WithAuthentication(s.accounts), httpapi.WithTransfers(s.transfers), httpapi.WithHTTP3(), httpapi.WithLogs(s.logs), httpapi.WithCA(s.ca))
 	return s.serveTransports(ctx, cancel, tcp, udp, handler)
 }
 

@@ -61,7 +61,7 @@ func New(ready func(context.Context) error, settings ...Option) http.Handler {
 		if visible != nil && visible(w, r) {
 			return
 		}
-		if opts.authentication != nil && (serveAccountAdministration(w, r, opts.authentication) || serveOwnDevices(w, r, opts.authentication) || serveDeviceSessions(w, r, opts.authentication) || serveDeviceAdmin(w, r, opts.authentication) || serveStats(w, r, opts.authentication, opts.transfers) || serveSessions(w, r, opts.authentication) || serveLogs(w, r, opts.authentication, opts.logs) || serveAuthentication(w, r, opts.authentication) || serveUsers(w, r, opts.authentication)) {
+		if opts.authentication != nil && (serveAccountAdministration(w, r, opts.authentication) || serveOwnDevices(w, r, opts.authentication) || serveDeviceSessions(w, r, opts.authentication) || serveDeviceAdmin(w, r, opts.authentication) || serveStats(w, r, opts.authentication, opts.transfers) || serveCA(w, r, opts.authentication, opts.ca) || serveSessions(w, r, opts.authentication) || serveLogs(w, r, opts.authentication, opts.logs) || serveAuthentication(w, r, opts.authentication) || serveUsers(w, r, opts.authentication)) {
 			return
 		}
 		if transfers != nil && transfers.serve(w, r) {

@@ -99,7 +99,7 @@ func run(ctx context.Context, args []string, out io.Writer) (resultErr error) {
 		}
 	}()
 	if c.TLSIPs != "" {
-		log.Printf("Private IPv4 HTTPS enabled; export the public trust certificate from %s through a trusted operator channel", filepath.Join(c.ConfigDir, "tls", "ca.crt"))
+		log.Printf("Private IPv4 HTTPS enabled; download the CA certificate from Admin > Settings or %s, and check its SHA-256 fingerprint %s", filepath.Join(c.ConfigDir, "tls", "ca.crt"), s.CAFingerprint())
 	}
 	if *bootstrap != "" || *recoverBootstrap != "" {
 		return issueAdministrator(ctx, s.Accounts(), *bootstrap, *recoverBootstrap, out)
